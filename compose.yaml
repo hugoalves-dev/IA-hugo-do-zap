@@ -1,0 +1,17 @@
+services:
+  watcher:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      - ./data:/app/data
+    networks:
+      - n8n_internal
+
+networks:
+  n8n_internal:
+    name: infra_network
+    external: true
