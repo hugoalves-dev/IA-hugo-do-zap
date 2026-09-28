@@ -11,10 +11,8 @@ export class Notifier {
     this.log.info({ event: "notification_flush_started", pendingChats: pending.length, eligibleChats: chats.length, deferredWorkOnlyChats });
     if (!chats.length) return;
     const snapshots = chats.map(({ jid, messageCount, firstMessageAt, lastMessageAt }) => ({ jid, messageCount, firstMessageAt, lastMessageAt }));
-    const payloadChats = chats.map((chat) => ({ ...chat, firstMessageAt: localIso(new Date(chat.firstMessageAt), this.config.timezone), lastMessageAt: localIso(new Date(chat.lastMessageAt), this.config.timezone) }));
+    const payloadChats = chats.map(({ canonicalJid: _canonicalJid, notificationPolicy, firstMessageAt, lastMessageAt, ...chat }) => ({ ...chat, firstMessageAt: localIso(new Date(firstMessageAt), this.config.timezone), lastMessageAt: localIso(new Date(lastMessageAt), this.config.timezone), policy: notificationPolicy }));
     const payload = { secret: this.config.webhookSecret, generatedAt: localIso(this.now(), this.config.timezone), totalChats: chats.length, totalMessages: chats.reduce((n, c) => n + c.messageCount, 0), chats: payloadChats };
-    payloadChats.forEach((chat: any) => { chat.policy = chat.notificationPolicy; delete chat.notificationPolicy; });
-    payload.totalChats = chats.length;
     this.log.info({ event: "notification_batch_ready", totalChats: chats.length, totalMessages: payload.totalMessages });
     const delays = [1000, 3000, 10000];
     for (let attempt = 1; attempt <= 3; attempt++) {

@@ -1,5 +1,5 @@
 export interface IncomingMessage {
-  key: { id?: string | null; fromMe?: boolean | null; remoteJid?: string | null; participant?: string | null };
+  key: { id?: string | null; fromMe?: boolean | null; remoteJid?: string | null; remoteJidAlt?: string | null; remoteJidUsername?: string | null; participant?: string | null; participantAlt?: string | null; participantUsername?: string | null };
   message?: Record<string, unknown> | null;
 }
 const ignoredContent = new Set(["protocolMessage", "senderKeyDistributionMessage", "messageContextInfo", "reactionMessage", "pollUpdateMessage"]);

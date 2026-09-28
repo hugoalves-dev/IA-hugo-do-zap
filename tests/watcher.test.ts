@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { classifyNotificationPolicy, isWithinWorkHours, localIso, loadConfig, type Config } from "../src/config.js";
 import { isEligibleMessage, shouldProcessUpsert, type IncomingMessage } from "../src/message-filter.js";
 import { Notifier } from "../src/notifier.js";
-import { recordNotifyMessages } from "../src/notify-handler.js";
+import { persistMessageIdentity, recordNotifyMessages } from "../src/notify-handler.js";
 import { WatcherState } from "../src/watcher-state.js";
 
 const config: Config = { timezone: "America/Sao_Paulo", checkCron: "* * * * *", workDays: [1,2,3,4,5], workWindows: [{start:"08:00",end:"12:00"},{start:"13:30",end:"17:30"}], queueOutsideWorkHours: false, includeGroups: true, notificationMaxChats: 50, workOnlyNameRegex: /(^|[^A-Z0-9])JC([^A-Z0-9]|$)/i, webhookUrl: "http://n8n:5678/webhook/test", webhookSecret: "secret", dataDir: "/tmp", logLevel: "silent" };
@@ -53,6 +54,58 @@ test("chat policy follows direct and group display-name changes", () => withStat
   s.applyChat({jid:"123@g.us",archived:true,displayName:"Grupo JC",isGroup:true});
   assert.equal(s.getChat("123@g.us")?.notificationPolicy,"WORK_ONLY");
 }));
+test("LID to PN message mapping persists readable identity and wa.me fields", () => withState((s) => {
+  s.applyChat({jid:"140763375603814@lid",archived:true,displayName:"JC Sistemas"});
+  persistMessageIdentity(msg("140763375603814@lid","lid-pn",{remoteJidAlt:"5514999991234@s.whatsapp.net"}),s);
+  const resolved=s.resolveIdentity("140763375603814@lid");
+  assert.equal(resolved.displayName,"JC Sistemas"); assert.equal(resolved.phoneJid,"5514999991234@s.whatsapp.net"); assert.equal(resolved.phoneNumber,"5514999991234"); assert.equal(resolved.lidJid,"140763375603814@lid");
+}));
+test("PN to LID mapping resolves an existing contact through one canonical identity", () => withState((s) => {
+  s.applyChat({jid:"5514999991234@s.whatsapp.net",archived:true,displayName:"Readable Contact"});
+  persistMessageIdentity(msg("5514999991234@s.whatsapp.net","pn-lid",{remoteJidAlt:"140763375603814@lid"}),s);
+  const resolved=s.resolveIdentity("140763375603814@lid");
+  assert.equal(resolved.canonicalJid,"5514999991234@s.whatsapp.net"); assert.equal(resolved.displayName,"Readable Contact"); assert.equal(resolved.phoneNumber,"5514999991234");
+}));
+test("linking existing LID and PN rows merges pending counters into one notification", () => withState((s) => {
+  s.applyChat({jid:"140763375603814@lid",archived:true,displayName:"JC Sistemas"});
+  s.applyChat({jid:"5514999991234@s.whatsapp.net",archived:true,displayName:"JC Sistemas"});
+  s.recordIncoming("140763375603814@lid","lid-message","2026-09-25T10:00:00-03:00");
+  s.recordIncoming("5514999991234@s.whatsapp.net","pn-message","2026-09-25T10:01:00-03:00");
+  persistMessageIdentity(msg("140763375603814@lid","link-existing",{remoteJidAlt:"5514999991234@s.whatsapp.net"}),s);
+  assert.equal(s.getPending().length,1); assert.equal(s.getPending()[0].messageCount,2); assert.equal(s.getChat("5514999991234@s.whatsapp.net")?.jid,"140763375603814@lid"); assert.equal(s.identityCount(),1);
+}));
+test("LID only never creates a phone number", () => withState((s) => {
+  s.applyChat({jid:"69209740566608@lid",archived:true,displayName:"Amazon"});
+  s.observeIdentity({preferredJid:"69209740566608@lid",lidJid:"69209740566608@lid"});
+  const resolved=s.resolveIdentity("69209740566608@lid");
+  assert.equal(resolved.displayName,"Amazon"); assert.equal(resolved.phoneJid,undefined); assert.equal(resolved.phoneNumber,undefined);
+}));
+test("technical identifiers cannot replace a known name and raw stored LIDs are repaired", () => withState((s) => {
+  s.applyChat({jid:"140763375603814@lid",archived:true,displayName:"JC Sistemas"});
+  s.observeIdentity({preferredJid:"140763375603814@lid",lidJid:"140763375603814@lid",phoneJid:"5514999991234@s.whatsapp.net",username:"jc_sistemas",displayName:"140763375603814@lid",displayNameSource:"contact_name"});
+  assert.equal(s.resolveIdentity("5514999991234@s.whatsapp.net").displayName,"JC Sistemas");
+  s.applyChat({jid:"69209740566608@lid",archived:true,displayName:"69209740566608@lid"});
+  s.observeIdentity({preferredJid:"69209740566608@lid",lidJid:"69209740566608@lid",phoneJid:"5511999990000@s.whatsapp.net",displayName:"Amazon",displayNameSource:"contact_name"});
+  assert.equal(s.resolveIdentity("69209740566608@lid").displayName,"Amazon");
+}));
+test("username fallback is clean and replaceable by a human-readable name", () => withState((s) => {
+  s.applyChat({jid:"@amorsaudelins",archived:true,displayName:"@amorsaudelins"});
+  s.observeIdentity({preferredJid:"@amorsaudelins",username:"amorsaudelins"});
+  assert.equal(s.resolveIdentity("@amorsaudelins").displayName,"amorsaudelins");
+  s.observeIdentity({preferredJid:"@amorsaudelins",username:"amorsaudelins",displayName:"AmorSaúde Lins",displayNameSource:"notify"});
+  assert.equal(s.resolveIdentity("@amorsaudelins").displayName,"AmorSaúde Lins");
+}));
+test("identity aliases survive restart without duplicate profiles", () => {
+  const dir=mkdtempSync(join(tmpdir(),"wa-restart-"));
+  const first=new WatcherState(dir); first.applyChat({jid:"140763375603814@lid",archived:true,displayName:"JC Sistemas"}); first.observeIdentity({preferredJid:"140763375603814@lid",lidJid:"140763375603814@lid",phoneJid:"5514999991234@s.whatsapp.net"}); first.close();
+  const restarted=new WatcherState(dir); assert.equal(restarted.resolveIdentity("5514999991234@s.whatsapp.net").displayName,"JC Sistemas"); assert.equal(restarted.identityCount(),1); restarted.close(); rmSync(dir,{recursive:true,force:true});
+});
+test("identity migration preserves archived and pending counters", () => {
+  const dir=mkdtempSync(join(tmpdir(),"wa-migrate-")); const db=new Database(join(dir,"watcher.db"));
+  db.exec("CREATE TABLE chat_state(jid TEXT PRIMARY KEY,archived INTEGER NOT NULL DEFAULT 0,display_name TEXT NULL,is_group INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL); CREATE TABLE pending_notification(jid TEXT PRIMARY KEY,message_count INTEGER NOT NULL DEFAULT 0,first_message_at TEXT NOT NULL,last_message_at TEXT NOT NULL); INSERT INTO chat_state VALUES('123@s.whatsapp.net',1,'Readable',0,'2026-01-01T00:00:00.000Z'); INSERT INTO pending_notification VALUES('123@s.whatsapp.net',7,'a','z')"); db.close();
+  const legacy=new Database(join(dir,"watcher.db")); legacy.prepare("INSERT INTO chat_state VALUES(?,?,?,?,?)").run("69209740566608@lid",1,"Amazon",0,"2026-01-01T00:00:00.000Z"); legacy.prepare("INSERT INTO chat_state VALUES(?,?,?,?,?)").run("@amorsaudelins",1,"@amorsaudelins",0,"2026-01-01T00:00:00.000Z"); legacy.close();
+  const s=new WatcherState(dir); assert.equal(s.getChat("123@s.whatsapp.net")?.archived,1); assert.equal(s.getPending()[0].messageCount,7); assert.equal(s.resolveIdentity("123@s.whatsapp.net").displayName,"Readable"); assert.equal(s.resolveIdentity("69209740566608@lid").displayName,"Amazon"); assert.equal(s.resolveIdentity("69209740566608@lid").phoneNumber,undefined); assert.equal(s.resolveIdentity("@amorsaudelins").displayName,"amorsaudelins"); s.close(); rmSync(dir,{recursive:true,force:true});
+});
 test("records only archived, known eligible chats; increments and deduplicates identity", () => withState((s) => {
   s.applyChat({jid:"a@s.whatsapp.net",archived:true,displayName:"Contact"}); s.applyChat({jid:"b@s.whatsapp.net",archived:false}); s.applyChat({jid:"g@g.us",archived:true,isGroup:true});
   assert.equal(s.getChat("unknown@s.whatsapp.net"),undefined);
@@ -73,12 +126,13 @@ test("notify handling queues archived messages regardless of work hours", () => 
   assert.equal(s.getPending().find(r=>r.jid==="g@g.us")?.messageCount,1); assert.equal(s.getPending().find(r=>r.jid==="archived@s.whatsapp.net")?.messageCount,2);
 }));
 test("outside hours sends ANYTIME only, retains WORK_ONLY, and clears sent snapshots", () => withState(async (s) => {
-  s.applyChat({jid:"a@s.whatsapp.net",archived:true,displayName:"João"}); s.applyChat({jid:"b@g.us",archived:true,displayName:"Grupo JC"});
-  s.recordIncoming("a@s.whatsapp.net","a1","2026-09-25T10:00:00-03:00"); s.recordIncoming("b@g.us","b1","2026-09-25T10:01:00-03:00");
+  s.applyChat({jid:"5514999991234@s.whatsapp.net",archived:true,displayName:"João"}); s.applyChat({jid:"b@g.us",archived:true,displayName:"Grupo JC"});
+  s.observeIdentity({preferredJid:"5514999991234@s.whatsapp.net",lidJid:"140763375603814@lid",phoneJid:"5514999991234@s.whatsapp.net",username:"joao"});
+  s.recordIncoming("5514999991234@s.whatsapp.net","a1","2026-09-25T10:00:00-03:00"); s.recordIncoming("b@g.us","b1","2026-09-25T10:01:00-03:00");
   let body:any; const n=new Notifier(config,s,quiet,async(_u,i)=>{body=JSON.parse(String(i?.body));return new Response(null,{status:204});},()=>new Date("2026-09-25T21:00:00Z"));
-  await n.notifyPending(); assert.equal(body.totalChats,1); assert.equal(body.totalMessages,1); assert.equal(body.chats[0].displayName,"João"); assert.equal(body.chats[0].policy,"ANYTIME"); assert.match(body.chats[0].firstMessageAt,/-03:00$/); assert.equal("message" in body.chats[0],false); assert.deepEqual(s.getPending().map(c=>c.jid),["b@g.us"]);
+  await n.notifyPending(); assert.equal(body.totalChats,1); assert.equal(body.totalMessages,1); assert.equal(body.chats[0].jid,"5514999991234@s.whatsapp.net"); assert.equal(body.chats[0].displayName,"João"); assert.equal(body.chats[0].policy,"ANYTIME"); assert.equal(body.chats[0].phoneNumber,"5514999991234"); assert.equal(body.chats[0].phoneJid,"5514999991234@s.whatsapp.net"); assert.equal(body.chats[0].lidJid,"140763375603814@lid"); assert.equal(body.chats[0].remoteJidAlt,"140763375603814@lid"); assert.match(body.chats[0].firstMessageAt,/-03:00$/); assert.equal("message" in body.chats[0],false); assert.deepEqual(s.getPending().map(c=>c.jid),["b@g.us"]);
   const inside=new Notifier(config,s,quiet,async(_u,i)=>{body=JSON.parse(String(i?.body));return new Response(null,{status:204});},()=>new Date("2026-09-25T13:37:00Z"));
-  await inside.notifyPending(); assert.equal(body.totalChats,1); assert.equal(body.chats[0].policy,"WORK_ONLY"); assert.equal(s.getPending().length,0);
+  await inside.notifyPending(); assert.equal(body.totalChats,1); assert.equal(body.chats[0].policy,"WORK_ONLY"); assert.equal(body.chats[0].isGroup,true); assert.equal("phoneNumber" in body.chats[0],false); assert.equal(s.getPending().length,0);
 }));
 test("new message during HTTP request survives snapshot clearing", () => withState(async (s) => {
   s.applyChat({jid:"a@s.whatsapp.net",archived:true}); s.recordIncoming("a@s.whatsapp.net","a1","2026-09-25T10:00:00-03:00");
