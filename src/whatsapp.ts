@@ -6,6 +6,8 @@ import type { Config } from "./config.js";
 import { shouldProcessUpsert, type IncomingMessage } from "./message-filter.js";
 import { persistMessageIdentity, recordNotifyMessages } from "./notify-handler.js";
 import type { WatcherState } from "./watcher-state.js";
+import type { Notifier } from "./notifier.js";
+import { ConnectionOutageGuard } from "./connection-events.js";
 import { cleanUsername, isLidJid, isTechnicalDisplayName, pnJid, usernameFromJid } from "./contact-identity.js";
 
 function toPhoneJid(value: unknown): string | undefined {
@@ -17,7 +19,11 @@ function toPhoneJid(value: unknown): string | undefined {
 export class WhatsAppWatcher {
   private socket?: WASocket; private reconnectTimer?: NodeJS.Timeout; private reconnectAttempt = 0; private stopped = false;
   private readonly baileysLog: Logger; private readonly names = new Map<string, string>();
-  constructor(private config: Config, private state: WatcherState, private log: Logger) { this.baileysLog = pino({ level: "silent" }); }
+  private readonly outageGuard: ConnectionOutageGuard;
+  constructor(private config: Config, private state: WatcherState, private log: Logger, notifier: Notifier) {
+    this.baileysLog = pino({ level: "silent" });
+    this.outageGuard = new ConnectionOutageGuard((event) => notifier.notifyConnectionLost(event), log);
+  }
   async start(): Promise<void> { this.stopped = false; await this.connect(); }
   private async connect(): Promise<void> {
     if (this.stopped) return;
@@ -26,7 +32,7 @@ export class WhatsAppWatcher {
     socket.ev.on("creds.update", () => { void saveCreds(); });
     socket.ev.on("connection.update", (update) => {
       if (update.qr) { this.log.info({ event: "whatsapp_pairing_required" }, "WhatsApp session needs pairing"); qrcode.generate(update.qr, { small: true }); }
-      if (update.connection === "open") { this.reconnectAttempt = 0; this.log.info({ event: "whatsapp_connected", archivedChats: this.state.countArchived() }, "WhatsApp connected"); void this.backfillLocalLidMappings(socket); }
+      if (update.connection === "open") { this.reconnectAttempt = 0; this.outageGuard.connectionOpened(); this.log.info({ event: "whatsapp_connected", archivedChats: this.state.countArchived() }, "WhatsApp connected"); void this.backfillLocalLidMappings(socket); }
       if (update.connection === "close") this.onClose(socket, update.lastDisconnect?.error);
     });
     socket.ev.process(async (events: Record<string, any>) => {
@@ -125,7 +131,9 @@ export class WhatsAppWatcher {
   private onClose(socket: WASocket, error?: Error): void {
     if (this.socket !== socket || this.stopped) return; this.socket = undefined;
     const statusCode = error ? new Boom(error).output.statusCode : undefined;
-    if (statusCode === DisconnectReason.loggedOut) { this.log.error({ event: "whatsapp_logged_out" }, "WhatsApp logged out; manual pairing is required"); return; }
+    const loggedOut = statusCode === DisconnectReason.loggedOut;
+    this.outageGuard.connectionLost({ reason: loggedOut ? "logged_out" : statusCode === undefined ? "connection_closed" : DisconnectReason[statusCode] ?? "connection_closed", statusCode, manualPairingRequired: loggedOut });
+    if (loggedOut) { this.log.error({ event: "whatsapp_logged_out", statusCode }, "WhatsApp logged out; manual pairing is required"); return; }
     this.reconnectAttempt++; const delayMs = Math.min(60_000, 1000 * 2 ** Math.min(this.reconnectAttempt - 1, 6));
     this.log.warn({ event: "whatsapp_reconnect_scheduled", delayMs }, "WhatsApp disconnected; reconnect scheduled");
     this.reconnectTimer = setTimeout(() => { void this.connect(); }, delayMs);

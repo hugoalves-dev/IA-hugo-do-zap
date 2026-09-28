@@ -14,7 +14,7 @@ chmodSync(`${config.dataDir}/auth`, 0o700);
 const state = new WatcherState(config.dataDir, undefined, config.workOnlyNameRegex);
 const notifier = new Notifier(config, state, log);
 const scheduler = startScheduler(config, notifier, state, log);
-const whatsapp = new WhatsAppWatcher(config, state, log);
+const whatsapp = new WhatsAppWatcher(config, state, log, notifier);
 log.info({ event: "application_started", timezone: config.timezone, checkCron: config.checkCron, includeGroups: config.includeGroups, workDays: config.workDays, workWindows: config.workWindows, workOnlyNameRegex: config.workOnlyNameRegex.source }, "Watcher started");
 
 let stopping = false;

@@ -7,7 +7,7 @@ import { cleanUsername, isLidJid, isTechnicalDisplayName, phoneNumberFromPnJid, 
 
 export interface Chat { jid: string; archived: number; displayName: string | null; isGroup: number; updatedAt: string; notificationPolicy: NotificationPolicy }
 export interface ContactIdentity { jid: string; canonicalJid: string; displayName: string; phoneJid?: string; phoneNumber?: string; lidJid?: string; username?: string; remoteJidAlt?: string }
-export interface Pending extends ContactIdentity { messageCount: number; firstMessageAt: string; lastMessageAt: string; isGroup: boolean; notificationPolicy: NotificationPolicy }
+export interface Pending extends ContactIdentity { messageCount: number; firstMessageAt: string; lastMessageAt: string; lastMessagePreview: string | null; isGroup: boolean; notificationPolicy: NotificationPolicy }
 export type Snapshot = Pick<Pending, "jid" | "messageCount" | "firstMessageAt" | "lastMessageAt">;
 export interface IdentityObservation { preferredJid?: string; lidJid?: string; phoneJid?: string; username?: string; displayName?: string | null; displayNameSource?: IdentityNameSource }
 interface IdentityRow { canonical_jid: string; lid_jid: string | null; phone_jid: string | null; username: string | null; display_name: string | null; display_name_source: IdentityNameSource | null; updated_at: string }
@@ -22,7 +22,7 @@ export class WatcherState {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS watcher_state (contact_phone TEXT PRIMARY KEY, pending INTEGER NOT NULL DEFAULT 0, message_count INTEGER NOT NULL DEFAULT 0, first_message_at TEXT NULL, last_message_at TEXT NULL, last_notified_at TEXT NULL);
       CREATE TABLE IF NOT EXISTS chat_state (jid TEXT PRIMARY KEY, archived INTEGER NOT NULL DEFAULT 0, display_name TEXT NULL, is_group INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS pending_notification (jid TEXT PRIMARY KEY, message_count INTEGER NOT NULL DEFAULT 0, first_message_at TEXT NOT NULL, last_message_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pending_notification (jid TEXT PRIMARY KEY, message_count INTEGER NOT NULL DEFAULT 0, first_message_at TEXT NOT NULL, last_message_at TEXT NOT NULL, last_message_preview TEXT NULL);
       CREATE TABLE IF NOT EXISTS processed_message (message_hash TEXT PRIMARY KEY, seen_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS contact_identity (
         canonical_jid TEXT PRIMARY KEY,
@@ -36,6 +36,8 @@ export class WatcherState {
       CREATE INDEX IF NOT EXISTS contact_identity_username_idx ON contact_identity(username);
     `);
     const columns = this.db.pragma("table_info(chat_state)") as Array<{ name: string }>;
+    const pendingColumns = this.db.pragma("table_info(pending_notification)") as Array<{ name: string }>;
+    if (!pendingColumns.some((column) => column.name === "last_message_preview")) this.db.exec("ALTER TABLE pending_notification ADD COLUMN last_message_preview TEXT NULL");
     if (!columns.some((column) => column.name === "notification_policy")) this.db.exec("ALTER TABLE chat_state ADD COLUMN notification_policy TEXT NOT NULL DEFAULT 'ANYTIME'");
     this.db.exec("UPDATE chat_state SET notification_policy='ANYTIME' WHERE notification_policy NOT IN ('ANYTIME','WORK_ONLY')");
     this.db.transaction(() => {
@@ -97,9 +99,9 @@ export class WatcherState {
             this.db.prepare("UPDATE chat_state SET archived=?,display_name=?,is_group=?,notification_policy=?,updated_at=? WHERE jid=?").run(Math.max(keep.archived, oldChat.archived), mergedName.name, Math.max(keep.is_group, oldChat.is_group), classifyNotificationPolicy(mergedName.name, this.nameRegex), updatedAt, canonicalJid);
             this.db.prepare("DELETE FROM chat_state WHERE jid=?").run(oldCanonical);
           }
-          this.db.prepare(`INSERT INTO pending_notification(jid,message_count,first_message_at,last_message_at)
-            SELECT ?,message_count,first_message_at,last_message_at FROM pending_notification WHERE jid=?
-            ON CONFLICT(jid) DO UPDATE SET message_count=message_count+excluded.message_count,first_message_at=min(first_message_at,excluded.first_message_at),last_message_at=max(last_message_at,excluded.last_message_at)`).run(canonicalJid, oldCanonical);
+          this.db.prepare(`INSERT INTO pending_notification(jid,message_count,first_message_at,last_message_at,last_message_preview)
+            SELECT ?,p.message_count,p.first_message_at,p.last_message_at,p.last_message_preview FROM pending_notification p WHERE p.jid=? AND ?=1 AND EXISTS(SELECT 1 FROM chat_state target WHERE target.jid=? AND target.archived=1)
+            ON CONFLICT(jid) DO UPDATE SET message_count=message_count+excluded.message_count,first_message_at=min(first_message_at,excluded.first_message_at),last_message_at=max(last_message_at,excluded.last_message_at),last_message_preview=CASE WHEN excluded.last_message_at>=last_message_at THEN excluded.last_message_preview ELSE last_message_preview END`).run(canonicalJid, oldCanonical, oldChat.archived, canonicalJid);
           this.db.prepare("DELETE FROM pending_notification WHERE jid=?").run(oldCanonical);
         }
       }
@@ -145,6 +147,7 @@ export class WatcherState {
       ON CONFLICT(jid) DO UPDATE SET archived=COALESCE(?,archived),display_name=COALESCE(?,display_name),is_group=COALESCE(?,is_group),updated_at=excluded.updated_at,notification_policy=?`)
       .run(canonicalJid, Number(chat.archived ?? false), displayName, Number(chat.isGroup ?? canonicalJid.endsWith("@g.us")), at, policy,
         chat.archived === undefined ? null : Number(chat.archived), displayName, chat.isGroup === undefined ? null : Number(chat.isGroup), policy);
+    if (chat.archived === false) this.clearPendingForIdentity(canonicalJid);
     if (!canonicalJid.endsWith("@g.us")) this.observeIdentity({ preferredJid: canonicalJid, lidJid: isLidJid(canonicalJid) ? canonicalJid : undefined, phoneJid: pnJid(canonicalJid), username: usernameFromJid(canonicalJid), displayName: candidate, displayNameSource: "chat" });
     return { oldPolicy: previous?.notification_policy, newPolicy: policy, nameChanged: previous?.display_name !== displayName };
   }
@@ -169,21 +172,31 @@ export class WatcherState {
     const row = this.chatRow(this.canonicalFor(jid));
     return row ? { jid: row.jid, archived: row.archived, displayName: row.display_name, isGroup: row.is_group, updatedAt: row.updated_at, notificationPolicy: row.notification_policy } : undefined;
   }
-  recordIncoming(jid: string, identity: string, at = new Date().toISOString()): boolean {
+  private clearPendingForIdentity(canonicalJid: string): void {
+    const identity = this.identityFor(canonicalJid);
+    const aliases = [canonicalJid, identity?.lid_jid, identity?.phone_jid].filter((value): value is string => Boolean(value));
+    this.db.prepare(`DELETE FROM pending_notification WHERE jid IN (${aliases.map(() => "?").join(",")})`).run(...aliases);
+  }
+  recordIncoming(jid: string, identity: string, at = new Date().toISOString(), preview: string | null = null): boolean {
     const canonicalJid = this.canonicalFor(jid);
     const hash = createHash("sha256").update(identity).digest("hex");
     return this.db.transaction(() => {
+      if (!(this.db.prepare("SELECT 1 FROM chat_state WHERE jid=? AND archived=1").get(canonicalJid))) return false;
       if (!this.db.prepare("INSERT OR IGNORE INTO processed_message(message_hash,seen_at) VALUES(?,?)").run(hash, at).changes) return false;
-      this.db.prepare(`INSERT INTO pending_notification(jid,message_count,first_message_at,last_message_at) VALUES(?,1,?,?)
-        ON CONFLICT(jid) DO UPDATE SET message_count=message_count+1,last_message_at=excluded.last_message_at`).run(canonicalJid, at, at);
+      this.db.prepare(`INSERT INTO pending_notification(jid,message_count,first_message_at,last_message_at,last_message_preview) VALUES(?,1,?,?,?)
+        ON CONFLICT(jid) DO UPDATE SET message_count=message_count+1,last_message_at=excluded.last_message_at,last_message_preview=excluded.last_message_preview`).run(canonicalJid, at, at, preview);
       return true;
     })();
   }
   getPending(limit = 50): Pending[] {
-    const rows = this.db.prepare("SELECT p.jid,p.message_count AS messageCount,p.first_message_at AS firstMessageAt,p.last_message_at AS lastMessageAt,c.is_group AS isGroup,c.notification_policy AS notificationPolicy FROM pending_notification p JOIN chat_state c USING(jid) ORDER BY p.first_message_at LIMIT ?").all(limit) as Array<{ jid: string; messageCount: number; firstMessageAt: string; lastMessageAt: string; isGroup: number; notificationPolicy: NotificationPolicy }>;
+    const rows = this.db.prepare("SELECT p.jid,p.message_count AS messageCount,p.first_message_at AS firstMessageAt,p.last_message_at AS lastMessageAt,p.last_message_preview AS lastMessagePreview,c.is_group AS isGroup,c.notification_policy AS notificationPolicy FROM pending_notification p JOIN chat_state c USING(jid) WHERE c.archived=1 ORDER BY p.first_message_at LIMIT ?").all(limit) as Array<{ jid: string; messageCount: number; firstMessageAt: string; lastMessageAt: string; lastMessagePreview: string | null; isGroup: number; notificationPolicy: NotificationPolicy }>;
     return rows.map((row) => ({ ...this.resolveIdentity(row.jid), ...row, isGroup: Boolean(row.isGroup) }));
   }
-  clearIfUnchanged(snapshots: Snapshot[]): number { return this.db.transaction(() => { const stmt = this.db.prepare("DELETE FROM pending_notification WHERE jid=? AND last_message_at=?"); let n = 0; for (const s of snapshots) n += stmt.run(s.jid, s.lastMessageAt).changes; return n; })(); }
+  getArchivedPending(chats: Pending[]): Pending[] {
+    const archived = new Set((this.db.prepare(`SELECT jid FROM chat_state WHERE archived=1 AND jid IN (${chats.map(() => "?").join(",") || "NULL"})`).all(...chats.map((chat) => chat.jid)) as Array<{ jid: string }>).map((row) => row.jid));
+    return chats.filter((chat) => archived.has(chat.jid));
+  }
+  clearIfUnchanged(snapshots: Snapshot[]): number { return this.db.transaction(() => { const stmt = this.db.prepare("DELETE FROM pending_notification WHERE jid=? AND last_message_at=? AND EXISTS(SELECT 1 FROM chat_state WHERE chat_state.jid=pending_notification.jid AND archived=1)"); let n = 0; for (const s of snapshots) n += stmt.run(s.jid, s.lastMessageAt).changes; return n; })(); }
   countArchived(): number { return (this.db.prepare("SELECT COUNT(*) AS n FROM chat_state WHERE archived=1").get() as { n: number }).n; }
   identityCount(): number { return (this.db.prepare("SELECT COUNT(*) AS n FROM contact_identity").get() as { n: number }).n; }
   lidsForLocalBackfill(): string[] { return (this.db.prepare("SELECT DISTINCT lid_jid AS jid FROM contact_identity WHERE lid_jid IS NOT NULL UNION SELECT jid FROM chat_state WHERE is_group=0 AND jid LIKE '%@lid'").all() as Array<{ jid: string }>).map((x) => x.jid); }

@@ -2,6 +2,7 @@ import type { Config } from "./config.js";
 import { isEligibleMessage, messageIdentity, type IncomingMessage } from "./message-filter.js";
 import type { WatcherState } from "./watcher-state.js";
 import { cleanUsername, isLidJid, pnJid, usernameFromJid } from "./contact-identity.js";
+import { extractMessagePreview } from "./message-preview.js";
 
 type Logger = { info: (data: object, message?: string) => void };
 export function persistMessageIdentity(message: Pick<IncomingMessage, "key">, state: WatcherState): void {
@@ -29,7 +30,8 @@ export function recordNotifyMessages(messages: IncomingMessage[], state: Watcher
     if (!chat) { log.info({ event: "archive_state_unknown", jidType: jid.endsWith("@g.us") ? "group" : "direct" }); continue; }
     if (!chat.archived) continue;
     const receivedAt = now();
-    const accepted = state.recordIncoming(chat.jid, messageIdentity({ ...message, key: { ...message.key, remoteJid: chat.jid } }), receivedAt.toISOString());
+    const preview = extractMessagePreview(message.message);
+    const accepted = state.recordIncoming(chat.jid, messageIdentity({ ...message, key: { ...message.key, remoteJid: chat.jid } }), receivedAt.toISOString(), preview);
     log.info({ event: accepted ? "archived_message_detected" : "duplicate_message_ignored", jidType: jid.endsWith("@g.us") ? "group" : "direct" });
   }
 }
