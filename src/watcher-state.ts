@@ -96,7 +96,8 @@ export class WatcherState {
           else {
             const mergedName = resolveContactDisplayName({ existingName: name.name, existingSource: name.source, candidates: [{ name: oldChat.display_name, source: "legacy" }], fallbackJid: canonicalJid });
             const updatedAt = oldChat.updated_at > keep.updated_at ? oldChat.updated_at : keep.updated_at;
-            this.db.prepare("UPDATE chat_state SET archived=?,display_name=?,is_group=?,notification_policy=?,updated_at=? WHERE jid=?").run(Math.max(keep.archived, oldChat.archived), mergedName.name, Math.max(keep.is_group, oldChat.is_group), classifyNotificationPolicy(mergedName.name, this.nameRegex), updatedAt, canonicalJid);
+            const latestArchiveState = oldChat.updated_at > keep.updated_at ? oldChat.archived : keep.archived;
+            this.db.prepare("UPDATE chat_state SET archived=?,display_name=?,is_group=?,notification_policy=?,updated_at=? WHERE jid=?").run(latestArchiveState, mergedName.name, Math.max(keep.is_group, oldChat.is_group), classifyNotificationPolicy(mergedName.name, this.nameRegex), updatedAt, canonicalJid);
             this.db.prepare("DELETE FROM chat_state WHERE jid=?").run(oldCanonical);
           }
           this.db.prepare(`INSERT INTO pending_notification(jid,message_count,first_message_at,last_message_at,last_message_preview)
@@ -104,6 +105,11 @@ export class WatcherState {
             ON CONFLICT(jid) DO UPDATE SET message_count=message_count+excluded.message_count,first_message_at=min(first_message_at,excluded.first_message_at),last_message_at=max(last_message_at,excluded.last_message_at),last_message_preview=CASE WHEN excluded.last_message_at>=last_message_at THEN excluded.last_message_preview ELSE last_message_preview END`).run(canonicalJid, oldCanonical, oldChat.archived, canonicalJid);
           this.db.prepare("DELETE FROM pending_notification WHERE jid=?").run(oldCanonical);
         }
+      }
+      const mergedChat = this.chatRow(canonicalJid);
+      if (mergedChat?.archived === 0) {
+        const aliases = [...new Set([canonicalJid, ...canonicalMatches])];
+        this.db.prepare(`DELETE FROM pending_notification WHERE jid IN (${aliases.map(() => "?").join(",")})`).run(...aliases);
       }
       if (matches.length) this.db.prepare(`DELETE FROM contact_identity WHERE canonical_jid IN (${matches.map(() => "?").join(",")})`).run(...matches.map((r) => r.canonical_jid));
       const mergedLid = lidJid ?? matches.find((r) => r.lid_jid)?.lid_jid ?? null;
@@ -172,10 +178,14 @@ export class WatcherState {
     const row = this.chatRow(this.canonicalFor(jid));
     return row ? { jid: row.jid, archived: row.archived, displayName: row.display_name, isGroup: row.is_group, updatedAt: row.updated_at, notificationPolicy: row.notification_policy } : undefined;
   }
-  private clearPendingForIdentity(canonicalJid: string): void {
+  clearPendingForChat(jid: string): number {
+    const canonicalJid = this.canonicalFor(jid);
     const identity = this.identityFor(canonicalJid);
-    const aliases = [canonicalJid, identity?.lid_jid, identity?.phone_jid].filter((value): value is string => Boolean(value));
-    this.db.prepare(`DELETE FROM pending_notification WHERE jid IN (${aliases.map(() => "?").join(",")})`).run(...aliases);
+    const aliases = [...new Set([jid, canonicalJid, identity?.lid_jid, identity?.phone_jid].filter((value): value is string => Boolean(value)))];
+    return this.db.prepare(`DELETE FROM pending_notification WHERE jid IN (${aliases.map(() => "?").join(",")})`).run(...aliases).changes;
+  }
+  private clearPendingForIdentity(canonicalJid: string): void {
+    this.clearPendingForChat(canonicalJid);
   }
   recordIncoming(jid: string, identity: string, at = new Date().toISOString(), preview: string | null = null): boolean {
     const canonicalJid = this.canonicalFor(jid);

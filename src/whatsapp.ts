@@ -4,7 +4,7 @@ import pino, { type Logger } from "pino";
 import qrcode from "qrcode-terminal";
 import type { Config } from "./config.js";
 import { shouldProcessUpsert, type IncomingMessage } from "./message-filter.js";
-import { persistMessageIdentity, recordNotifyMessages } from "./notify-handler.js";
+import { clearReadNotificationQueues, persistMessageIdentity, recordNotifyMessages } from "./notify-handler.js";
 import type { WatcherState } from "./watcher-state.js";
 import type { Notifier } from "./notifier.js";
 import { ConnectionOutageGuard } from "./connection-events.js";
@@ -57,6 +57,7 @@ export class WhatsAppWatcher {
         if (entry.archived) this.log.info({ event: "archived_chat_loaded", jidType: jid.endsWith("@g.us") ? "group" : "direct" });
       }
       if (upsert && shouldProcessUpsert(upsert.type)) recordNotifyMessages(upsert.messages as IncomingMessage[], this.state, this.config, this.log);
+      clearReadNotificationQueues({ chatsUpdate: events["chats.update"] ?? [], messagesUpdate: events["messages.update"] ?? [] }, this.state, this.log);
       for (const update of (events["chats.update"] ?? []) as any[]) {
         const jid = update.id ?? update.jid; if (!jid) continue;
         const old = this.state.getChat(jid); const archived = update.archived;
@@ -138,5 +139,5 @@ export class WhatsAppWatcher {
     this.log.warn({ event: "whatsapp_reconnect_scheduled", delayMs }, "WhatsApp disconnected; reconnect scheduled");
     this.reconnectTimer = setTimeout(() => { void this.connect(); }, delayMs);
   }
-  async stop(): Promise<void> { this.stopped = true; if (this.reconnectTimer) clearTimeout(this.reconnectTimer); this.socket?.end(undefined); this.socket = undefined; }
+  async stop(): Promise<void> { this.stopped = true; this.outageGuard.cancelPending(); if (this.reconnectTimer) clearTimeout(this.reconnectTimer); this.socket?.end(undefined); this.socket = undefined; }
 }

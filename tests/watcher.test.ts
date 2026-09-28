@@ -4,12 +4,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { WAMessageStatus } from "@whiskeysockets/baileys";
 import { classifyNotificationPolicy, isWithinWorkHours, localIso, loadConfig, type Config } from "../src/config.js";
 import { isEligibleMessage, shouldProcessUpsert, type IncomingMessage } from "../src/message-filter.js";
 import { Notifier } from "../src/notifier.js";
 import { extractMessagePreview } from "../src/message-preview.js";
 import { ConnectionOutageGuard } from "../src/connection-events.js";
-import { persistMessageIdentity, recordNotifyMessages } from "../src/notify-handler.js";
+import { clearReadNotificationQueues, persistMessageIdentity, recordNotifyMessages } from "../src/notify-handler.js";
 import { WatcherState } from "../src/watcher-state.js";
 
 const config: Config = { timezone: "America/Sao_Paulo", checkCron: "* * * * *", workDays: [1,2,3,4,5], workWindows: [{start:"08:00",end:"12:00"},{start:"13:30",end:"17:30"}], queueOutsideWorkHours: false, includeGroups: true, notificationMaxChats: 50, workOnlyNameRegex: /(^|[^A-Z0-9])JC([^A-Z0-9]|$)/i, webhookUrl: "http://n8n:5678/webhook/test", webhookSecret: "secret", dataDir: "/tmp", logLevel: "silent" };
@@ -142,6 +143,32 @@ test("new message during HTTP request survives snapshot clearing", () => withSta
   const n=new Notifier(config,s,quiet,async()=>{s.recordIncoming("a@s.whatsapp.net","a2","2026-09-25T10:01:00-03:00");return new Response(null,{status:200});},()=>new Date("2026-09-25T13:37:00Z"));
   await n.notifyPending(); assert.equal(s.getPending()[0].messageCount,2);
 }));
+test("marking an archived chat read removes its queued digest before flush", () => withState(async (s) => {
+  s.applyChat({jid:"read@s.whatsapp.net",archived:true,displayName:"Read contact"});
+  s.recordIncoming("read@s.whatsapp.net","incoming-1","2026-09-25T10:00:00Z");
+  assert.equal(clearReadNotificationQueues({chatsUpdate:[{id:"read@s.whatsapp.net",unreadCount:0}]},s,quiet),1);
+  let requests=0; await new Notifier(config,s,quiet,async()=>{requests++;return new Response(null,{status:204});}).notifyPending();
+  assert.equal(requests,0); assert.equal(s.getPending().length,0);
+  assert.equal(s.recordIncoming("read@s.whatsapp.net","incoming-2","2026-09-25T10:01:00Z"),true);
+  assert.equal(s.getPending()[0].messageCount,1);
+}));
+test("message READ update clears the canonical chat queue but sent-message status does not", () => withState((s) => {
+  s.applyChat({jid:"140763375603814@lid",archived:true,displayName:"Contact"});
+  s.observeIdentity({preferredJid:"140763375603814@lid",lidJid:"140763375603814@lid",phoneJid:"5514999991234@s.whatsapp.net"});
+  s.recordIncoming("140763375603814@lid","incoming-1");
+  assert.equal(clearReadNotificationQueues({messagesUpdate:[{key:{remoteJid:"5514999991234@s.whatsapp.net",fromMe:true},update:{status:WAMessageStatus.READ}}]},s,quiet),0);
+  assert.equal(s.getPending().length,1);
+  assert.equal(clearReadNotificationQueues({messagesUpdate:[{key:{remoteJid:"5514999991234@s.whatsapp.net",fromMe:false},update:{status:WAMessageStatus.READ}}]},s,quiet),1);
+  assert.equal(s.getPending().length,0);
+}));
+test("zero unread count clears direct and group pending rows, positive or missing count preserves them", () => withState((s) => {
+  s.applyChat({jid:"direct@s.whatsapp.net",archived:true}); s.applyChat({jid:"group@g.us",archived:true,isGroup:true});
+  s.recordIncoming("direct@s.whatsapp.net","direct-1"); s.recordIncoming("group@g.us","group-1");
+  assert.equal(clearReadNotificationQueues({chatsUpdate:[{id:"direct@s.whatsapp.net",unreadCount:2},{id:"group@g.us"}]},s,quiet),0);
+  assert.equal(s.getPending().length,2);
+  assert.equal(clearReadNotificationQueues({chatsUpdate:[{id:"direct@s.whatsapp.net",unreadCount:0},{id:"group@g.us",unreadCount:0}]},s,quiet),2);
+  assert.equal(s.getPending().length,0);
+}));
 test("pending archived message is removed when its chat becomes unarchived", () => withState((s,dir) => {
   s.applyChat({jid:"archived@s.whatsapp.net",archived:true});
   s.recordIncoming("archived@s.whatsapp.net","one","2026-09-25T10:00:00Z");
@@ -170,6 +197,16 @@ test("LID and PN aliases cannot bypass current archived state and rearchive star
   assert.equal(s.recordIncoming("5514999991234@s.whatsapp.net","new"),true);
   assert.equal(s.getPending().length,1);
 }));
+test("identity merge keeps the latest unarchived alias state and drops its pending messages", () => withState((s) => {
+  s.applyChat({jid:"16600233177299@lid",archived:true,displayName:"Abigail Geovana"},"2026-09-28T12:00:00.000Z");
+  s.recordIncoming("16600233177299@lid","old-pending","2026-09-28T12:01:00.000Z");
+  s.applyChat({jid:"5511999988776@s.whatsapp.net",archived:false},"2026-09-28T12:02:00.000Z");
+  s.observeIdentity({preferredJid:"16600233177299@lid",lidJid:"16600233177299@lid",phoneJid:"5511999988776@s.whatsapp.net"});
+  assert.equal(s.getChat("16600233177299@lid")?.archived,0);
+  assert.equal(s.getChat("5511999988776@s.whatsapp.net")?.archived,0);
+  assert.equal(s.getPending().length,0);
+  assert.equal(s.recordIncoming("5511999988776@s.whatsapp.net","after-unarchive"),false);
+}));
 test("message preview extracts text, captions, fallbacks, whitespace and truncates", () => {
   assert.equal(extractMessagePreview({conversation:" hello\n  there "}),"hello there");
   assert.equal(extractMessagePreview({extendedTextMessage:{text:"extended text"}}),"extended text");
@@ -191,19 +228,24 @@ test("latest incoming message replaces the persisted preview and is sent to the 
   let body:any; await new Notifier(config,s,quiet,async(_u,i)=>{body=JSON.parse(String(i?.body));return new Response(null,{status:200});}).notifyPending();
   assert.equal(body.eventType,"archived_messages"); assert.equal(body.chats[0].lastMessagePreview,"latest message");
 }));
-test("connection loss emits once per outage and resets on reconnect", async () => {
-  const sent:any[]=[]; const guard=new ConnectionOutageGuard((event)=>{sent.push(event);});
+test("short reconnects do not alert; sustained disconnect alerts once and reconnect resets the guard", async () => {
+  const sent:any[]=[]; const Guard:any=ConnectionOutageGuard; const guard=new Guard((event:any)=>{sent.push(event);},undefined,undefined,20);
   guard.connectionOpened();
   guard.connectionLost({reason:"socket closed",statusCode:503,manualPairingRequired:false});
   guard.connectionLost({reason:"retry",statusCode:503,manualPairingRequired:false});
+  guard.connectionOpened();
   await new Promise((resolve)=>setImmediate(resolve));
+  assert.equal(sent.length,0);
+  guard.connectionLost({reason:"socket closed",statusCode:503,manualPairingRequired:false});
+  await new Promise((resolve)=>setTimeout(resolve,20));
   assert.equal(sent.length,1);
+  guard.connectionLost({reason:"retry",statusCode:503,manualPairingRequired:false});
   guard.connectionOpened(); guard.connectionLost({reason:"logged out",statusCode:401,manualPairingRequired:true});
   await new Promise((resolve)=>setImmediate(resolve));
   assert.equal(sent.length,2); assert.equal(sent[1].manualPairingRequired,true); assert.equal(sent[1].eventType,"whatsapp_connection_lost");
 });
 test("failed connection alert does not block reconnect scheduling", async () => {
-  let scheduled=false; const guard=new ConnectionOutageGuard(async()=>{throw new Error("webhook down");},{warn(){}});
+  let scheduled=false; const Guard:any=ConnectionOutageGuard; const guard=new Guard(async()=>{throw new Error("webhook down");},{warn(){}},()=>new Date(),1);
   guard.connectionOpened();
   guard.connectionLost({reason:"closed",statusCode:503,manualPairingRequired:false});
   scheduled=true; await new Promise((resolve)=>setImmediate(resolve)); assert.equal(scheduled,true);
