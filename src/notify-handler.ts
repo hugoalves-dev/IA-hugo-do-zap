@@ -4,6 +4,7 @@ import { isEligibleMessage, messageIdentity, type IncomingMessage } from "./mess
 import type { WatcherState } from "./watcher-state.js";
 import { cleanUsername, isLidJid, pnJid, usernameFromJid } from "./contact-identity.js";
 import { extractMessagePreview } from "./message-preview.js";
+import { isNeverNotifyGroup } from "./config.js";
 
 type Logger = { info: (data: object, message?: string) => void };
 interface ReadEvents {
@@ -55,6 +56,11 @@ export function recordNotifyMessages(messages: IncomingMessage[], state: Watcher
     const jid = message.key.remoteJid!; const chat = state.getChat(jid);
     if (!chat) { log.info({ event: "archive_state_unknown", jidType: jid.endsWith("@g.us") ? "group" : "direct" }); continue; }
     if (!chat.archived) continue;
+    if (isNeverNotifyGroup(chat.displayName, Boolean(chat.isGroup), config.neverNotifyGroupNames)) {
+      state.clearPendingForChat(chat.jid);
+      log.info({ event: "notification_suppressed_by_group_name" });
+      continue;
+    }
     const receivedAt = now();
     const preview = extractMessagePreview(message.message);
     const accepted = state.recordIncoming(chat.jid, messageIdentity({ ...message, key: { ...message.key, remoteJid: chat.jid } }), receivedAt.toISOString(), preview);

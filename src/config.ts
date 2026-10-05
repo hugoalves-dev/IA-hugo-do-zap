@@ -1,6 +1,6 @@
 export interface Config {
   timezone: string; checkCron: string; workDays: number[]; workWindows: Array<{ start: string; end: string }>;
-  queueOutsideWorkHours: boolean; includeGroups: boolean; notificationMaxChats: number; workOnlyNameRegex: RegExp;
+  queueOutsideWorkHours: boolean; includeGroups: boolean; notificationMaxChats: number; workOnlyNameRegex: RegExp; neverNotifyGroupNames: string[];
   webhookUrl: string; webhookSecret: string; dataDir: string; logLevel: string;
 }
 
@@ -22,10 +22,11 @@ export function loadConfig(env = process.env): Config {
   let workOnlyNameRegex: RegExp;
   try { workOnlyNameRegex = new RegExp(regexSource, "i"); }
   catch (error) { throw new Error(`WORK_ONLY_NAME_REGEX is invalid: ${error instanceof Error ? error.message : "invalid regular expression"}`); }
+  const neverNotifyGroupNames = (env.NEVER_NOTIFY_GROUP_NAMES ?? "233/234").split(",").map(normalizeDisplayName).filter(Boolean);
   return {
     timezone: env.TZ || "America/Sao_Paulo", checkCron: env.CHECK_CRON || "* * * * *", workDays, workWindows,
     queueOutsideWorkHours: env.QUEUE_OUTSIDE_WORK_HOURS === "true", includeGroups: env.INCLUDE_GROUPS !== "false",
-    notificationMaxChats: Math.max(1, Number.parseInt(env.NOTIFICATION_MAX_CHATS || "50", 10) || 50), workOnlyNameRegex,
+    notificationMaxChats: Math.max(1, Number.parseInt(env.NOTIFICATION_MAX_CHATS || "50", 10) || 50), workOnlyNameRegex, neverNotifyGroupNames,
     webhookUrl, webhookSecret, dataDir: env.DATA_DIR || "/app/data", logLevel: env.LOG_LEVEL || "info",
   };
 }
@@ -33,6 +34,11 @@ export function loadConfig(env = process.env): Config {
 export type NotificationPolicy = "WORK_ONLY" | "ANYTIME";
 export function normalizeDisplayName(name: string | null | undefined): string {
   return (name ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toUpperCase();
+}
+export function isNeverNotifyGroup(name: string | null | undefined, isGroup: boolean, blockedNames: string[]): boolean {
+  if (!isGroup) return false;
+  const normalized = normalizeDisplayName(name);
+  return Boolean(normalized) && blockedNames.some((blocked) => normalizeDisplayName(blocked) === normalized);
 }
 const defaultWorkOnlyRegex = /(^|[^A-Z0-9])JC([^A-Z0-9]|$)/i;
 export function classifyNotificationPolicy(name: string | null | undefined, regex: RegExp = defaultWorkOnlyRegex): NotificationPolicy {

@@ -1,4 +1,4 @@
-import { isWithinWorkHours, localIso, type Config } from "./config.js";
+import { isNeverNotifyGroup, isWithinWorkHours, localIso, type Config } from "./config.js";
 import type { WatcherState } from "./watcher-state.js";
 import type { ConnectionLostEvent } from "./connection-events.js";
 type Logger = { info: (data: object, message?: string) => void; warn: (data: object, message?: string) => void; error: (data: object, message?: string) => void };
@@ -6,8 +6,18 @@ export class Notifier {
   constructor(private config: Config, private state: WatcherState, private log: Logger, private fetcher: typeof fetch = fetch, private now: () => Date = () => new Date()) {}
   async notifyPending(): Promise<void> {
     const pending = this.state.getArchivedPending(this.state.getPending(this.config.notificationMaxChats));
+    const allowedByName = pending.filter((chat) => !isNeverNotifyGroup(chat.displayName, chat.isGroup, this.config.neverNotifyGroupNames));
+    for (const chat of pending) if (!allowedByName.includes(chat)) this.state.clearPendingForChat(chat.jid);
     const inWorkWindow = isWithinWorkHours(this.now(), this.config);
-    const currentPending = this.state.getArchivedPending(pending);
+    const currentPending = this.state.getArchivedPending(allowedByName).filter((chat) => {
+      const current = this.state.getChat(chat.jid);
+      if (!current?.archived) return false;
+      if (isNeverNotifyGroup(current.displayName, Boolean(current.isGroup), this.config.neverNotifyGroupNames)) {
+        this.state.clearPendingForChat(chat.jid);
+        return false;
+      }
+      return true;
+    });
     const chats = currentPending.filter((chat) => chat.notificationPolicy !== "WORK_ONLY" || inWorkWindow);
     const deferredWorkOnlyChats = currentPending.filter((chat) => chat.notificationPolicy === "WORK_ONLY" && !inWorkWindow).length;
     this.log.info({ event: "notification_flush_started", pendingChats: pending.length, eligibleChats: chats.length, deferredWorkOnlyChats });

@@ -13,7 +13,7 @@ import { ConnectionOutageGuard } from "../src/connection-events.js";
 import { clearReadNotificationQueues, persistMessageIdentity, recordNotifyMessages } from "../src/notify-handler.js";
 import { WatcherState } from "../src/watcher-state.js";
 
-const config: Config = { timezone: "America/Sao_Paulo", checkCron: "* * * * *", workDays: [1,2,3,4,5], workWindows: [{start:"08:00",end:"12:00"},{start:"13:30",end:"17:30"}], queueOutsideWorkHours: false, includeGroups: true, notificationMaxChats: 50, workOnlyNameRegex: /(^|[^A-Z0-9])JC([^A-Z0-9]|$)/i, webhookUrl: "http://n8n:5678/webhook/test", webhookSecret: "secret", dataDir: "/tmp", logLevel: "silent" };
+const config: Config = { timezone: "America/Sao_Paulo", checkCron: "* * * * *", workDays: [1,2,3,4,5], workWindows: [{start:"08:00",end:"12:00"},{start:"13:30",end:"17:30"}], queueOutsideWorkHours: false, includeGroups: true, notificationMaxChats: 50, workOnlyNameRegex: /(^|[^A-Z0-9])JC([^A-Z0-9]|$)/i, neverNotifyGroupNames: ["233/234"], webhookUrl: "http://n8n:5678/webhook/test", webhookSecret: "secret", dataDir: "/tmp", logLevel: "silent" };
 const msg = (jid: string, id = "id", extra: Partial<IncomingMessage["key"]> = {}, message: Record<string, unknown> = { conversation: "not persisted" }): IncomingMessage => ({ key: { remoteJid: jid, id, fromMe: false, ...extra }, message });
 const quiet = { info() {}, warn() {}, error() {} };
 async function withState(run: (s: WatcherState, dir: string) => Promise<void> | void): Promise<void> { const dir=mkdtempSync(join(tmpdir(),"wa-test-")); const s=new WatcherState(dir); try { await run(s,dir); } finally { s.close(); rmSync(dir,{recursive:true,force:true}); } }
@@ -39,6 +39,10 @@ test("normalizes and classifies standalone JC tokens without digit or letter fal
 });
 test("rejects an invalid configurable work-only name regex", () => {
   assert.throws(() => loadConfig({ N8N_WEBHOOK_URL:"http://n8n:5678/hook", N8N_WEBHOOK_SECRET:"secret", WORK_ONLY_NAME_REGEX:"[" }), /WORK_ONLY_NAME_REGEX/);
+});
+test("configures normalized group names that must never notify", () => {
+  const loaded = loadConfig({ N8N_WEBHOOK_URL:"http://n8n:5678/hook", N8N_WEBHOOK_SECRET:"secret", NEVER_NOTIFY_GROUP_NAMES:"233/234,Muted Group" });
+  assert.deepEqual(loaded.neverNotifyGroupNames,["233/234","MUTED GROUP"]);
 });
 test("migrates schema, loads archive state, tracks archive changes and removes deleted chats", () => withState((s) => {
   s.applyChats([{id:"a@s.whatsapp.net",archived:true},{id:"g@g.us",archived:false}]);
@@ -128,6 +132,19 @@ test("notify handling queues archived messages regardless of work hours", () => 
   recordNotifyMessages([msg("g@g.us","group-disabled")],s,{...config,includeGroups:false},quiet,()=>now);
   recordNotifyMessages([msg("archived@s.whatsapp.net","outside")],s,config,quiet,()=>new Date("2026-09-25T21:00:00Z"));
   assert.equal(s.getPending().find(r=>r.jid==="g@g.us")?.messageCount,1); assert.equal(s.getPending().find(r=>r.jid==="archived@s.whatsapp.net")?.messageCount,2);
+}));
+test("never-notify group names are blocked at collection and flush, including existing pending rows", () => withState(async (s) => {
+  s.applyChat({jid:"muted@g.us",archived:true,displayName:"  233/234  ",isGroup:true});
+  s.applyChat({jid:"allowed@g.us",archived:true,displayName:"233/234 Updates",isGroup:true});
+  s.applyChat({jid:"direct@s.whatsapp.net",archived:true,displayName:"233/234",isGroup:false});
+  s.recordIncoming("muted@g.us","stale-pending","2026-09-25T10:00:00Z");
+  recordNotifyMessages([msg("muted@g.us","new-muted"),msg("allowed@g.us","allowed"),msg("direct@s.whatsapp.net","direct")],s,config,quiet);
+  let requests=0; let payload:any;
+  const n=new Notifier(config,s,quiet,async(_url,init)=>{requests++;payload=JSON.parse(String(init?.body));return new Response(null,{status:204});},()=>new Date("2026-09-25T13:37:00Z"));
+  await n.notifyPending();
+  assert.equal(requests,1);
+  assert.deepEqual(payload.chats.map((chat:any)=>chat.jid),["allowed@g.us","direct@s.whatsapp.net"]);
+  assert.equal(s.getPending().length,0);
 }));
 test("outside hours sends ANYTIME only, retains WORK_ONLY, and clears sent snapshots", () => withState(async (s) => {
   s.applyChat({jid:"5514999991234@s.whatsapp.net",archived:true,displayName:"João"}); s.applyChat({jid:"b@g.us",archived:true,displayName:"Grupo JC"});
