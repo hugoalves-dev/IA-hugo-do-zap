@@ -76,7 +76,9 @@ Na migração, preservar o watcher TypeScript/Baileys atual e suas tabelas sem s
 - Confirmar autenticação, forma de entrega, retries e tratamento de erro dos **webhooks da versão escolhida**. **Não presumir** outbox durável, `eventId` nativo, assinatura HMAC, garantia de entrega pelo menos uma vez ou ordem por chat se o produto não documentar/demonstrar essas capacidades.
 - Verificar segurança e dependências do fork: origem exata do código, build reproduzível, commit fixo, compatibilidade de versão, alterações de privacidade e exposição de API. Caso seja escolhido, registrar explicitamente que a manutenção é de terceiro não oficial.
 
-**Infraestrutura:** usar Docker Compose em rede privada. A instalação de referência da Evolution API v2 utiliza **PostgreSQL e Redis**, além do container da API, conforme documentação oficial https://github.com/evolution-foundation/docs-evolution/blob/main/v2/en/install/docker.mdx. Dimensionar o conjunto na VPS antes do deploy; serviços existentes só podem ser reaproveitados se isolamento, credenciais e compatibilidade estiverem verificados. O Spring usa banco próprio, sem escrita direta no banco da Evolution. Não adicionar Kafka, RabbitMQ, Kubernetes nem novo gateway TypeScript só por preferência arquitetural.
+**Infraestrutura:** usar Docker Compose em rede privada. A Evolution API v2 usa PostgreSQL e Redis, conforme documentação oficial https://github.com/evolution-foundation/docs-evolution/blob/main/v2/en/install/docker.mdx. **Reutilizar a instância PostgreSQL existente na VPS** para Evolution e Spring, com **bancos lógicos, usuários e permissões próprios** para cada aplicação, sem criar outro servidor PostgreSQL por padrão. Validar disponibilidade, compatibilidade, pool total, backup/restauração e rede interna; providenciar Redis compatível para Evolution, com isolamento. Não adicionar Kafka, RabbitMQ, Kubernetes ou gateway TypeScript próprio no MVP.
+
+**Mensageria:** começar com **webhook HTTP Evolution API → Spring Boot → inbox/jobs/outbox PostgreSQL**. O PostgreSQL provê fila durável interna depois do evento recebido. Isso não recupera eventos perdidos antes de chegarem ao Spring. A Evolution API suporta saídas RabbitMQ e Kafka conforme configuração do projeto (https://github.com/evolution-foundation/evolution-api/blob/main/.env.example), mas **nenhum broker deve ser incluído sem necessidade demonstrada**. Se a POC comprovar falha de confiabilidade no transporte HTTP e a distribuição selecionada expuser os eventos corretos no broker, comparar **RabbitMQ primeiro** (publisher confirms, durable queues e manual consumer acks: https://www.rabbitmq.com/docs/confirms), antes de Kafka (replay/múltiplos consumidores/alto volume, não previstos para conta pessoal: https://kafka.apache.org/40/design/design/). Testar na versão escolhida tanto as garantias reais de entrega quanto preservação de `archived`, reconexão e LID/PN. Broker não corrige `archived` descartado pela Evolution antes da publicação.
 
 **Contrato e segurança:** o Spring expõe receptor interno de webhooks; valida tamanho, schema, instância, origem e mecanismo de autenticação **efetivamente configurável na versão testada**. Se a Evolution não fornecer autenticação adequada por evento, restringir exposição pela rede Docker e interpor proxy de ingress com autenticação quando necessário, sem fingir que HMAC existe nativamente. Definir chave idempotente composta a partir de identificadores **estáveis e presentes** no payload (ou de derivação testada), persistir inbox antes de responder sucesso e tratar redelivery. Estados de arquivamento fora de ordem ou desconhecidos bloqueiam ações; reconciliar em vez de inferir. Identificar lacunas irrecuperáveis e suspender o motor real.
 
@@ -119,7 +121,7 @@ Cada recurso novo (`ai_classification`, `intelligent_alerts`, `auto_reply`) nasc
 ## 6. Pipeline e tratamento de erros
 
 1. A **Evolution API oficial**, ou somente se necessário o **fork AlmogCohen validado**, recebe eventos WhatsApp, envia os webhooks configurados ao receptor HTTP privado do Spring e mantém sessão/infra de integração próprias. Durante a POC o watcher TypeScript produtivo continua independente.
-2. Spring valida o formato, a identidade da instância e a autenticação configurada/protegida no ingress. A partir de dados realmente existentes, constrói chave idempotente, persiste `inbox_events` no `automation.db` e só confirma o HTTP após persistência. Duplicatas recebem ACK idempotente. **Não há garantia presumida** de webhook persistente ou retries pela Evolution; verificar e registrar o comportamento.
+2. Spring valida o formato, a identidade da instância e a autenticação configurada/protegida no ingress. A partir de dados realmente existentes, constrói chave idempotente, persiste `inbox_events` no PostgreSQL e só confirma o HTTP após commit. Duplicatas recebem ACK idempotente. **Não há garantia presumida** de webhook persistente ou retries pela Evolution; verificar e registrar o comportamento.
 3. Atualiza snapshot e aliases, aplicando o estado `archived` somente quando conhecido e conciliável. Reconcilia sincronização inicial e pós-reconexão; se não houver maneira confiável de provar o estado, falha fechada e não dispara nova ação real.
 4. Processa mensagens novas de chats arquivados com debounce de **10s de inatividade** e **30s máximos** por lote, separando remetentes de grupo.
 5. Resolve `global → profile → override`, disponibilidade e gatilhos; classifica por `ClassificationService` quando o filtro determinístico pedir IA.
@@ -128,7 +130,7 @@ Cada recurso novo (`ai_classification`, `intelligent_alerts`, `auto_reply`) nasc
 
 **Fail-closed:** payload ausente/inválido, webhook inesperado, autenticação rejeitada, duplicidade conflitante, lacuna de eventos, estado de arquivamento incerto, perda de sincronização, timeout, falha de persistência, provedor IA indisponível, privacidade incompatível, baixa confiança ou orçamento excedido impedem novas ações reais. Classificação incerta gera `UNCERTAIN`, sem fallback por discordância subjetiva.
 
-**Entrega confiável:** armazenar inbox e decisões com estados recuperáveis no Spring, retries/backoff e auditoria. Para quedas e webhook não entregue, provar retry do provedor ou um mecanismo concreto de reconciliação/consulta; **não inventar** uma outbox dentro da Evolution API. Se o contrato da distribuição não permitir recuperar eventos importantes de modo seguro, falha no gate da POC. Ingestão e processamento são assíncronos no próprio serviço Spring, sem broker adicional no MVP.
+**Entrega confiável:** transação de recebimento persiste inbox/jobs no PostgreSQL; worker do próprio Spring processa por `FOR UPDATE SKIP LOCKED`, lease expirável, retries/backoff e falhas auditáveis; outbox PostgreSQL protege a passagem de decisão para tentativa de envio. Confirmar webhook HTTP apenas após commit. Não manter transação SQL aberta durante IA/requisição externa. Para webhook perdido, verificar retry/reconciliação da Evolution na distribuição efetiva; **não inventar** uma outbox dentro da Evolution. Se eventos essenciais não forem recuperáveis, reprovar POC. Sem broker adicional no MVP.
 
 **Isolamento:** falhas da Evolution API ou do Spring durante testes não podem alterar fluxo, dados, credenciais ou notificação do watcher legado. Nenhuma migração real sem checklist de rollback.
 
@@ -144,7 +146,7 @@ Cada recurso novo (`ai_classification`, `intelligent_alerts`, `auto_reply`) nasc
 - Antes de ativar uso pago, exigir orçamento diário e mensal **explicitamente configurados**; sem configuração, bloquear classificação paga. Aplicar reserva conservadora/contagem de chamadas no Spring e teto na chave do OpenRouter quando possível. Não habilitar recarga automática; alertar sobre aproximação/atingimento do limite. Monitorar consumo do Gemini à parte porque o limite local não substitui controles de faturamento da nuvem.
 - Logar provedor/modelo, tokenização informada pela API, estimativa/custo retornado, latência, resultado e motivos de fallback **sem** payload completo.
 - Enviar ao modelo somente o mínimo necessário, removendo telefones, identificadores internos e metadados supérfluos. Ter política para dados altamente sensíveis que não devem ser transmitidos.
-- Diferenciar explicitamente retenção do SQLite local de retenção no n8n, no Telegram e nos serviços de IA. O limite local **não apaga** dados já transmitidos a terceiros.
+- Diferenciar explicitamente retenção do **PostgreSQL do Spring**, do SQLite legado, dos bancos da Evolution, do n8n, do Telegram e dos serviços de IA. A purga em qualquer deles **não apaga** cópias já transmitidas a terceiros.
 
 Referências oficiais verificadas em 2026-10-16:
 - Gemini API pricing/data usage: https://ai.google.dev/gemini-api/docs/pricing
@@ -154,27 +156,34 @@ Referências oficiais verificadas em 2026-10-16:
 
 ## 8. Persistência, migração e retenção
 
-**Três propriedades independentes de dados:**
-- **Watcher legado TypeScript:** mantém seu `watcher.db` (WAL e schema atuais) até desativação explícita, inclusive identidade, mensagens pendentes e políticas legadas.
-- **Evolution API oficial/fork:** usa banco e caches **compatíveis com a distribuição testada**. Para o deploy Evolution API v2 de referência, prever PostgreSQL e Redis e volumes de sessão próprios, isolados, com backup e autenticação. O fork de AlmogCohen **não adiciona coluna `archived` no banco da Evolution**; webhooks corrigidos não substituem o snapshot mantido no Spring.
-- **Spring Boot:** é dono de `automation.db` (SQLite independente, WAL, migrações idempotentes/versionadas e transações curtas). Usar SQL explícito via JDBC/JdbcClient e driver SQLite, sem presumir suporte de ORM ou compartilhar escrita com a Evolution.
+**Novo Spring Boot: PostgreSQL obrigatório, sem SQLite.** Reutilizar a instância PostgreSQL já instalada na VPS, criando **banco lógico e usuário próprios** para a automação. O Spring não pode acessar/escrever nas tabelas da Evolution. Configurar HikariCP com pool pequeno dimensionado à VPS, PostgreSQL JDBC, migrações SQL com **Flyway**, backup e restauração testada, métricas e políticas de retenção. Preferir `JdbcClient`/Spring Data JDBC nas filas; JPA pode ser usado para domínio se simplificar. Validar com PostgreSQL real em testes (Testcontainers). Referências: https://docs.spring.io/spring-boot/reference/data/sql.html e https://docs.spring.io/spring-boot/how-to/data-initialization.html.
 
-| Domínio Spring | Responsabilidade |
+**Propriedade dos bancos:**
+- **Watcher TypeScript legado:** mantém `watcher.db` SQLite existente intacto até cutover autorizado; não migrar/deletar automaticamente.
+- **Evolution API oficial ou fork:** mantém seu próprio **banco PostgreSQL** e Redis/sessões/volumes, isolados. Pode usar a **mesma instância PostgreSQL física da VPS**, mas banco, usuário e permissões diferentes dos do Spring. A correção de webhook `archived` do fork **não** inclui armazenamento desse campo no Prisma/PostgreSQL da Evolution.
+- **Spring Boot:** persiste estado de arquivamento verificado, identidades, regras, simulações, operações e jobs em banco **PostgreSQL exclusivo**. Sem leitura/escrita cruzada nos bancos da Evolution ou do legado.
+
+| Domínio Spring/PostgreSQL | Responsabilidade |
 | --- | --- |
-| `inbox_events` | Chave idempotente derivada de payload real, recebimento, erros e recuperação |
-| `chat_snapshot` / `identity_aliases` | Arquivamento conhecido, evidência de sincronização e identidade LID/PN/JID |
-| `profiles` | Configurações compartilhadas, versão e habilitações |
-| `chat_policies` | Perfil e overrides por identidade |
-| `response_templates` | Texto versionado, situação e autorização |
-| `holiday_rules` | Feriados, pontos facultativos, origem e validade |
-| `simulation_decisions` | Decisões simuladas, motivos, custo e versão de regras/modelos |
-| `system_settings` | Flags, kill switch, retenção e orçamentos não secretos |
+| `inbox_events` | Eventos recebidos e deduplicados (`UNIQUE` por chave estável testada), metadata de origem e ingestão |
+| `processing_jobs` | Jobs duráveis, execução agendada, lease expirável, tentativas/backoff e falhas inspecionáveis |
+| `outbox_actions` | Operações n8n/Telegram e futuros comandos WhatsApp, tentativas e chaves de idempotência |
+| `chat_snapshot` e `identity_aliases` | Estado `archived` conhecido e mapeamentos LID/PN/JID |
+| `profiles` e `chat_policies` | Perfis, políticas e overrides por identidade |
+| `response_templates` | Templates versionados e autorizações explícitas |
+| `holiday_rules` | Feriados, pontos facultativos, fonte/validade |
+| `simulation_decisions` | Auditoria, decisões, modelos e custos |
+| `system_settings` | Flags, kill switch, orçamentos e limites não secretos |
 
-**Migração:** exportar políticas/identidades do watcher atual por leitura/exportação controlada e reconciliar com identidades e arquivamento que a Evolution API realmente reportar. Não assumir igualdade dos JIDs ou confiar só em nomes exibidos. Nenhum serviço novo escreve em `watcher.db` nem o Java escreve no PostgreSQL interno da Evolution. A migração de sessão WhatsApp deve preservar continuidade e fornecer rollback operacional; não compartilhar volumes de autenticação do Baileys legado com Evolution sem procedimento suportado e testado.
+**Fila dentro do PostgreSQL:** receptor valida webhook e persiste `inbox_events` e trabalho pendente em transação, confirmando HTTP somente após commit. Workers do Spring reivindicam lotes pequenos via `SELECT ... FOR UPDATE SKIP LOCKED`, alteram `status` e `locked_until` em transação curta, executam IA/regras fora do lock e concluem condicionados ao lease. Ao cair o processo, jobs abandonados voltam a ser elegíveis após timeout; retries com backoff, limite de tentativas e dead-letter lógica. Saídas são registradas em `outbox_actions` na mesma transação da decisão, reduzindo perda entre decisão e tentativa de envio. **Idempotência é obrigatória**; não prometer exatamente uma entrega nos serviços externos.
 
-**Retenção:** conteúdo de auditoria/trechos minimizados guardados por até **7 dias** no Spring e em quaisquer buffers próprios da nova arquitetura. Cobrir `pending_notification.last_message_preview` legado sem interromper fila/contagens. Aplicar revisão separada de retenção dos dados mantidos **pela própria Evolution API** (mensagens, mídia, logs, PostgreSQL/Redis, backups): não pressupor que nossa limpeza SQLite apague dados no fornecedor. Metadados sem texto mantidos por padrão por **90 dias**, configurável.
+**Sem broker no MVP:** PostgreSQL é a fila durável interna, com polling de worker. `LISTEN/NOTIFY` pode acordar workers, mas não substituir os dados persistidos/polling de recuperação: https://www.postgresql.org/docs/current/sql-listen.html. `SKIP LOCKED` foi projetado também para cenários de consumidores concorrentes de tabelas tipo fila: https://www.postgresql.org/docs/current/sql-select.html.
 
-Nunca guardar tokens ou segredos em SQLite; segredos da Evolution, webhook, Telegram e provedores IA somente em configuração protegida. Limitar superfície de rede e dados pessoais nos logs.
+**Migração:** exportar e reconciliar perfis e identidades do watcher existente, sem migrar só por nome exibido. Não compartilhar sessão Baileys legada com Evolution sem procedimento validado. Reconciliar estado `archived` efetivamente recebido na POC, preservar rollback e não duplicar notificações no n8n.
+
+**Retenção:** trechos mínimos e sanitizados **até 7 dias**, incluindo dados sensíveis eventualmente em inbox, processing_jobs e outbox, com purga automática testada. Metadados sem conteúdo por padrão **90 dias**, configuráveis. Cobrir `pending_notification.last_message_preview` legado sem quebrar suas filas. A limpeza Spring **não remove** textos persistidos pela própria Evolution, logs ou backups; revisar retenção desses recursos separadamente.
+
+Segredos e credenciais em configuração protegida, não em tabelas de domínio. Isolar acessos, volumes, usuários, backups e conexões.
 
 ## 9. Telegram e n8n
 
@@ -192,7 +201,7 @@ O Spring Boot recebe `getUpdates` por long polling como **único consumidor de u
 
 ## 10. Estratégia de testes e aceitação
 
-Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhooks da Evolution API oficial e do fork, fakes para Gemini, OpenRouter, n8n e Telegram, SQLite real em testes), com casos:
+Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhooks da Evolution API oficial e do fork, fakes para Gemini, OpenRouter, n8n e Telegram e **PostgreSQL real com Testcontainers** em testes), com casos:
 - Legado continua notificando com política/janelas pré-existentes, mesmo quando Shadow Mode ou IA falham.
 - Todas as conversas arquivadas podem ser simuladas; conversas normais e histórico remoto não são processados.
 - Desarquivar, read-status, exclusões, aliases LID/PN, eventos duplicados, grupos e mensagens do próprio usuário.
@@ -207,7 +216,8 @@ Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhoo
 - Telegram rejeita administrador incorreto, grupos, replay de callbacks e mudanças perigosas sem confirmação.
 - Payload legado no n8n permanece aceito e entrega os mesmos avisos.
 - Gate de POC **com a Evolution API oficial primeiro**: archived inicial, updates, desarquivamento, reconexão, contatos e grupos, chats já conhecidos do banco, mensagens fora de ordem e identidades LID/PN; repetir a matriz no fork somente se a oficial falhar.
-- Verificar autenticação **real** do webhook e restrição de rede; payload inválido, replay quando possível, duplicidade, ACK somente após persistência, queda do Java e eventuais retries realmente fornecidos pela Evolution. Sem outbox presumida. Se perder evento essencial sem recuperação confiável, reprovar a POC.
+- Verificar autenticação **real** do webhook e restrição de rede; payload inválido, replay quando possível, duplicidade, ACK somente após **commit PostgreSQL**, queda do Java e eventuais retries realmente fornecidos pela Evolution. Sem outbox presumida na Evolution. Se perder evento essencial sem recuperação confiável, reprovar a POC.
+- PostgreSQL existente com usuários/bancos distintos; migrations Flyway; worker `SKIP LOCKED` concorrente, leases expirados, retry, dead-letter, rollback e outbox idempotente com Testcontainers. Broker RabbitMQ somente se justificar por falha concreta de transporte.
 - Watcher legado mantém notificações durante toda POC e Shadow Mode; comparar resultados, evitar duplicidade no cutover, preservar sessão e testar rollback. Nem oficial nem fork podem ser promovidos sem critérios funcionais e de segurança.
 - Spring Boot 4.x/Java 25 executa em JAR JVM/container sem GraalVM, Native Image ou pipeline AOT; medir consumo na VPS.
 
@@ -217,7 +227,7 @@ Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhoo
 
 1. **POC isolada da Evolution API oficial:** fixar release/commit, preparar Docker Compose com PostgreSQL/Redis conforme requisitos, instância de teste e rede privada; avaliar webhook/snapshot `archived`, reconexão, sincronização inicial, LID/PN, grupos, latência e memória. Preservar 100% do watcher TypeScript produtivo.
 2. **Fallback explícito:** se a oficial falhar em critério obrigatório, documentar evidência e testar o fork https://github.com/AlmogCohen/evolution-api (`fork/2.3.7` fixada em commit) com **a mesma matriz**; validar segurança/build, sem confundir suporte a webhook com persistência em PostgreSQL. Se também falhar, interromper migração e manter o legado.
-3. **Núcleo Spring Boot 4.x / Java 25 na JVM:** Docker JVM, SQLite próprio, ingestão de webhooks, idempotência/inbox, snapshot e reconciliação com os dados realmente disponíveis; sem Native Image, GraalVM, AOT, Kafka ou gateway próprio de Baileys.
+3. **Núcleo Spring Boot 4.x / Java 25 na JVM:** Docker JVM, **PostgreSQL existente da VPS** com banco/usuário exclusivos e Flyway, webhooks, inbox/jobs/outbox transacionais, worker `FOR UPDATE SKIP LOCKED`, snapshot/reconciliação; sem Native Image, GraalVM, AOT, Kafka, RabbitMQ obrigatório ou gateway próprio de Baileys.
 4. **Shadow Mode:** debounce, perfis, disponibilidade/feriados, políticas, auditoria, segurança e testes fail-closed; sem envio WhatsApp e sem alertas simulados individuais.
 5. **IA e privacidade:** Gemini/OpenRouter, orçamento, filtros de dados, retenção, comparação de resultados e relatórios.
 6. **Administração Telegram via Spring:** comandos privados, menus, auditoria e relatório diário entregue pelo n8n preservando payload legado.
@@ -227,4 +237,4 @@ Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhoo
 
 ## 12. Aprovação e próximo gate
 
-Este documento registra as decisões do brainstorming e a revisão para **Evolution API oficial primeiro, fork AlmogCohen como fallback condicionado, Spring Boot 4.x na JVM sem GraalVM/AOT nativo e sem gateway Baileys próprio**. O proprietário deve revisar e aprovar **esta especificação escrita**, inclusive os defaults propostos (cooldown inicial de 60 minutos, retenção de metadados de 90 dias, limites de fila e necessidade de configurar orçamento). Só então iniciar `superpowers:writing-plans` para produzir o plano executável. **Nenhum código de produção é autorizado por esta spec isoladamente.**
+Este documento registra as decisões do brainstorming e a revisão para **Evolution API oficial primeiro, fork AlmogCohen como fallback condicionado, Spring Boot 4.x na JVM, PostgreSQL existente da VPS com bancos isolados e jobs duráveis no PostgreSQL, sem GraalVM/AOT nativo nem gateway Baileys próprio**. O proprietário deve revisar e aprovar **esta especificação escrita**, inclusive os defaults propostos (cooldown inicial de 60 minutos, retenção de metadados de 90 dias, limites de fila e necessidade de configurar orçamento). Só então iniciar `superpowers:writing-plans` para produzir o plano executável. **Nenhum código de produção é autorizado por esta spec isoladamente.**
