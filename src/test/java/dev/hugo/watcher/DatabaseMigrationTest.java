@@ -109,4 +109,46 @@ class DatabaseMigrationTest {
         assertEquals("fixture-maintainer", jdbc.queryForObject(
                 "select validated_by from holiday_attestation.holiday_calendar where name='fixture'", String.class));
     }
+
+    @Test void v17DisablesUndisclosedLegacyTemplatesWithoutRewritingApprovedText() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("template_disclosure_upgrade").defaultSchema("template_disclosure_upgrade")
+                .target("16").load().migrate();
+        jdbc.update("""
+                insert into template_disclosure_upgrade.response_templates
+                    (template_id,version,situation,body,identifies_automation,enabled)
+                values ('legacy_approved',1,'CONTACT_REQUEST','Oi, pode deixar.',true,true)
+                """);
+
+        Flyway.configure().dataSource(source).schemas("template_disclosure_upgrade").defaultSchema("template_disclosure_upgrade")
+                .load().migrate();
+
+        assertEquals("Oi, pode deixar.", jdbc.queryForObject("""
+                select body from template_disclosure_upgrade.response_templates
+                 where template_id='legacy_approved' and version=1
+                """, String.class));
+        assertEquals(false, jdbc.queryForObject("""
+                select enabled from template_disclosure_upgrade.response_templates
+                 where template_id='legacy_approved' and version=1
+                """, Boolean.class));
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("""
+                update template_disclosure_upgrade.response_templates set enabled=true
+                 where template_id='legacy_approved' and version=1
+                """));
+        jdbc.update("""
+                update template_disclosure_upgrade.response_templates
+                   set body='Resposta automática: Oi, pode deixar.', enabled=true
+                 where template_id='legacy_approved' and version=1
+                """);
+        assertEquals(true, jdbc.queryForObject("""
+                select enabled from template_disclosure_upgrade.response_templates
+                 where template_id='legacy_approved' and version=1
+                """, Boolean.class));
+        assertEquals("Esta é uma resposta automática. Vou retornar assim que possível.", jdbc.queryForObject("""
+                select body from template_disclosure_upgrade.response_templates
+                 where template_id='contact_request' and version=1
+                """, String.class));
+    }
 }

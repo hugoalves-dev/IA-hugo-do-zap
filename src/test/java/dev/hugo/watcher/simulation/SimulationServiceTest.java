@@ -133,6 +133,13 @@ class SimulationServiceTest {
                 "mismatched-template@g.us", "GROUP_TRIGGER", "contact_request", 1));
     }
 
+    @Test void preapprovedAutomationTemplateRequiresDisclosurePrefixInContent() {
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("""
+                insert into response_templates(template_id,version,situation,body,identifies_automation,enabled)
+                values ('undisclosed',1,'CONTACT_REQUEST','Oi',true,true)
+                """));
+    }
+
     private Batch enqueueAndClaim(String chat) {
         Instant now = Instant.parse("2026-10-27T10:00:00Z");
         IncomingMessage message = new IncomingMessage(Optional.of(UUID.randomUUID().toString()), chat, Optional.empty(),

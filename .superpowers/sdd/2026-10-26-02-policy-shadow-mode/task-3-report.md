@@ -23,3 +23,10 @@
 - No IA provider, Telegram admin/menu, real WhatsApp delivery, full suite, plan 3, or VPS operation was added.
 - CodeGraph returned no indexed symbols; targeted file reads and searches were used. RTK was unavailable in this shell.
 - Existing `.idea/` and generated `target/` remain untouched and excluded from the task commit.
+
+## Review follow-up
+
+- RED: `automationTemplateMustDiscloseAutomatedReply` accepted body `Oi` when `identifiesAutomation=true`; PostgreSQL also accepted an enabled undisclosed template. A V16-to-V17 upgrade test showed the first V17 draft rewrote approved content.
+- GREEN: reply eligibility now requires both the preapproval flag and a leading `Resposta automática:` declaration in the template body. V17 preserves legacy text and disables templates missing that prefix. A DB constraint prevents enabling those templates until their content contains the declaration.
+- `decision_cooldowns.last_real_action_at` remains read-only in this plan because no real sender exists. Plan 3 MUST update it atomically with persisted confirmed-delivery status, only after a real send succeeds. It MUST NOT update it for simulation, an unconfirmed attempt, or a failed send. Plan 3 must test cooldown enforcement after confirmed success and no cooldown update after failure or ambiguous delivery.
+- GREEN: `mvn '-Dtest=DecisionEngineTest,SimulationServiceTest,DatabaseMigrationTest,SpringFlywayStartupTest' test` passed: 25 tests, 0 failures, 0 errors, 0 skipped; PostgreSQL 17.11/Testcontainers covered the V16-to-V17 upgrade.

@@ -50,7 +50,7 @@ public final class DecisionEngine {
             if (selected == null || selected.situation() != replySituation) {
                 blocked = "response_template_missing";
                 reason = "reply_template_required";
-            } else if (!selected.identifiesAutomation()) {
+            } else if (!selected.isPreapprovedAndDisclosed()) {
                 blocked = "template_disclosure_required";
                 reason = "reply_template_not_disclosed";
                 selected = null;

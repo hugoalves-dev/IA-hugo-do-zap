@@ -56,7 +56,7 @@ class DecisionEngineTest {
                 policy(true, Set.of(Situation.GROUP_TRIGGER), false, true), NOW).wouldReply());
         var settings = new DecisionPolicy(true, true, true, true, Set.of(Situation.GROUP_TRIGGER),
                 Map.of(Situation.GROUP_TRIGGER, new ResponseTemplate("group_trigger_v1", 1,
-                        Situation.GROUP_TRIGGER, "Resposta automática", true)),
+                        Situation.GROUP_TRIGGER, "Resposta automática: Grupo autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), null, null);
         Decision decision = engine.decide(batch(true), classification, new EffectivePolicy(Map.of(), null, settings), NOW);
         assertTrue(decision.wouldReply());
@@ -73,7 +73,7 @@ class DecisionEngineTest {
     @Test void simulationCooldownBlocksSimulationAndKillSwitchBlocksRealAction() {
         var settings = new DecisionPolicy(true, true, true, true,
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
-                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática", true)),
+                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), NOW.minusSeconds(60), NOW.minusSeconds(3600));
         Decision decision = engine.decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
@@ -86,7 +86,7 @@ class DecisionEngineTest {
     @Test void realCooldownDoesNotBlockSimulationCooldown() {
         var settings = new DecisionPolicy(true, true, true, false,
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
-                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática", true)),
+                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), null, NOW.minusSeconds(60));
         Decision decision = engine.decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
@@ -98,7 +98,7 @@ class DecisionEngineTest {
     @Test void simulationCooldownBlocksAlertsAndRepliesTogether() {
         var settings = new DecisionPolicy(true, true, true, false,
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
-                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática", true)),
+                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), NOW.minusSeconds(60), null);
         Decision decision = engine.decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
@@ -117,7 +117,18 @@ class DecisionEngineTest {
     @Test void automationTemplateMustDiscloseAutomatedReply() {
         var settings = new DecisionPolicy(true, true, true, false,
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
-                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Oi", false)),
+                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Oi", true)),
+                Duration.ZERO, Duration.ofMinutes(60), null, null);
+        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+        assertFalse(decision.wouldReply());
+        assertEquals("template_disclosure_required", decision.blockedReason());
+    }
+
+    @Test void disclosureTextStillNeedsPreapprovedTemplateFlag() {
+        var settings = new DecisionPolicy(true, true, true, false,
+                Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
+                new ResponseTemplate("contact_request_v2", 2, Situation.CONTACT_REQUEST, "Resposta automática: Oi", false)),
                 Duration.ZERO, Duration.ofMinutes(60), null, null);
         Decision decision = engine.decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
@@ -137,7 +148,7 @@ class DecisionEngineTest {
     private static EffectivePolicy policy(boolean enabled, Set<Situation> authorized, boolean hasTemplate, boolean killSwitch) {
         return new EffectivePolicy(Map.of(), null, new DecisionPolicy(enabled, enabled, enabled, killSwitch, authorized,
                 hasTemplate ? Map.of(Situation.CONTACT_REQUEST, new ResponseTemplate("contact_request_v1", 1,
-                        Situation.CONTACT_REQUEST, "Resposta automática", true)) : Map.of(),
+                        Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)) : Map.of(),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), null, null));
     }
 }

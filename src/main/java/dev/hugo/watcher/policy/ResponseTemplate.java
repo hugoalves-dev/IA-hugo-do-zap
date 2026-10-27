@@ -6,4 +6,9 @@ public record ResponseTemplate(String id, int version, Situation situation, Stri
             throw new IllegalArgumentException("valid versioned template is required");
     }
     public String reference() { return id + "@v" + version; }
+
+    public boolean isPreapprovedAndDisclosed() {
+        String prefix = "Resposta automática:";
+        return identifiesAutomation && body.stripLeading().regionMatches(true, 0, prefix, 0, prefix.length());
+    }
 }
