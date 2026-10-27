@@ -38,6 +38,16 @@
 - RED/GREEN adicional: teste de retenção falhou antes com 0 payloads limpos (esperado 3); teste de claim vencido falhou antes (`expected true, was false`); teste de concorrência falhou ao simular lote antigo (`expected 1, was 0`). Depois das correções, o comando `mvn '-Dtest=RetentionServiceTest,JobRepositoryTest,EvolutionPipelineIntegrationTest,N8nClientTest,RetentionRegressionTest' test` terminou com `Tests run: 14, Failures: 0, Errors: 0, Skipped: 0` e `BUILD SUCCESS`, em PostgreSQL via Testcontainers e fake n8n local.
 - Commit local desta revisão: `20ff7fb` (`Bound inbox retention and serialize webhook job claims`). O relatório foi atualizado em commit documental subsequente.
 
+## Revisão de concorrência worker/purge e lease (2026-10-27)
+
+- RED reproduzido em PostgreSQL antes da correção: purge concluía enquanto o worker estava pausado antes dos efeitos (`purge.isDone=true`), lease de 300 ms vencendo durante os efeitos ainda deixava uma linha em `processed_message` (esperado 0, observado 1), e a retenção transformava 4 jobs expirados em `EXPIRED`, inclusive o que já estava `COMPLETED` (esperado 3, observado 4).
+- O worker agora processa cada job em transação que bloqueia job e inbox (`FOR UPDATE`) antes de ler o payload. `MessageService` e `complete` participam da mesma transação. Lease e prazo da inbox são revalidados com `clock_timestamp()` depois de adquirir o lock e no próprio `complete`; se vencerem durante o processamento, os efeitos DB são revertidos.
+- O purge expira jobs vencidos com `SKIP LOCKED`, pula o scrub de inbox enquanto existir job `PROCESSING`, e executa expiração e limpeza na mesma transação. Assim não disputa a conclusão do worker nem modifica estado ativo; uma execução posterior limpa os dados depois que o job deixa de estar em processamento. Status `COMPLETED` permanece inalterado.
+- `retry` não reabre job cujo payload já expirou: muda diretamente para `EXPIRED`; retry só é permitido enquanto o lease permanece válido.
+- Testes concorrentes adicionais verificam: purge concorrendo com efeitos em andamento e preservação de `COMPLETED`; deadline real da inbox vencendo entre leitura e efeitos, com rollback e scrub; lease curto vencendo dentro do handler, sem persistir efeitos; histórico `COMPLETED` não regredindo.
+- Verificação focada final: `mvn '-Dtest=RetentionServiceTest,JobRepositoryTest,EvolutionPipelineIntegrationTest,N8nClientTest,RetentionRegressionTest,MessageServiceTest,ChatStateServiceTest,IdentityServiceTest,NotificationServiceTest' test` — `Tests run: 59, Failures: 0, Errors: 0, Skipped: 0`; `BUILD SUCCESS`. Docker usado somente pelo Testcontainers PostgreSQL local. `git diff --check` sem erros.
+- Commit local do código: `c093d2e` (`Serialize webhook effects with retention and lease checks`). Nenhum push/cutover foi executado.
+
 ## Checklist adicional de revisão e rollback
 
 - [ ] Revisar janela de retenção de 7 dias e metadados mínimos preservados para deduplicação; para garantia de apagamento durante indisponibilidade prolongada, provisionar e validar purge externo independente da aplicação.
