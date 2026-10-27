@@ -35,7 +35,9 @@ public class WatcherProperties {
     @Size(max = 500)
     private List<@NotBlank String> groupJids = List.of();
     @NotBlank
-    private String allowedNameRegex = ".*";
+    private String allowedNameRegex = "(^|[^A-Z0-9])JC([^A-Z0-9]|$)";
+    private boolean includeGroups = true;
+    private List<@NotBlank String> neverNotifyGroupNames = List.of("233/234");
     @Min(1)
     @Max(1000)
     private int maxBatchSize = 100;
@@ -57,6 +59,10 @@ public class WatcherProperties {
     public void setGroupJids(List<String> groupJids) { this.groupJids = groupJids; }
     public String getAllowedNameRegex() { return allowedNameRegex; }
     public void setAllowedNameRegex(String allowedNameRegex) { this.allowedNameRegex = allowedNameRegex; }
+    public boolean isIncludeGroups() { return includeGroups; }
+    public void setIncludeGroups(boolean includeGroups) { this.includeGroups = includeGroups; }
+    public List<String> getNeverNotifyGroupNames() { return neverNotifyGroupNames; }
+    public void setNeverNotifyGroupNames(List<String> neverNotifyGroupNames) { this.neverNotifyGroupNames = neverNotifyGroupNames; }
     public int getMaxBatchSize() { return maxBatchSize; }
     public void setMaxBatchSize(int maxBatchSize) { this.maxBatchSize = maxBatchSize; }
     public int getRetentionDays() { return retentionDays; }
