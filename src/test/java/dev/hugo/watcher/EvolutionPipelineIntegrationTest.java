@@ -28,6 +28,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import javax.net.ssl.SSLContext;
@@ -65,6 +71,9 @@ class EvolutionPipelineIntegrationTest {
     @Autowired JobRepository jobRepository;
     @Autowired ChatStateService chatStates;
     @Autowired NotificationService notifications;
+    @Autowired EvolutionEventMapper mapper;
+    @Autowired MessageService messages;
+    @Autowired java.time.Clock clock;
     @LocalServerPort int port;
 
     @BeforeEach void resetLocalState() {
@@ -135,6 +144,74 @@ class EvolutionPipelineIntegrationTest {
         jdbc.update("update processing_jobs set available_at=now()-interval '1 second' where inbox_event_id=(select id from inbox_events where external_id='database-retry')");
         jobs.processAvailable();
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, retryJid));
+    }
+
+    @Test void concurrentWorkersClaimOnlyOneJobAtATimeInsteadOfLeasingABatch() throws Exception {
+        for (int i = 1; i <= 2; i++) {
+            String jid = "551166666666" + i + "@s.whatsapp.net";
+            chatStates.apply(new ChatUpdate(jid, Optional.of(true), Instant.now().minusSeconds(60), true, true,
+                    Optional.of("snapshot-concurrent-" + i), Optional.of("Contato"), false, java.util.Map.of()));
+            assertEquals(202, post(event("concurrent-" + i, jid, "Oi" + i)).statusCode());
+        }
+
+        var barrier = new CyclicBarrier(2);
+        var firstClaimSizes = new ConcurrentHashMap<Thread, Integer>();
+        var rendezvousRepository = new JobRepository() {
+            @Override public List<Job> claim(int limit, Instant now, Duration leaseDuration) {
+                List<Job> claimed = jobRepository.claim(limit, now, leaseDuration);
+                if (firstClaimSizes.putIfAbsent(Thread.currentThread(), claimed.size()) == null) {
+                    try { barrier.await(10, TimeUnit.SECONDS); }
+                    catch (Exception ex) { throw new IllegalStateException("workers did not rendezvous", ex); }
+                }
+                return claimed;
+            }
+            @Override public void complete(UUID jobId, UUID leaseToken) { jobRepository.complete(jobId, leaseToken); }
+            @Override public boolean expire(UUID jobId, UUID leaseToken) { return jobRepository.expire(jobId, leaseToken); }
+            @Override public boolean retry(UUID jobId, UUID leaseToken, Instant now, Instant availableAt) {
+                return jobRepository.retry(jobId, leaseToken, now, availableAt);
+            }
+        };
+        var workerA = new EvolutionJobProcessor(jdbc, rendezvousRepository, mapper, messages, clock);
+        var workerB = new EvolutionJobProcessor(jdbc, rendezvousRepository, mapper, messages, clock);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(workerA::processAvailable);
+            var second = pool.submit(workerB::processAvailable);
+            assertEquals(1, first.get(20, TimeUnit.SECONDS));
+            assertEquals(1, second.get(20, TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertEquals(List.of(1, 1), firstClaimSizes.values().stream().sorted().toList());
+        assertEquals(2, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+        assertEquals(2, jdbc.queryForObject("select count(*) from processing_jobs where status='COMPLETED'", Integer.class));
+    }
+
+    @Test void doesNotProcessPayloadThatExpiresAfterTheJobWasClaimed() throws Exception {
+        String jid = "5511555555555@s.whatsapp.net";
+        chatStates.apply(new ChatUpdate(jid, Optional.of(true), Instant.now().minusSeconds(60), true, true,
+                Optional.of("snapshot-expiring"), Optional.of("Contato"), false, java.util.Map.of()));
+        assertEquals(202, post(event("expires-after-claim", jid, "Conteúdo expirado")).statusCode());
+
+        JobRepository expireAfterClaim = new JobRepository() {
+            @Override public List<Job> claim(int limit, Instant now, Duration leaseDuration) {
+                List<Job> claimed = jobRepository.claim(limit, now, leaseDuration);
+                if (!claimed.isEmpty()) jdbc.update("update inbox_events set expires_at=now()-interval '1 second' where id=?",
+                        claimed.getFirst().inboxEventId());
+                return claimed;
+            }
+            @Override public void complete(UUID jobId, UUID leaseToken) { jobRepository.complete(jobId, leaseToken); }
+            @Override public boolean expire(UUID jobId, UUID leaseToken) { return jobRepository.expire(jobId, leaseToken); }
+            @Override public boolean retry(UUID jobId, UUID leaseToken, Instant now, Instant availableAt) {
+                return jobRepository.retry(jobId, leaseToken, now, availableAt);
+            }
+        };
+
+        var processor = new EvolutionJobProcessor(jdbc, expireAfterClaim, mapper, messages, clock);
+        assertEquals(0, processor.processAvailable());
+        assertEquals("EXPIRED", jdbc.queryForObject("select status from processing_jobs", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
     }
 
     private HttpResponse<String> post(String body) throws Exception {

@@ -36,12 +36,14 @@ public class JdbcJobRepository implements JobRepository {
         Instant expiresAt = now.plus(leaseDuration);
         return transactions.execute(status -> jdbc.query("""
                 with candidates as (
-                    select id from processing_jobs
-                    where (status in ('READY', 'PENDING') and available_at <= ?)
-                       or (status = 'PROCESSING' and lease_expires_at <= ?)
-                    order by available_at, id
+                    select job.id from processing_jobs job
+                    join inbox_events inbox on inbox.id=job.inbox_event_id
+                    where inbox.expires_at > ?
+                      and ((job.status in ('READY', 'PENDING') and job.available_at <= ?)
+                       or (job.status = 'PROCESSING' and job.lease_expires_at <= ?))
+                    order by job.available_at, job.id
                     limit ?
-                    for update skip locked
+                    for update of job skip locked
                 )
                 update processing_jobs as job
                    set status = 'PROCESSING',
@@ -51,7 +53,8 @@ public class JdbcJobRepository implements JobRepository {
                   from candidates
                  where job.id = candidates.id
                 returning job.job_uuid, job.inbox_event_id, job.lease_token, job.attempts
-                """, JOB_ROW, now.atOffset(ZoneOffset.UTC), now.atOffset(ZoneOffset.UTC), limit,
+                """, JOB_ROW, now.atOffset(ZoneOffset.UTC), now.atOffset(ZoneOffset.UTC),
+                now.atOffset(ZoneOffset.UTC), limit,
                 expiresAt.atOffset(ZoneOffset.UTC)));
     }
 
@@ -64,6 +67,15 @@ public class JdbcJobRepository implements JobRepository {
                    and lease_expires_at > now()
                 """, jobId, leaseToken);
         if (updated != 1) throw new IllegalStateException("Job lease is no longer current");
+    }
+
+    @Override
+    public boolean expire(UUID jobId, UUID leaseToken) {
+        return jdbc.update("""
+                update processing_jobs
+                   set status='EXPIRED', lease_token=null, lease_expires_at=null
+                 where job_uuid=? and lease_token=? and status='PROCESSING'
+                """, jobId, leaseToken) == 1;
     }
 
     @Override

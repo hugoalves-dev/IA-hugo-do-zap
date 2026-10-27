@@ -25,11 +25,22 @@ public class RetentionService {
         Timestamp cutoff = Timestamp.from(now);
         int pending = jdbc.update("delete from pending_notification where expires_at <= ?", cutoff);
         int scrubbedPreviews = scrubExpiredPreviews(now);
+        int expiredJobs = jdbc.update("""
+                update processing_jobs job
+                   set status='EXPIRED', lease_token=null, lease_expires_at=null
+                  from inbox_events inbox
+                 where inbox.id=job.inbox_event_id and inbox.expires_at <= ? and job.status <> 'EXPIRED'
+                """, cutoff);
+        // Keep the event key and receipt metadata for deduplication; erase the raw webhook body at expiry.
+        int scrubbedInboxPayloads = jdbc.update("""
+                update inbox_events set payload='{}'::jsonb
+                where expires_at <= ? and payload <> '{}'::jsonb
+                """, cutoff);
         int outboxPayloads = jdbc.update("delete from outbox_actions where sensitive_expires_at <= ?", cutoff);
         int quarantined = jdbc.update("delete from quarantined_events where sensitive_expires_at <= ?", cutoff);
         int deduplication = jdbc.update("delete from processed_message where processed_at <= ?",
                 Timestamp.from(now.minusSeconds(7 * 86_400L)));
-        return pending + scrubbedPreviews + outboxPayloads + quarantined + deduplication;
+        return pending + scrubbedPreviews + expiredJobs + scrubbedInboxPayloads + outboxPayloads + quarantined + deduplication;
     }
 
     private int scrubExpiredPreviews(Instant now) {

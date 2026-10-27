@@ -67,6 +67,13 @@ class JobRepositoryTest {
         assertDoesNotThrow(() -> jobs.complete(newLease.id(), newLease.leaseToken()));
     }
 
+    @Test void doesNotClaimJobAfterItsInboxRetentionDeadline() {
+        insertReadyJob("expired-inbox");
+        jdbc.update("update inbox_events set expires_at=now()-interval '1 second' where external_id='expired-inbox'");
+
+        assertTrue(jobs.claim(1, Instant.now(), Duration.ofSeconds(10)).isEmpty());
+    }
+
     private void insertReadyJob(String externalId) {
         long inboxId = jdbc.queryForObject("insert into inbox_events(source,event_type,external_id,payload) values ('evolution','messages.upsert',?, '{}'::jsonb) returning id", Long.class, externalId);
         jdbc.update("insert into processing_jobs(inbox_event_id,status) values (?, 'READY')", inboxId);

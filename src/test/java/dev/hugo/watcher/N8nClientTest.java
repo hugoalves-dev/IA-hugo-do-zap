@@ -20,6 +20,8 @@ class N8nClientTest {
     private HttpServer server;
     private java.util.concurrent.ExecutorService executor;
     private final AtomicInteger requests = new AtomicInteger();
+    private final AtomicInteger acceptedRequests = new AtomicInteger();
+    private final AtomicInteger idempotencyHeaders = new AtomicInteger();
     private volatile int status = 503;
     private volatile long responseDelayMillis;
     private N8nClient client;
@@ -31,12 +33,15 @@ class N8nClientTest {
         server.setExecutor(executor);
         server.createContext("/webhook", exchange -> {
             requests.incrementAndGet();
+            receivedBody.set(new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            acceptedRequests.incrementAndGet();
+            if (exchange.getRequestHeaders().containsKey("Idempotency-Key")) idempotencyHeaders.incrementAndGet();
             if (responseDelayMillis > 0) {
                 try { Thread.sleep(responseDelayMillis); }
                 catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
             }
-            receivedBody.set(new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
-            exchange.sendResponseHeaders(status, -1);
+            try { exchange.sendResponseHeaders(status, -1); }
+            catch (java.io.IOException ignored) { /* client timeout closes an already accepted request */ }
             exchange.close();
         });
         server.start();
@@ -56,7 +61,7 @@ class N8nClientTest {
         assertEquals("fixture-secret", JsonMapper.builder().build().readTree(receivedBody.get()).get("secret").asString());
     }
 
-    @Test void retriesAndReportsFalseWhenTheHttpRequestTimesOut() {
+    @Test void retriesAfterFakeN8nAcceptedRequestsButResponsesTimedOut() {
         responseDelayMillis = 2_000;
         client = new N8nClient(new WatcherPropertiesWithUrl(server.getAddress().getPort()).properties(),
                 HttpClient.newHttpClient(), Duration.ofMillis(500), List.of(Duration.ZERO, Duration.ZERO));
@@ -65,6 +70,8 @@ class N8nClientTest {
 
         assertFalse(sent);
         assertEquals(3, requests.get());
+        assertEquals(3, acceptedRequests.get(), "fake n8n received every request body before client timeout");
+        assertEquals(0, idempotencyHeaders.get(), "no n8n idempotency contract is configured");
     }
 
     private static final class WatcherPropertiesWithUrl {

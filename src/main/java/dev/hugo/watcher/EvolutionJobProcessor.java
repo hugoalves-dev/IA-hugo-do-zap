@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -18,7 +19,7 @@ import java.util.Optional;
 public class EvolutionJobProcessor {
     private static final System.Logger LOG = System.getLogger(EvolutionJobProcessor.class.getName());
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private static final int BATCH_SIZE = 20;
+    private static final int MAX_JOBS_PER_PASS = 20;
     private static final Duration LEASE = Duration.ofMinutes(2);
     private final JdbcTemplate jdbc;
     private final JobRepository jobs;
@@ -46,12 +47,13 @@ public class EvolutionJobProcessor {
 
     /** Claims and processes one batch, returning the number of jobs completed in this pass. */
     public int processAvailable() {
-        Instant now = clock.instant();
-        List<Job> claimed = jobs.claim(BATCH_SIZE, now, LEASE);
         int completed = 0;
-        for (Job job : claimed) {
+        for (int processed = 0; processed < MAX_JOBS_PER_PASS; processed++) {
+            List<Job> claimed = jobs.claim(1, clock.instant(), LEASE);
+            if (claimed.isEmpty()) return completed;
+            Job job = claimed.getFirst();
             try {
-                process(job, now);
+                if (!process(job, clock.instant())) continue;
                 jobs.complete(job.id(), job.leaseToken());
                 completed++;
             } catch (RuntimeException ex) {
@@ -65,27 +67,30 @@ public class EvolutionJobProcessor {
     }
 
     @SuppressWarnings("unchecked")
-    private void process(Job job, Instant now) {
-        List<String> payloads = jdbc.query("select payload::text from inbox_events where id=?",
-                (rs, row) -> rs.getString(1), job.inboxEventId());
-        if (payloads.isEmpty()) throw new IllegalStateException("Webhook inbox row is missing");
+    private boolean process(Job job, Instant now) {
+        List<String> payloads = jdbc.query("select payload::text from inbox_events where id=? and expires_at>?",
+                (rs, row) -> rs.getString(1), job.inboxEventId(), Timestamp.from(now));
+        if (payloads.isEmpty()) {
+            jobs.expire(job.id(), job.leaseToken());
+            return false;
+        }
 
         JsonNode envelope;
         try {
             envelope = JSON.readTree(payloads.getFirst());
         } catch (RuntimeException ex) {
             quarantine(null, "invalid_persisted_envelope", now);
-            return;
+            return true;
         }
         JsonNode data = envelope == null ? null : envelope.get("data");
         if (data == null || !data.isObject()) {
             quarantine(null, "unsupported_or_unverified_envelope", now);
-            return;
+            return true;
         }
         List<EvolutionEvent> events = mapper.map(envelope, "webhook");
         if (events.size() != 1) {
             quarantine(null, "unsupported_or_unverified_envelope", now);
-            return;
+            return true;
         }
 
         EvolutionEvent event = events.getFirst();
@@ -97,7 +102,7 @@ public class EvolutionJobProcessor {
                 || message == null || !message.isObject() || event.timestamp().isEmpty()
                 || event.jid().isEmpty()) {
             quarantine(event.externalId(), "unverified_message_metadata", now);
-            return;
+            return true;
         }
 
         boolean group = event.jid().orElseThrow().endsWith("@g.us");
@@ -108,6 +113,7 @@ public class EvolutionJobProcessor {
         messages.accept(new IncomingMessage(Optional.of(event.externalId()), event.jid().orElseThrow(),
                 optional(participant), optional(alternateChat), optional(alternateParticipant), fromMe.booleanValue(),
                 "notify", false, content, event.timestamp().orElseThrow()));
+        return true;
     }
 
     private void quarantine(String externalId, String reason, Instant now) {
