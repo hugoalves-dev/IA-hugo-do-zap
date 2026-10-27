@@ -23,6 +23,17 @@ class WatcherSchedulingConfigurationTest {
                     assertEquals("none", context.getEnvironment().getProperty("spring.main.web-application-type"));
                 });
     }
+    @Test void emptySnapshotStillForcesSafeStartup() {
+        new ApplicationContextRunner()
+                .withInitializer(context -> new LegacyImportEnvironmentPostProcessor()
+                        .postProcessEnvironment(context.getEnvironment(), new SpringApplication()))
+                .withUserConfiguration(WatcherSchedulingConfiguration.class)
+                .withPropertyValues("watcher.legacy-import.snapshot=", "watcher.runtime.scheduling-enabled=true")
+                .run(context -> {
+                    assertFalse(context.getBeansOfType(ScheduledAnnotationBeanPostProcessor.class).size() > 0);
+                    assertEquals("none", context.getEnvironment().getProperty("spring.main.web-application-type"));
+                });
+    }
     @Test void oneShotImportCanDisableScheduledWorkers() {
         new ApplicationContextRunner()
                 .withUserConfiguration(WatcherSchedulingConfiguration.class)

@@ -13,8 +13,7 @@ public final class LegacyImportEnvironmentPostProcessor implements EnvironmentPo
     @Override public int getOrder() { return Ordered.HIGHEST_PRECEDENCE; }
 
     @Override public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
-        String snapshot = environment.getProperty("watcher.legacy-import.snapshot");
-        if (snapshot != null && !snapshot.isBlank()) {
+        if (environment.containsProperty("watcher.legacy-import.snapshot")) {
             environment.getPropertySources().addFirst(new MapPropertySource("legacyImportSafety",
                     Map.of("watcher.runtime.scheduling-enabled", "false", "spring.main.web-application-type", "none")));
         }

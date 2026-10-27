@@ -14,6 +14,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LegacyImportRunnerTest {
+    @Test void rejectsEmptySnapshotAndClosesContextWithoutCallingImporter() {
+        LegacyImportService importer = mock(LegacyImportService.class);
+        ConfigurableApplicationContext context = mock(ConfigurableApplicationContext.class);
+        MockEnvironment environment = new MockEnvironment().withProperty("watcher.legacy-import.snapshot", "");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new LegacyImportRunner(importer, environment, context).run(new DefaultApplicationArguments()));
+        verify(context).close();
+    }
+
     @Test void runsOnlyWithExplicitSnapshotAndClosesTheOneShotContext() throws Exception {
         LegacyImportService importer = mock(LegacyImportService.class);
         ConfigurableApplicationContext context = mock(ConfigurableApplicationContext.class);

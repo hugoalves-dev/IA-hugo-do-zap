@@ -29,7 +29,11 @@ public class LegacyImportRunner implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         try {
-            Path snapshot = Path.of(environment.getRequiredProperty("watcher.legacy-import.snapshot"));
+            String snapshotValue = environment.getRequiredProperty("watcher.legacy-import.snapshot");
+            if (snapshotValue.isBlank()) {
+                throw new IllegalArgumentException("watcher.legacy-import.snapshot must not be empty");
+            }
+            Path snapshot = Path.of(snapshotValue);
             ImportMode mode = environment.getProperty("watcher.legacy-import.mode", ImportMode.class, ImportMode.DRY_RUN);
             ImportReport report = importer.importSnapshot(snapshot, mode);
             LOG.log(System.Logger.Level.INFO,
