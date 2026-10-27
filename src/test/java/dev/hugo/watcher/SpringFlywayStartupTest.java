@@ -24,8 +24,8 @@ class SpringFlywayStartupTest {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("watcher.n8n-url", () -> "http://n8n:5678/webhook");
-        registry.add("watcher.n8n-secret", () -> "n8n-test-secret");
+        registry.add("watcher.telegram-bot-token", () -> "synthetic-test-token");
+        registry.add("watcher.telegram-chat-id", () -> "123456789");
         registry.add("watcher.group-jids", () -> "120363000000000000@g.us");
         registry.add("watcher.evolution.webhook-token", () -> "startup-test-token");
         registry.add("watcher.evolution.instance", () -> "watcher-startup-test");
@@ -34,7 +34,7 @@ class SpringFlywayStartupTest {
     @Autowired JdbcTemplate jdbc;
 
     @Test void appliesFlywayMigrationsAutomaticallyDuringApplicationStartup() {
-        assertEquals("10", jdbc.queryForObject(
+        assertEquals("11", jdbc.queryForObject(
                 "select version from flyway_schema_history order by installed_rank desc limit 1", String.class));
         assertEquals("UNKNOWN", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from inbox_events", Integer.class));

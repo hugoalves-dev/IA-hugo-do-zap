@@ -10,7 +10,6 @@ import jakarta.validation.constraints.Size;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
-import java.net.URI;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -21,9 +20,10 @@ import java.util.regex.Pattern;
 @ConfigurationProperties("watcher")
 public class WatcherProperties {
     @NotBlank
-    private String n8nUrl;
-    @NotBlank
-    private String n8nSecret;
+    private String telegramBotToken;
+    @NotNull
+    @jakarta.validation.constraints.Positive
+    private Long telegramChatId;
     @NotBlank
     private String timezone = "America/Sao_Paulo";
     @NotEmpty
@@ -47,10 +47,10 @@ public class WatcherProperties {
     @Max(7)
     private int retentionDays = 7;
 
-    public String getN8nUrl() { return n8nUrl; }
-    public void setN8nUrl(String n8nUrl) { this.n8nUrl = n8nUrl; }
-    public String getN8nSecret() { return n8nSecret; }
-    public void setN8nSecret(String n8nSecret) { this.n8nSecret = n8nSecret; }
+    public String getTelegramBotToken() { return telegramBotToken; }
+    public void setTelegramBotToken(String telegramBotToken) { this.telegramBotToken = telegramBotToken; }
+    public Long getTelegramChatId() { return telegramChatId; }
+    public void setTelegramChatId(Long telegramChatId) { this.telegramChatId = telegramChatId; }
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
     public Set<Integer> getNotificationDays() { return notificationDays; }
@@ -69,20 +69,6 @@ public class WatcherProperties {
     public void setMaxBatchSize(int maxBatchSize) { this.maxBatchSize = maxBatchSize; }
     public int getRetentionDays() { return retentionDays; }
     public void setRetentionDays(int retentionDays) { this.retentionDays = retentionDays; }
-
-    @jakarta.validation.constraints.AssertTrue(message = "must be an absolute HTTP(S) URL using HTTPS except for the internal n8n host")
-    public boolean isN8nUrlSecure() {
-        if (n8nUrl == null || n8nUrl.isBlank()) return true;
-        try {
-            URI uri = URI.create(n8nUrl);
-            String scheme = uri.getScheme();
-            String host = uri.getHost();
-            return uri.isAbsolute() && host != null && uri.getRawUserInfo() == null
-                    && ("https".equalsIgnoreCase(scheme) || ("http".equalsIgnoreCase(scheme) && "n8n".equalsIgnoreCase(host)));
-        } catch (IllegalArgumentException ex) {
-            return false;
-        }
-    }
 
     @jakarta.validation.constraints.AssertTrue(message = "must be a valid timezone")
     public boolean isTimezoneValid() {

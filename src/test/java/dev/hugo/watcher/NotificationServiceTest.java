@@ -1,8 +1,6 @@
 package dev.hugo.watcher;
 
-import com.sun.net.httpserver.HttpServer;
 import org.flywaydb.core.Flyway;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,10 +11,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.io.InputStream;
-import java.net.InetSocketAddress;
-import java.net.http.HttpClient;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -42,14 +36,13 @@ class NotificationServiceTest {
     private NotificationService notifications;
     private NotificationOutboxRepository outbox;
     private ArchiveModeService archiveModes;
-    private HttpServer server;
     private final AtomicReference<Integer> responseStatus = new AtomicReference<>(200);
     private final AtomicInteger requestCount = new AtomicInteger();
     private final AtomicReference<java.util.function.Consumer<String>> requestHook = new AtomicReference<>(ignored -> { });
     private final AtomicReference<String> receivedBody = new AtomicReference<>();
     private MutableClock clock;
 
-    @BeforeEach void setup() throws Exception {
+    @BeforeEach void setup() {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(dataSource);
         Flyway.configure().dataSource(dataSource).load().migrate();
@@ -61,44 +54,35 @@ class NotificationServiceTest {
         jdbc.update("delete from contact_identity");
         jdbc.update("delete from identity_aliases");
 
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/webhook", exchange -> {
-            requestCount.incrementAndGet();
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            receivedBody.set(body);
-            requestHook.get().accept(body);
-            int status = responseStatus.get();
-            exchange.sendResponseHeaders(status, -1);
-            exchange.close();
-        });
-        server.start();
-
         properties = new WatcherProperties();
-        properties.setN8nUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/webhook");
-        properties.setN8nSecret("fixture-secret");
+        properties.setTelegramBotToken("synthetic-test-token");
+        properties.setTelegramChatId(123456789L);
         clock = new MutableClock(NOW);
         manager = new DataSourceTransactionManager(dataSource);
         archiveModes = new ArchiveModeService(jdbc, manager);
         archiveModes.setMode(ArchiveMode.ALL);
         outbox = new NotificationOutboxRepository(jdbc, manager);
-        var client = new N8nClient(properties, HttpClient.newHttpClient(), Duration.ofSeconds(2), List.of(Duration.ZERO, Duration.ZERO));
-        notifications = new NotificationService(jdbc, manager, outbox, client, properties, clock,
-                archiveModes);
+        TelegramTransport fakeTelegram = text -> {
+            requestCount.incrementAndGet();
+            receivedBody.set(text);
+            requestHook.get().accept(text);
+            return responseStatus.get() == 200;
+        };
+        notifications = new NotificationService(jdbc, manager, outbox, fakeTelegram,
+                new TelegramMessageFormatter(), properties, clock, archiveModes);
     }
 
-    @AfterEach void stopServer() { if (server != null) server.stop(0); }
-
-    @Test void sendsTheLegacyPayloadShapeInTheConfiguredTimezoneAndAcknowledgesItsSnapshot() throws Exception {
+    @Test void sendsAReadableTelegramSummaryAndAcknowledgesItsSnapshot() {
         seed("5511999999999@s.whatsapp.net", "Ana", false, 2, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "Oi, tudo bem?", NOW);
         seed("120363000000000000@g.us", "Equipe", true, 3, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "[Image]", NOW);
 
         notifications.flush(NOW);
 
-        try (InputStream fixture = getClass().getResourceAsStream("/fixtures/notifications/archived_messages.json")) {
-            assertNotNull(fixture, "legacy payload fixture must be available");
-            assertEquals(JSON.readTree(fixture), JSON.readTree(receivedBody.get()));
-        }
-        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class).contains("fixture-secret"));
+        assertTrue(receivedBody.get().contains("Mensagens arquivadas"));
+        assertTrue(receivedBody.get().contains("2 conversas · 5 mensagens"));
+        assertTrue(receivedBody.get().contains("Ana"));
+        assertTrue(receivedBody.get().contains("Oi, tudo bem?"));
+        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class).contains("synthetic-test-token"));
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'", Integer.class));
         assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
@@ -140,7 +124,7 @@ class NotificationServiceTest {
         assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, jid));
     }
 
-    @Test void leavesTheOutboxAndPendingSnapshotForRetryWhenN8nReturnsFailure() {
+    @Test void leavesTheOutboxAndPendingSnapshotForDurableRetryWhenTelegramRejectsDelivery() {
         responseStatus.set(503);
         seed("5511666666666@s.whatsapp.net", "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
 
@@ -149,10 +133,10 @@ class NotificationServiceTest {
         assertNotNull(receivedBody.get());
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='PENDING'", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
-        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where status='PENDING'", String.class).contains("fixture-secret"));
+        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where status='PENDING'", String.class).contains("synthetic-test-token"));
     }
 
-    @Test void schedulesRetryBackoffFromClockAfterHttpAttemptsFinish() {
+    @Test void schedulesDurableRetryBackoffAfterTelegramRejectsDelivery() {
         responseStatus.set(503);
         requestHook.set(ignored -> clock.advance(Duration.ofSeconds(15)));
         seed("5511111111111@s.whatsapp.net", "Contato", false, 1,
@@ -162,9 +146,9 @@ class NotificationServiceTest {
 
         Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where status='PENDING'",
                 java.sql.Timestamp.class).toInstant();
-        assertEquals(NOW.plusSeconds(45), clock.instant(), "fake HTTP advances the injected clock for all attempts");
+        assertEquals(NOW.plusSeconds(15), clock.instant(), "fake transport advances the injected clock once");
         assertEquals(clock.instant().plusSeconds(10), availableAt,
-                "backoff must begin after the final failed HTTP attempt, not at flush start");
+                "durable retry backoff starts after the failed transport attempt");
     }
 
     @Test void connectionAlertRetryStopsAndIsCancelledWhenReconnectOccursDuringHttpFailure() {
@@ -179,7 +163,7 @@ class NotificationServiceTest {
         notifications.flush(NOW);
 
         assertEquals("CONNECTED", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
-        assertEquals(1, requestCount.get(), "the connection alert's internal HTTP retry must stop after reconnect");
+        assertEquals(1, requestCount.get(), "one direct Telegram attempt is made");
         assertEquals("CANCELLED", jdbc.queryForObject("select status from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
         assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
 
@@ -196,7 +180,7 @@ class NotificationServiceTest {
         responseStatus.set(503);
         seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "sensivel", NOW);
         notifications.flush(NOW);
-        assertEquals(3, requestCount.get(), "first delivery exhausts the three configured HTTP attempts");
+        assertEquals(1, requestCount.get(), "a rejected Telegram send is retried through the durable outbox");
 
         jdbc.update("update chat_snapshot set display_name='233/234',is_group=true where chat_jid=?", jid);
         jdbc.update("update contact_identity set display_name='233/234' where canonical_jid=?", jid);
@@ -205,7 +189,7 @@ class NotificationServiceTest {
         clock.advance(Duration.ofSeconds(11));
         notifications.flush(clock.instant());
 
-        assertEquals(3, requestCount.get(), "a now-blocked group must not reach the fake webhook");
+        assertEquals(1, requestCount.get(), "a now-blocked group must not reach Telegram");
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid),
                 "suppression must not clear a pending snapshot that was not sent");
@@ -216,13 +200,13 @@ class NotificationServiceTest {
         seed("5511444444444@s.whatsapp.net", "Equipe JC", false, 1,
                 "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);
         notifications.flush(NOW);
-        assertEquals(3, requestCount.get());
+        assertEquals(1, requestCount.get());
         responseStatus.set(200);
 
         clock.advance(Duration.ofHours(5));
         notifications.flush(clock.instant());
 
-        assertEquals(3, requestCount.get(), "a WORK_ONLY retry outside the work window must not be sent");
+        assertEquals(1, requestCount.get(), "a WORK_ONLY retry outside the work window must not be sent");
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
     }
@@ -243,9 +227,8 @@ class NotificationServiceTest {
         clock.advance(Duration.ofSeconds(20));
         notifications.flush(clock.instant());
 
-        var payload = JSON.readTree(receivedBody.get());
-        assertEquals(1, payload.get("totalChats").intValue());
-        assertEquals("5511222222222@s.whatsapp.net", payload.get("chats").get(0).get("jid").stringValue());
+        assertTrue(receivedBody.get().contains("Contato atual"));
+        assertFalse(receivedBody.get().contains("Contato antigo"));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, unarchived));
         assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, concurrentlyUpdated));
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
@@ -260,7 +243,7 @@ class NotificationServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_key='expired-preview'", Integer.class));
     }
 
-    @Test void internalRetryFiltersUnarchivedChatAndAcknowledgesOnlyDeliveredSnapshot() throws Exception {
+    @Test void durableRetryFiltersUnarchivedChatAndAcknowledgesOnlyDeliveredSnapshot() {
         archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
         String removed = "5511000000001@s.whatsapp.net";
         String eligible = "5511000000002@s.whatsapp.net";
@@ -273,10 +256,11 @@ class NotificationServiceTest {
             } else responseStatus.set(200);
         });
         notifications.flush(NOW);
+        clock.advance(Duration.ofSeconds(11));
+        notifications.flush(clock.instant());
         assertEquals(2, requestCount.get());
-        var payload = JSON.readTree(receivedBody.get());
-        assertEquals(1, payload.get("totalChats").intValue());
-        assertEquals(eligible, payload.get("chats").get(0).get("jid").stringValue());
+        assertTrue(receivedBody.get().contains("Atual"));
+        assertFalse(receivedBody.get().contains("Antigo"));
         assertEquals(List.of(removed), jdbc.queryForList("select chat_jid from pending_notification", String.class));
     }
 
@@ -289,7 +273,7 @@ class NotificationServiceTest {
         notifications.flush(NOW);
 
         assertNotNull(receivedBody.get());
-        assertEquals(jid, JSON.readTree(receivedBody.get()).get("chats").get(0).get("jid").stringValue());
+        assertTrue(receivedBody.get().contains("Contato"));
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
     }
 
@@ -308,13 +292,13 @@ class NotificationServiceTest {
         jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
         notifications.flush(clock.instant());
 
-        assertEquals(3, requestCount.get(), "filtered retry must not issue another HTTP request");
+        assertEquals(1, requestCount.get(), "filtered retry must not issue another Telegram message");
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
 
         archiveModes.setMode(ArchiveMode.ALL);
         notifications.flush(clock.instant());
-        assertEquals(4, requestCount.get());
+        assertEquals(2, requestCount.get());
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
     }
 
@@ -337,7 +321,7 @@ class NotificationServiceTest {
         jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
         notifications.flush(clock.instant());
 
-        assertEquals(3, requestCount.get(), "retry must revalidate the persisted action against the current mode");
+        assertEquals(1, requestCount.get(), "retry must revalidate the persisted action against the current mode");
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
     }
@@ -366,7 +350,7 @@ class NotificationServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
     }
 
-    @Test void internalRetryStopsWhenWorkWindowEndsAndPreservesDeferredPending() {
+    @Test void failedTelegramSendKeepsOutboxForRetryWhenWorkWindowEnds() {
         seed("5511000000003@s.whatsapp.net", "Equipe JC", false, 1,
                 "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);
         responseStatus.set(503);
@@ -374,29 +358,29 @@ class NotificationServiceTest {
         notifications.flush(NOW);
         assertEquals(1, requestCount.get());
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
-        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions", String.class));
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions", String.class));
     }
 
     @Test void transientConnectionStateReadFailureRetriesWithoutCancellingValidAlert() {
         assertConnectionReadFailureIsRetryable(false);
     }
 
-    @Test void transientConnectionStateReadFailureAfter503StopsInternalPostsAndRetries() {
+    @Test void transientConnectionStateReadFailureAfterTelegramAttemptRetries() {
         assertConnectionReadFailureIsRetryable(true);
     }
 
-    private void assertConnectionReadFailureIsRetryable(boolean afterFirstPost) {
+    private void assertConnectionReadFailureIsRetryable(boolean afterTelegramSend) {
         var connections = new ConnectionService(jdbc, manager, outbox, properties, Duration.ofSeconds(60));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, NOW, "connection_lost", 408));
         String key = jdbc.queryForObject("select 'whatsapp_connection_lost:' || outage_generation from watcher_connection_state where singleton_id=1", String.class);
         outbox.enqueue(key, "whatsapp_connection_lost", "{}", "[]", NOW, NOW.plusSeconds(86400));
-        if (afterFirstPost) {
+        if (afterTelegramSend) {
             responseStatus.set(503);
             requestHook.set(ignored -> jdbc.execute("alter table watcher_connection_state rename to unavailable_connection_state"));
         } else jdbc.execute("alter table watcher_connection_state rename to unavailable_connection_state");
         try {
             notifications.flush(NOW);
-            assertEquals(afterFirstPost ? 1 : 0, requestCount.get());
+            assertEquals(afterTelegramSend ? 1 : 0, requestCount.get());
             assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_key=?", String.class, key));
         } finally {
             jdbc.execute("alter table unavailable_connection_state rename to watcher_connection_state");
@@ -405,7 +389,7 @@ class NotificationServiceTest {
         requestHook.set(ignored -> { });
         clock.advance(Duration.ofSeconds(11));
         notifications.flush(clock.instant());
-        assertEquals(afterFirstPost ? 2 : 1, requestCount.get());
+        assertEquals(afterTelegramSend ? 2 : 1, requestCount.get());
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key=?", String.class, key));
     }
 
@@ -423,7 +407,7 @@ class NotificationServiceTest {
         assertEquals(2, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'", Integer.class));
     }
 
-    @Test void readThenRecreatedPendingDoesNotResendObsoletePreviewOnInternalRetry() {
+    @Test void readThenRecreatedPendingDoesNotResendObsoletePreviewOnDurableRetry() {
         String jid = "5511000000091@s.whatsapp.net";
         seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "old sensitive preview", NOW);
         requestHook.set(ignored -> {
@@ -436,6 +420,9 @@ class NotificationServiceTest {
             responseStatus.set(503);
         });
         notifications.flush(NOW);
+        clock.advance(Duration.ofSeconds(11));
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
         assertEquals(1, requestCount.get(), "READ terminates the old pending generation before retry");
         assertEquals("1", jdbc.queryForObject("select payload->>'messageCount' from pending_notification", String.class));
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions", String.class));
@@ -448,7 +435,7 @@ class NotificationServiceTest {
         clock.advance(Duration.ofHours(5));
         notifications.flush(clock.instant());
         assertNotNull(receivedBody.get(), "deferred first row must not starve eligible later row");
-        assertEquals("5511000000093@s.whatsapp.net", JSON.readTree(receivedBody.get()).get("chats").get(0).get("jid").stringValue());
+        assertTrue(receivedBody.get().contains("Amigo"));
     }
 
     @Test void excludesExistingGroupPendingWhenGroupsDisabled() {
@@ -482,17 +469,17 @@ class NotificationServiceTest {
         seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "obsolete preview", NOW);
         responseStatus.set(503);
         notifications.flush(NOW);
-        assertEquals(3, requestCount.get());
+        assertEquals(1, requestCount.get());
         jdbc.update("update chat_snapshot set archived=false where chat_jid=?", jid);
         recreatePendingIdentically(jid);
         jdbc.update("update chat_snapshot set archived=true where chat_jid=?", jid);
         responseStatus.set(200);
         clock.advance(Duration.ofSeconds(11));
         notifications.flush(clock.instant());
-        assertEquals(3, requestCount.get(), "rearchive must not authorize the previous incarnation");
+        assertEquals(1, requestCount.get(), "rearchive must not authorize the previous incarnation");
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         notifications.flush(clock.instant());
-        assertEquals(4, requestCount.get(), "new generation remains deliverable on the next batch");
+        assertEquals(2, requestCount.get(), "new generation remains deliverable on the next batch");
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
     }
 

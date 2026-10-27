@@ -36,8 +36,8 @@ class EvolutionWebhookControllerTest {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("watcher.n8n-url", () -> "http://n8n:5678/webhook");
-        registry.add("watcher.n8n-secret", () -> "n8n-test-secret");
+        registry.add("watcher.telegram-bot-token", () -> "synthetic-test-token");
+        registry.add("watcher.telegram-chat-id", () -> "123456789");
         registry.add("watcher.group-jids", () -> "120363000000000000@g.us");
         registry.add("watcher.evolution.webhook-token", () -> TOKEN);
         registry.add("watcher.evolution.instance", () -> "watcher-test");

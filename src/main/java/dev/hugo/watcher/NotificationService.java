@@ -26,7 +26,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
-/** Builds the legacy payload, persists it before HTTP delivery, and acknowledges snapshots conditionally. */
+/** Persists notification payloads before Telegram delivery and acknowledges snapshots conditionally. */
 @Service
 public class NotificationService {
     public static final String ARCHIVED_MESSAGES = "archived_messages";
@@ -38,19 +38,22 @@ public class NotificationService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final NotificationOutboxRepository outbox;
-    private final N8nClient n8n;
+    private final TelegramTransport telegram;
+    private final TelegramMessageFormatter telegramFormatter;
     private final WatcherProperties properties;
     private final Clock clock;
     private final ArchiveModeService archiveModes;
     private final AtomicBoolean flushing = new AtomicBoolean();
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
-                               NotificationOutboxRepository outbox, N8nClient n8n,
-                               WatcherProperties properties, Clock clock, ArchiveModeService archiveModes) {
+                               NotificationOutboxRepository outbox, TelegramTransport telegram,
+                               TelegramMessageFormatter telegramFormatter, WatcherProperties properties,
+                               Clock clock, ArchiveModeService archiveModes) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.outbox = outbox;
-        this.n8n = n8n;
+        this.telegram = telegram;
+        this.telegramFormatter = telegramFormatter;
         this.properties = properties;
         this.clock = clock;
         this.archiveModes = archiveModes;
@@ -66,18 +69,16 @@ public class NotificationService {
                 if (action == null) return;
                 try {
                     if (isConnectionAlert(action)) {
-                        boolean delivered = n8n.send(action, () -> isCurrentConnectionAlert(action));
+                        boolean delivered = isCurrentConnectionAlert(action)
+                                && telegram.send(telegramFormatter.format(action));
                         if (delivered) outbox.acknowledge(action, clock.instant());
                         else if (!isCurrentConnectionAlert(action)) outbox.cancelClaimedConnectionAlert(action, clock.instant());
                         else outbox.retry(action, clock.instant(), "DeliveryFailure");
                     } else {
-                        OutboxAction[] latest = { action };
-                        boolean delivered = n8n.sendPrepared(() -> {
-                            latest[0] = revalidateBeforeDelivery(action, clock.instant());
-                            return latest[0];
-                        });
-                        if (delivered) outbox.acknowledge(latest[0], clock.instant());
-                        else if (latest[0] == null) outbox.suppress(action, clock.instant());
+                        OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());
+                        boolean delivered = latest != null && telegram.send(telegramFormatter.format(latest));
+                        if (delivered) outbox.acknowledge(latest, clock.instant());
+                        else if (latest == null) outbox.suppress(action, clock.instant());
                         else outbox.retry(action, clock.instant(), "DeliveryFailure");
                     }
                 } catch (DataAccessException ex) {

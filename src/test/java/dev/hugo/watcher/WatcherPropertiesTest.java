@@ -13,18 +13,16 @@ import static org.junit.jupiter.api.Assertions.*;
 class WatcherPropertiesTest {
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
 
-    @Test void requiresN8nSecretAndUrl() {
+    @Test void requiresTelegramBotTokenAndPrivateChatId() {
         var properties = new WatcherProperties();
-        assertTrue(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("n8nUrl")));
-        assertTrue(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("n8nSecret")));
+        assertTrue(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("telegramBotToken")));
+        assertTrue(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("telegramChatId")));
     }
 
-    @Test void permitsHttpOnlyForTheInternalN8nHost() {
+    @Test void rejectsNonPositiveTelegramChatIds() {
         var properties = validProperties();
-        properties.setN8nUrl("http://hooks.example.test/webhook");
-        assertTrue(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("n8nUrlSecure")));
-        properties.setN8nUrl("http://n8n:5678/webhook");
-        assertFalse(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("n8nUrlSecure")));
+        properties.setTelegramChatId(0L);
+        assertTrue(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("telegramChatId")));
     }
 
     @Test void constrainsNotificationDaysToWeekdaysOneThroughSeven() {
@@ -45,8 +43,8 @@ class WatcherPropertiesTest {
 
     private static WatcherProperties validProperties() {
         var properties = new WatcherProperties();
-        properties.setN8nUrl("https://hooks.example.test/webhook");
-        properties.setN8nSecret("secret");
+        properties.setTelegramBotToken("synthetic-test-token");
+        properties.setTelegramChatId(123456789L);
         properties.setTimezone("America/Sao_Paulo");
         properties.setNotificationDays(Set.of(1, 2, 3, 4, 5));
         properties.setNotificationWindows(List.of(new WatcherProperties.TimeWindow(LocalTime.of(8, 0), LocalTime.NOON)));

@@ -11,8 +11,8 @@ services:
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:?Set the existing PostgreSQL watcher database URL}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:?Set the dedicated watcher database role}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?Set the watcher database password}
-      WATCHER_N8N_URL: ${WATCHER_N8N_URL:?Set the n8n webhook URL}
-      WATCHER_N8N_SECRET: ${WATCHER_N8N_SECRET:?Set the n8n webhook secret}
+      WATCHER_TELEGRAM_BOT_TOKEN: ${WATCHER_TELEGRAM_BOT_TOKEN:?Set the Telegram bot token}
+      WATCHER_TELEGRAM_CHAT_ID: ${WATCHER_TELEGRAM_CHAT_ID:?Set the private Telegram chat ID}
       WATCHER_EVOLUTION_WEBHOOK_TOKEN: ${WATCHER_EVOLUTION_WEBHOOK_TOKEN:?Set a separate Evolution webhook bearer token}
       WATCHER_EVOLUTION_INSTANCE: ${WATCHER_EVOLUTION_INSTANCE:-watcher-evolution}
       WATCHER_NOTIFICATION_DAYS: ${WATCHER_NOTIFICATION_DAYS:-1,2,3,4,5}

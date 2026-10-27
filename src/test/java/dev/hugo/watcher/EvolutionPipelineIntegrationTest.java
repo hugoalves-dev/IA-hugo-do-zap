@@ -2,7 +2,6 @@ package dev.hugo.watcher;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.AfterAll;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -18,15 +17,12 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.net.URI;
-import java.net.CookieHandler;
-import java.net.ProxySelector;
-import java.net.Authenticator;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,9 +33,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLParameters;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,21 +42,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "watcher.runtime.scheduling-enabled=false")
-@Import(EvolutionPipelineIntegrationTest.TestN8nConfiguration.class)
+@Import(EvolutionPipelineIntegrationTest.TestTelegramConfiguration.class)
 class EvolutionPipelineIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
     private static final String TOKEN = "pipeline-test-token";
-    private static final FakeN8n N8N = new FakeN8n();
+    private static final FakeTelegram TELEGRAM = new FakeTelegram();
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("watcher.n8n-url", () -> "http://n8n:5678/webhook");
-        registry.add("watcher.n8n-secret", () -> "local-test-secret");
+        registry.add("watcher.telegram-bot-token", () -> "synthetic-test-token");
+        registry.add("watcher.telegram-chat-id", () -> "123456789");
         registry.add("watcher.group-jids", () -> "120363000000000000@g.us");
         registry.add("watcher.evolution.webhook-token", () -> TOKEN);
         registry.add("watcher.evolution.instance", () -> "pipeline-test");
@@ -86,12 +81,10 @@ class EvolutionPipelineIntegrationTest {
     @BeforeEach void resetLocalState() {
         archiveModes.setMode(ArchiveMode.ALL);
         jdbc.execute("truncate table outbox_actions, pending_notification, processed_message, quarantined_events, processing_jobs, inbox_events, chat_snapshot, contact_identity, identity_aliases restart identity cascade");
-        N8N.reset(200);
+        TELEGRAM.reset(true);
     }
 
-    @AfterAll static void stopFakeN8n() { N8N.stop(); }
-
-    @Test void duplicateWebhookSurvivesWorkerRestartAndOutboxRetryBeforeFakeN8nAcknowledges() throws Exception {
+    @Test void duplicateWebhookSurvivesWorkerRestartAndOutboxRetryBeforeFakeTelegramAcknowledges() throws Exception {
         String jid = "5511999999999@s.whatsapp.net";
         chatStates.apply(new ChatUpdate(jid, Optional.of(true), Instant.now().minusSeconds(60), true, true,
                 Optional.of("snapshot-test"), Optional.of("Contato"), false, java.util.Map.of("synthetic", true)));
@@ -110,19 +103,19 @@ class EvolutionPipelineIntegrationTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
 
-        N8N.setStatus(503);
+        TELEGRAM.setAccepted(false);
         notifications.flush(Instant.now());
         assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions", String.class));
         assertEquals(1, jdbc.queryForObject("select attempts from outbox_actions", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
 
-        N8N.setStatus(200);
+        TELEGRAM.setAccepted(true);
         jdbc.update("update outbox_actions set available_at=now()-interval '1 second'");
         notifications.flush(Instant.now());
 
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
-        assertTrue(N8N.lastBody().contains("Olá"));
+        assertTrue(TELEGRAM.lastMessage().contains("Olá"));
     }
 
     @Test void allModeAcceptsUnknownArchiveStateButFilteredModeQuarantinesIt() throws Exception {
@@ -380,69 +373,22 @@ class EvolutionPipelineIntegrationTest {
     }
 
     @TestConfiguration(proxyBeanMethods = false)
-    static class TestN8nConfiguration {
-        @Bean @Primary N8nClient localFakeN8n(WatcherProperties properties) {
-            return new N8nClient(properties, new RedirectingHttpClient(N8N.url()), Duration.ofSeconds(2),
-                    List.of(Duration.ZERO, Duration.ZERO));
-        }
+    static class TestTelegramConfiguration {
+        @Bean @Primary TelegramTransport fakeTelegramTransport() { return TELEGRAM; }
     }
 
-    private static final class FakeN8n {
-        private final com.sun.net.httpserver.HttpServer server;
-        private volatile int status = 200;
-        private volatile String lastBody = "";
+    private static final class FakeTelegram implements TelegramTransport {
+        private final AtomicInteger sends = new AtomicInteger();
+        private final AtomicReference<String> lastMessage = new AtomicReference<>("");
+        private volatile boolean accepted = true;
 
-        private FakeN8n() {
-            try {
-                server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
-                server.createContext("/webhook", exchange -> {
-                    lastBody = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                    exchange.sendResponseHeaders(status, -1);
-                    exchange.close();
-                });
-                server.start();
-            } catch (java.io.IOException ex) {
-                throw new IllegalStateException("Could not start local fake n8n", ex);
-            }
+        @Override public boolean send(String text) {
+            sends.incrementAndGet();
+            lastMessage.set(text);
+            return accepted;
         }
-
-        private String url() { return "http://127.0.0.1:" + server.getAddress().getPort(); }
-        private void setStatus(int status) { this.status = status; }
-        private String lastBody() { return lastBody; }
-        private void reset(int status) { this.status = status; this.lastBody = ""; }
-        private void stop() { server.stop(0); }
-    }
-
-    private static final class RedirectingHttpClient extends HttpClient {
-        private final HttpClient delegate = HttpClient.newHttpClient();
-        private final String baseUrl;
-
-        private RedirectingHttpClient(String baseUrl) { this.baseUrl = baseUrl; }
-        @Override public java.util.Optional<CookieHandler> cookieHandler() { return delegate.cookieHandler(); }
-        @Override public java.util.Optional<Duration> connectTimeout() { return delegate.connectTimeout(); }
-        @Override public Redirect followRedirects() { return delegate.followRedirects(); }
-        @Override public java.util.Optional<ProxySelector> proxy() { return delegate.proxy(); }
-        @Override public SSLContext sslContext() { return delegate.sslContext(); }
-        @Override public SSLParameters sslParameters() { return delegate.sslParameters(); }
-        @Override public java.util.Optional<Authenticator> authenticator() { return delegate.authenticator(); }
-        @Override public Version version() { return delegate.version(); }
-        @Override public java.util.Optional<Executor> executor() { return delegate.executor(); }
-        @Override public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler)
-                throws java.io.IOException, InterruptedException {
-            return delegate.send(redirect(request), handler);
-        }
-        @Override public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> handler) {
-            return delegate.sendAsync(redirect(request), handler);
-        }
-        @Override public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> handler,
-                                                                           HttpResponse.PushPromiseHandler<T> pushHandler) {
-            return delegate.sendAsync(redirect(request), handler, pushHandler);
-        }
-        private HttpRequest redirect(HttpRequest request) {
-            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + request.uri().getRawPath()))
-                    .timeout(request.timeout().orElse(Duration.ofSeconds(5)));
-            request.headers().map().forEach((name, values) -> values.forEach(value -> builder.header(name, value)));
-            return builder.method(request.method(), request.bodyPublisher().orElse(HttpRequest.BodyPublishers.noBody())).build();
-        }
+        private void setAccepted(boolean accepted) { this.accepted = accepted; }
+        private String lastMessage() { return lastMessage.get(); }
+        private void reset(boolean accepted) { this.accepted = accepted; this.sends.set(0); this.lastMessage.set(""); }
     }
 }

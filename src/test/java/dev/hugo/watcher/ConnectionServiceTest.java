@@ -33,7 +33,6 @@ class ConnectionServiceTest {
         jdbc.update("delete from watcher_connection_state");
         manager = new DataSourceTransactionManager(dataSource);
         properties = new WatcherProperties();
-        properties.setN8nSecret("synthetic-test-secret");
         connections = new ConnectionService(jdbc, manager, new NotificationOutboxRepository(jdbc, manager), properties, Duration.ofSeconds(60));
     }
 
