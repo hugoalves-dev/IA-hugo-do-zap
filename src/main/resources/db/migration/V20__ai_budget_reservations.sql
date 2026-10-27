@@ -13,7 +13,7 @@ CREATE TABLE ai_budget_reservations (
     actual_micros BIGINT NULL CHECK (actual_micros >= 0),
     reservation_day DATE NOT NULL,
     reservation_month DATE NOT NULL CHECK (extract(day from reservation_month) = 1),
-    status VARCHAR(12) NOT NULL CHECK (status IN ('RESERVED','DISPATCHED','UNCERTAIN','SETTLED','RELEASED')),
+    status VARCHAR(12) NOT NULL CHECK (status IN ('RESERVED','UNCERTAIN','SETTLED','RELEASED')),
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CHECK ((status = 'SETTLED') = (actual_micros IS NOT NULL)),

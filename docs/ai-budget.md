@@ -1,6 +1,6 @@
 # AI provider budget and retention
 
-`BudgetService` accepts costs in USD micros (USD 0.000001 units). It serializes reservations and all accounting transitions under one PostgreSQL transaction lock, then checks daily and monthly limits in UTC. Both limits must exist and be positive before a reservation succeeds. Migration V20 intentionally inserts no limit row, so the default is blocked.
+`BudgetService` accepts costs in USD micros (USD 0.000001 units). It serializes reservations and all accounting transitions under one PostgreSQL transaction lock, then checks daily and monthly limits in UTC. Both limits must exist and be positive before a reservation succeeds. Migration V20 intentionally inserts no limit row, so the default is blocked. V20 remains unchanged for checksum compatibility; V21 adds the `DISPATCHED` reservation state.
 
 ## Cost meanings
 
@@ -10,7 +10,9 @@
 
 An actual cost above its estimate can push accounted spend past the configured budget after a call. The ledger records that amount and blocks later reservations, but it cannot provide a hard cap against provider billing.
 
-Before a provider request can leave the process, mark its reservation `DISPATCHED`. Only `RESERVED` can be released, so a dispatched or uncertain call cannot be discarded as zero cost. An ambiguous result stays `UNCERTAIN` and keeps its complete estimate counted. Reconcile it with `settle(actual)`, using zero only when evidence confirms no charge. A late settlement after `RELEASED` restores actual spend. Repeated settlement/release calls are safe. A settled cost is not erased by later release calls.
+Future integrations must use one reserve-dispatch-settle lifecycle for every paid HTTP attempt: reserve that attempt's conservative estimate, call `markDispatched` before the request can leave the process, then settle actual cost or mark an ambiguous result uncertain. Retries and provider fallbacks are separate paid attempts; each needs a fresh reservation and reconciliation. No current classification or simulation path calls paid providers or these methods.
+
+Only `RESERVED` can be released, so a dispatched or uncertain call cannot be discarded as zero cost. An ambiguous result stays `UNCERTAIN` and keeps its complete estimate counted. Reconcile it with `settle(actual)`, using zero only when evidence confirms no charge. A late settlement after `RELEASED` restores actual spend. Repeated settlement/release calls are safe. A settled cost is not erased by later release calls.
 
 ## Orphan reservations and ledger retention
 

@@ -34,3 +34,13 @@ Date: 2026-10-27
 - `DISPATCHED` is persisted before a request may leave the process. Only `RESERVED` can be released; dispatch/uncertain rows must settle, including zero only after evidence. Late settlement after a released reservation restores spend.
 - The actual-cost test confirms a provider charge above its estimate can exceed the configured cap after the fact. The ledger records it and blocks later calls; it does not claim a hard provider-billing cap.
 - Documentation now describes stale reservation reconciliation, no automatic release, the ledger's separate no-payload retention, and no automatic deletion policy. No provider names, credentials, or assumptions were added.
+
+## Migration compatibility follow-up
+
+- RED: the PostgreSQL upgrade test first failed because the latest migration version remained V20 rather than V21.
+- Restored `V20__ai_budget_reservations.sql` exactly from commit `e6ff628`; `git diff e6ff628 -- src/main/resources/db/migration/V20__ai_budget_reservations.sql` is empty.
+- Added V21 to extend the status constraint for `DISPATCHED`. The integration test migrates a real PostgreSQL 17 database to V20, inserts a reservation, records the V20 Flyway checksum, then migrates to V21 without `repair`.
+- The test verifies the V20 checksum and existing reservation remain unchanged, and a new `DISPATCHED` row is accepted.
+- Updated `SpringFlywayStartupTest` for V21 and verified startup still creates no default budget limits.
+- GREEN: `mvn -Dtest=BudgetServiceTest,AiRetentionTest,BudgetMigrationUpgradeTest,SpringFlywayStartupTest test` passed in scratch with PostgreSQL 17: 12 tests, 0 failures, 0 errors, 0 skipped.
+- Future paid integrations must reserve, mark dispatched before each HTTP request, then settle or mark uncertain per attempt. Retries/fallback calls each need their own reservation. No paid caller exists now.
