@@ -3,7 +3,6 @@ package dev.hugo.watcher.ai;
 import tools.jackson.core.JacksonException;
 
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.time.Duration;
 import java.util.List;
@@ -14,10 +13,10 @@ public final class GeminiProvider extends AbstractHttpClassificationProvider {
     private final String model;
     private final String apiKey;
 
-    public GeminiProvider(URI endpoint, String model, String apiKey, HttpClient http,
+    public GeminiProvider(URI endpoint, String model, String apiKey, ProviderTransport transport,
                           ProviderAuthorization authorization, Duration timeout) {
-        super("gemini", http, authorization, timeout);
-        this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint);
+        super("gemini", transport, authorization, timeout);
+        this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint, "gemini");
         this.model = requireText(model, "model");
         this.apiKey = requireText(apiKey, "apiKey");
     }
@@ -27,7 +26,7 @@ public final class GeminiProvider extends AbstractHttpClassificationProvider {
         if (input.messages().isEmpty()) return ClassificationResult.uncertain();
         for (int attempt = 0; attempt < 2; attempt++) {
             authorize(input);
-            ProviderResponse response = send(request(input));
+            ProviderTransport.Response response = send(request(input));
             validateStatus(response.statusCode(), 0);
             try { return parseClassification(extractText(response.body())); }
             catch (ClassificationProviderException exception) {

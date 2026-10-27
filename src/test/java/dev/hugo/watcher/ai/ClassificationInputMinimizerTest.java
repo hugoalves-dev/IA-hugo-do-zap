@@ -26,4 +26,12 @@ class ClassificationInputMinimizerTest {
         assertTrue(minimized.contains("[JID]"));
         assertTrue(minimized.contains("[IDENTIFIER]"));
     }
+
+    @Test void preservesOrdinaryAmountsDatesAndShortNumbers() {
+        String text = "Budget R$ 1.234,56; due 27/10/2026; period 2026-10-27; ticket 12345";
+
+        String minimized = new ClassificationInput(List.of(text)).messages().getFirst();
+
+        assertEquals(text, minimized);
+    }
 }

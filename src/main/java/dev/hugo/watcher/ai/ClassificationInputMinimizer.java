@@ -15,8 +15,9 @@ final class ClassificationInputMinimizer {
             "(?<!\\d)(?:\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}|\\d{11}|\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}|\\d{14})(?!\\d)");
     private static final Pattern LABELED_ID = Pattern.compile(
             "(?i)\\b((?:cpf|cnpj|rg|id|account(?:\\s*(?:number|no\\.?))?|document)\\s*[:#=]?\\s*)[A-Z0-9][A-Z0-9._/-]{3,}\\b");
-    private static final Pattern DIGIT_SEQUENCE = Pattern.compile(
-            "(?<![\\p{L}\\d])\\+?\\d[\\d \\t()./-]{6,}\\d(?![\\p{L}\\d])");
+    private static final Pattern PHONE = Pattern.compile(
+            "(?<!\\d)(?:\\+\\d{1,3}[ .()/-]*)?(?:\\(?\\d{2,4}\\)?[ .()-]*)?\\d{3,5}[ .-]?\\d{4}(?!\\d)");
+    private static final Pattern LONG_NUMERIC_IDENTIFIER = Pattern.compile("(?<!\\d)\\d{16,}(?!\\d)");
 
     private ClassificationInputMinimizer() { }
 
@@ -26,13 +27,13 @@ final class ClassificationInputMinimizer {
         masked = UUID.matcher(masked).replaceAll("[IDENTIFIER]");
         masked = CPF_CNPJ.matcher(masked).replaceAll("[IDENTIFIER]");
         masked = LABELED_ID.matcher(masked).replaceAll("$1[IDENTIFIER]");
-        Matcher numbers = DIGIT_SEQUENCE.matcher(masked);
+        masked = LONG_NUMERIC_IDENTIFIER.matcher(masked).replaceAll("[IDENTIFIER]");
+        Matcher numbers = PHONE.matcher(masked);
         StringBuffer output = new StringBuffer();
         while (numbers.find()) {
             String token = numbers.group();
             long digits = token.chars().filter(Character::isDigit).count();
-            String replacement = digits >= 8 ? (digits > 15 ? "[IDENTIFIER]" : "[PHONE]") : token;
-            numbers.appendReplacement(output, Matcher.quoteReplacement(replacement));
+            numbers.appendReplacement(output, Matcher.quoteReplacement(digits >= 8 ? "[PHONE]" : token));
         }
         numbers.appendTail(output);
         return output.toString();

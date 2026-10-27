@@ -3,7 +3,6 @@ package dev.hugo.watcher.ai;
 import tools.jackson.core.JacksonException;
 
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.time.Duration;
 import java.util.List;
@@ -14,10 +13,10 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
     private final String model;
     private final String apiKey;
 
-    public OpenRouterProvider(URI endpoint, String model, String apiKey, HttpClient http,
+    public OpenRouterProvider(URI endpoint, String model, String apiKey, ProviderTransport transport,
                               ProviderAuthorization authorization, Duration timeout) {
-        super("openrouter", http, authorization, timeout);
-        this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint);
+        super("openrouter", transport, authorization, timeout);
+        this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint, "openrouter");
         this.model = requireText(model, "model");
         this.apiKey = requireText(apiKey, "apiKey");
     }
@@ -26,7 +25,7 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
         java.util.Objects.requireNonNull(input, "input");
         if (input.messages().isEmpty()) return ClassificationResult.uncertain();
         authorize(input);
-        ProviderResponse response = send(request(input));
+        ProviderTransport.Response response = send(request(input));
         validateStatus(response.statusCode(), 404);
         return parseClassification(extractText(response.body()));
     }

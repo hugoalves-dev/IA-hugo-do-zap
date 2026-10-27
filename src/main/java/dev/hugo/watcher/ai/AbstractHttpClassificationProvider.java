@@ -3,12 +3,7 @@ package dev.hugo.watcher.ai;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -30,14 +25,14 @@ abstract class AbstractHttpClassificationProvider implements ClassificationProvi
             "required", List.of("intent", "requestDetected", "urgency", "evidence", "confidence"));
 
     final String providerName;
-    final HttpClient http;
+    final ProviderTransport transport;
     final ProviderAuthorization authorization;
     final Duration timeout;
 
-    AbstractHttpClassificationProvider(String providerName, HttpClient http,
+    AbstractHttpClassificationProvider(String providerName, ProviderTransport transport,
                                        ProviderAuthorization authorization, Duration timeout) {
         this.providerName = providerName;
-        this.http = java.util.Objects.requireNonNull(http, "http");
+        this.transport = java.util.Objects.requireNonNull(transport, "transport");
         this.authorization = java.util.Objects.requireNonNull(authorization, "authorization");
         this.timeout = java.util.Objects.requireNonNull(timeout, "timeout");
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
@@ -56,21 +51,17 @@ abstract class AbstractHttpClassificationProvider implements ClassificationProvi
         }
     }
 
-    final ProviderResponse send(HttpRequest request) {
+    final ProviderTransport.Response send(HttpRequest request) {
         try {
-            HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream body = response.body()) {
-                byte[] bytes = body.readNBytes(MAX_RESPONSE_BYTES + 1);
-                if (bytes.length > MAX_RESPONSE_BYTES)
-                    throw new ClassificationProviderException(ClassificationProviderException.Kind.RESPONSE_TOO_LARGE);
-                return new ProviderResponse(response.statusCode(), new String(bytes, StandardCharsets.UTF_8));
-            }
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new ClassificationProviderException(ClassificationProviderException.Kind.TECHNICAL_FAILURE, exception);
+            ProviderTransport.Response response = transport.send(request, timeout, MAX_RESPONSE_BYTES);
+            if (response == null || response.body() == null)
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE);
+            if (response.body().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_RESPONSE_BYTES)
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.RESPONSE_TOO_LARGE);
+            return response;
         } catch (ClassificationProviderException exception) {
             throw exception;
-        } catch (IOException exception) {
+        } catch (RuntimeException exception) {
             throw new ClassificationProviderException(ClassificationProviderException.Kind.TECHNICAL_FAILURE, exception);
         }
     }
@@ -120,6 +111,4 @@ abstract class AbstractHttpClassificationProvider implements ClassificationProvi
             throw new ClassificationProviderException(ClassificationProviderException.Kind.TECHNICAL_FAILURE);
         throw new ClassificationProviderException(ClassificationProviderException.Kind.CONFIGURATION_ERROR);
     }
-
-    record ProviderResponse(int statusCode, String body) { }
 }
