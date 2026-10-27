@@ -61,7 +61,16 @@ public class RetentionService {
         int quarantined = jdbc.update("delete from quarantined_events where sensitive_expires_at <= ?", cutoff);
         int deduplication = jdbc.update("delete from processed_message where processed_at <= ?",
                 Timestamp.from(now.minusSeconds(7 * 86_400L)));
-        return pending + scrubbedPreviews + expiredJobs + scrubbedInboxPayloads + outboxPayloads + quarantined + deduplication;
+        int simulationPayloads = jdbc.update("delete from simulation_batch_messages where batch_id in (select batch_id from simulation_batches where expires_at <= ?)", cutoff);
+        int expiredSimulationBatches = jdbc.update("update simulation_batches set status='EXPIRED', claimed_at=null where expires_at <= ? and status in ('OPEN','READY','CLAIMED')", cutoff);
+        int expiredSimulationAudits = jdbc.update("delete from simulation_decisions where metadata_expires_at <= ?", cutoff);
+        int expiredSimulationMetadata = jdbc.update("""
+                delete from simulation_batches batch
+                where batch.metadata_expires_at <= ?
+                  and not exists (select 1 from simulation_decisions decision where decision.batch_id=batch.batch_id)
+                """, cutoff);
+        return pending + scrubbedPreviews + expiredJobs + scrubbedInboxPayloads + outboxPayloads + quarantined + deduplication
+                + simulationPayloads + expiredSimulationBatches + expiredSimulationAudits + expiredSimulationMetadata;
     }
 
     private int scrubExpiredPreviews(Instant now) {

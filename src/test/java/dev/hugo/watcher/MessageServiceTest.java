@@ -9,6 +9,8 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import dev.hugo.watcher.simulation.DebounceService;
+import dev.hugo.watcher.simulation.WatcherSimulationProperties;
 
 import java.time.Instant;
 import java.util.Map;
@@ -32,6 +34,9 @@ class MessageServiceTest {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(dataSource);
         Flyway.configure().dataSource(dataSource).load().migrate();
+        jdbc.update("delete from simulation_decisions");
+        jdbc.update("delete from simulation_batch_messages");
+        jdbc.update("delete from simulation_batches");
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from processed_message");
         jdbc.update("delete from quarantined_events");
@@ -54,6 +59,17 @@ class MessageServiceTest {
         assertEquals(MessageService.Acceptance.DUPLICATE, messages.accept(message("m-unknown", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi"))));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+    }
+
+    @Test void acceptedEvolutionMessageEntersSimulationQueueOnce() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc, new WatcherSimulationProperties(), manager));
+        var message = message("shadow-queued", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi"));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(message));
+        assertEquals(MessageService.Acceptance.DUPLICATE, integrated.accept(message));
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
     }
 
     @Test void filteredModeRejectsUnknownOrUnsynchronizedArchiveState() {

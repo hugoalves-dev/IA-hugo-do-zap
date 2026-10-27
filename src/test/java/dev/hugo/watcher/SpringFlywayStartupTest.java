@@ -34,7 +34,7 @@ class SpringFlywayStartupTest {
     @Autowired JdbcTemplate jdbc;
 
     @Test void appliesFlywayMigrationsAutomaticallyDuringApplicationStartup() {
-        assertEquals("14", jdbc.queryForObject(
+        assertEquals("15", jdbc.queryForObject(
                 "select version from flyway_schema_history order by installed_rank desc limit 1", String.class));
         assertEquals("UNKNOWN", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from inbox_events", Integer.class));
