@@ -37,6 +37,7 @@ class EvolutionWebhookControllerTest {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("watcher.n8n-url", () -> "http://n8n:5678/webhook");
         registry.add("watcher.n8n-secret", () -> "n8n-test-secret");
+        registry.add("watcher.group-jids", () -> "120363000000000000@g.us");
         registry.add("watcher.evolution.webhook-token", () -> TOKEN);
         registry.add("watcher.evolution.instance", () -> "watcher-test");
         registry.add("watcher.evolution.max-body-bytes", () -> "1024");
@@ -78,6 +79,15 @@ class EvolutionWebhookControllerTest {
         assertEquals(200, post(EVENT, TOKEN).statusCode());
         assertEquals(1, inboxCount());
         assertEquals(1, jdbc.queryForObject("select count(*) from processing_jobs", Integer.class));
+    }
+
+    @Test void deduplicatesByEventTypeSoDistinctEventsForOneMessageBothCreateJobs() throws Exception {
+        String update = EVENT.replace("messages.upsert", "messages.update");
+        assertEquals(202, post(EVENT, TOKEN).statusCode());
+        assertEquals(202, post(update, TOKEN).statusCode());
+        assertEquals(200, post(EVENT, TOKEN).statusCode());
+        assertEquals(2, inboxCount());
+        assertEquals(2, jdbc.queryForObject("select count(*) from processing_jobs", Integer.class));
     }
 
     @Test void reportsDatabaseFailureAndDoesNotCreateInbox() throws Exception {

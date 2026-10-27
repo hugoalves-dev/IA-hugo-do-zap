@@ -28,7 +28,7 @@ public class JdbcInboxRepository implements InboxRepository {
         Long inboxId = jdbc.query("""
                         insert into inbox_events(source, event_type, external_id, payload)
                         values (?, ?, ?, ?::jsonb)
-                        on conflict (source, external_id) do nothing
+                        on conflict (source, event_type, external_id) do nothing
                         returning id
                         """,
                 results -> results.next() ? results.getLong(1) : null,

@@ -10,8 +10,7 @@ Os jobs recebem UUID público e leases com token UUID/expiração. `claim` selec
 
 - RED: `mvn '-Dtest=EvolutionWebhookControllerTest,JobRepositoryTest' test` falhou ao compilar antes da implementação, como esperado: faltavam `JobRepository` e `JdbcJobRepository`. O RED também mostrou que `TestRestTemplate` não está no conjunto atual de dependências Boot 4; os testes passaram a usar `java.net.http`, sem adicionar dependências.
 - GREEN HTTP sem banco: `mvn '-Dtest=EvolutionWebhookControllerHttpTest' test` terminou com código 0: 8 testes executados, 0 falhas/erros/pulados. Inclui origem não autenticada, instância não autorizada, JSON malformado, corpo excedido, rota não mapeada, duplicata, erro do repositório e resposta de aceite.
-- Execução focada final: `mvn '-Dtest=EvolutionWebhookControllerTest,JobRepositoryTest,EvolutionWebhookControllerHttpTest' test` terminou com código 0 e compilou fontes de produção e teste. Relatório Maven: 18 testes, 0 falhas, 0 erros e **10 pulados**; somente os 8 testes HTTP sem banco executaram. Os 7 testes de controller com PostgreSQL e os 3 testes de jobs foram pulados porque Testcontainers não conseguiu iniciar PostgreSQL.
-- Docker não pôde ser usado: o daemon respondeu ao socket nomeado com HTTP 400 e metadados vazios, e a tentativa de acesso ao Docker Desktop/WSL Ubuntu falha por acesso negado ao VHD (diagnóstico do executor). Nenhum daemon foi iniciado. Portanto **não estão verificados em PostgreSQL real** o commit inbox+job, a migração V2, `SKIP LOCKED`, recuperação da lease nem a rejeição da lease antiga.
+- Primeira execução focada: `mvn '-Dtest=EvolutionWebhookControllerTest,JobRepositoryTest,EvolutionWebhookControllerHttpTest' test` compilou tudo, mas o daemon ainda estava indisponível; 10 testes com PostgreSQL foram pulados e 8 testes HTTP passaram. Nenhum daemon foi iniciado.
 - Avisos observados: depreciação preexistente de `sun.misc.Unsafe` via Guice/Maven; Mockito/ByteBuddy carregou agente dinamicamente durante o teste MockMvc. Não houve falhas nos 8 testes executados.
 
 ## Autenticação Evolution
@@ -40,6 +39,33 @@ Nenhuma assinatura HMAC ou garantia de ordenação é presumida. Um evento sem `
 
 ## Limites e acompanhamento
 
-- Os testes de banco devem ser reexecutados em runner com PostgreSQL real via Docker antes de considerar a persistência/concorrência validada.
+- Os testes com PostgreSQL foram executados no seguimento P1 abaixo usando Docker API 1.44 e passaram. Nenhuma VPS nem instância real da Evolution foi alterada nesta tarefa.
 - O token deve ser injetado por segredo de ambiente e configurado no webhook Evolution por instância; nenhuma configuração de instância/VPS foi alterada nesta tarefa.
 - Não foram alterados `NotificationPolicy`, os planos não rastreados preexistentes ou `target/`.
+
+## Seguimento P1 — identidade da entrega e auto-migração Spring
+
+### Achado 1: deduplicação entre tipos de evento
+
+- Causa: a constraint da V1 e o `ON CONFLICT` da inbox usavam `(source, external_id)`, embora a Evolution emita eventos distintos como `messages.upsert` e `messages.update` para o mesmo ID WhatsApp.
+- RED: após preparar PostgreSQL real e o contexto de teste, `EvolutionWebhookControllerTest.deduplicatesByEventTypeSoDistinctEventsForOneMessageBothCreateJobs` falhou porque a segunda entrega recebeu `200` (duplicata) em vez de `202` (evento novo). Uma repetição da primeira entrega continua esperada como `200`.
+- Correção: V3 remove a constraint antiga e aplica `UNIQUE(source, event_type, external_id)`; `JdbcInboxRepository.accept` usa os três campos no `ON CONFLICT`. A inbox e um job são criados para cada tipo distinto, mantendo a deduplicação de reentrega do mesmo tipo.
+
+### Achado 2: Flyway não iniciava junto com o contexto
+
+- Causa: o POM trazia `flyway-core` diretamente, sem o starter que fornece a integração de auto-configuração Flyway no Spring Boot 4. O `SpringBootTest` iniciava o DataSource, mas não criava `flyway_schema_history` nem as tabelas da aplicação. A chamada explícita do teste de migração V1/V2 mascarava essa lacuna.
+- RED: `SpringFlywayStartupTest.appliesFlywayMigrationsAutomaticallyDuringApplicationStartup` falhou com `relation "flyway_schema_history" does not exist` após o contexto Spring iniciar.
+- Correção: troquei a dependência direta `flyway-core` por `spring-boot-starter-flyway` do Boot 4 e mantive o módulo PostgreSQL. O teste agora verifica que a versão 3 está aplicada e que a inbox existe depois do startup. A documentação oficial do Boot 4 instrui usar `spring-boot-starter-flyway` para executar migrações na inicialização ([guia de inicialização de banco](https://docs.spring.io/spring-boot/4.0/how-to/data-initialization.html), [lista oficial de starters](https://docs.spring.io/spring-boot/4.0/reference/using/build-systems.html)).
+
+### Verificação GREEN do seguimento
+
+- Comando: `mvn '-Dtest=EvolutionWebhookControllerHttpTest,EvolutionWebhookControllerTest,JobRepositoryTest,SpringFlywayStartupTest,DatabaseMigrationTest' test`, com `DOCKER_HOST=npipe:////./pipe/dockerDesktopLinuxEngine` e `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock`.
+- Resultado: código 0, **21 testes executados, 0 falhas, 0 erros e 0 pulados**. Incluiu 8 testes HTTP sem banco; 8 testes de controller/PostgreSQL (incluindo duas categorias distintas e reentrega deduplicada); 3 testes de jobs concorrentes/lease; 1 teste de auto-migração do contexto; e 1 teste Flyway repetível.
+- O log de `SpringFlywayStartupTest` confirma migrações V1, V2 e V3 aplicadas automaticamente durante a inicialização, com versão atual v3. O Testcontainers acessou PostgreSQL 17.11 via Docker Desktop usando o override temporário fornecido pelo executor.
+- Uma tentativa anterior ao ajuste do fixture falhou antes de exercitar o bug porque `watcher.groupJids` não estava configurado; foi corrigida com uma propriedade de teste válida antes de capturar o RED funcional descrito acima.
+
+### Arquivos adicionais do seguimento
+
+- `pom.xml`
+- `src/main/resources/db/migration/V3__deduplicate_inbox_by_event_type.sql`
+- `src/test/java/dev/hugo/watcher/SpringFlywayStartupTest.java`

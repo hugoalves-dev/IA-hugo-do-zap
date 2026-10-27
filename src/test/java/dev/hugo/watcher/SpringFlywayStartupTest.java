@@ -1,0 +1,40 @@
+package dev.hugo.watcher;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+@Testcontainers(disabledWithoutDocker = true)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+class SpringFlywayStartupTest {
+    @Container
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+
+    @DynamicPropertySource
+    static void properties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("watcher.n8n-url", () -> "http://n8n:5678/webhook");
+        registry.add("watcher.n8n-secret", () -> "n8n-test-secret");
+        registry.add("watcher.group-jids", () -> "120363000000000000@g.us");
+        registry.add("watcher.evolution.webhook-token", () -> "startup-test-token");
+        registry.add("watcher.evolution.instance", () -> "watcher-startup-test");
+    }
+
+    @Autowired JdbcTemplate jdbc;
+
+    @Test void appliesFlywayMigrationsAutomaticallyDuringApplicationStartup() {
+        assertEquals("3", jdbc.queryForObject(
+                "select version from flyway_schema_history order by installed_rank desc limit 1", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from inbox_events", Integer.class));
+    }
+}
