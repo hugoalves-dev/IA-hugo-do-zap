@@ -3,6 +3,8 @@ package dev.hugo.watcher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Timestamp;
@@ -15,27 +17,46 @@ import java.util.Map;
 public class RetentionService {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
+    private final TransactionTemplate transactions;
 
-    public RetentionService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public RetentionService(JdbcTemplate jdbc, PlatformTransactionManager transactionManager) {
+        this.jdbc = jdbc;
+        this.transactions = new TransactionTemplate(transactionManager);
+    }
 
     @Scheduled(fixedDelay = 60_000L)
     public void purgeExpired() { purge(Instant.now()); }
 
     public int purge(Instant now) {
+        Integer count = transactions.execute(status -> purgeInTransaction(now));
+        return count == null ? 0 : count;
+    }
+
+    private int purgeInTransaction(Instant now) {
         Timestamp cutoff = Timestamp.from(now);
-        int pending = jdbc.update("delete from pending_notification where expires_at <= ?", cutoff);
-        int scrubbedPreviews = scrubExpiredPreviews(now);
         int expiredJobs = jdbc.update("""
+                with expired as (
+                    select job.id
+                      from processing_jobs job
+                      join inbox_events inbox on inbox.id=job.inbox_event_id
+                     where inbox.expires_at <= ? and job.status not in ('EXPIRED', 'COMPLETED')
+                     order by job.id
+                     for update of job skip locked
+                )
                 update processing_jobs job
                    set status='EXPIRED', lease_token=null, lease_expires_at=null
-                  from inbox_events inbox
-                 where inbox.id=job.inbox_event_id and inbox.expires_at <= ? and job.status <> 'EXPIRED'
+                  from expired
+                 where expired.id=job.id
                 """, cutoff);
         // Keep the event key and receipt metadata for deduplication; erase the raw webhook body at expiry.
         int scrubbedInboxPayloads = jdbc.update("""
                 update inbox_events set payload='{}'::jsonb
                 where expires_at <= ? and payload <> '{}'::jsonb
+                  and not exists (select 1 from processing_jobs job
+                                   where job.inbox_event_id=inbox_events.id and job.status='PROCESSING')
                 """, cutoff);
+        int pending = jdbc.update("delete from pending_notification where expires_at <= ?", cutoff);
+        int scrubbedPreviews = scrubExpiredPreviews(now);
         int outboxPayloads = jdbc.update("delete from outbox_actions where sensitive_expires_at <= ?", cutoff);
         int quarantined = jdbc.update("delete from quarantined_events where sensitive_expires_at <= ?", cutoff);
         int deduplication = jdbc.update("delete from processed_message where processed_at <= ?",

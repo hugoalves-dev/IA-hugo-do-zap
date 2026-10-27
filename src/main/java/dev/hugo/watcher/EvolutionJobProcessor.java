@@ -3,10 +3,11 @@ package dev.hugo.watcher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -22,14 +23,16 @@ public class EvolutionJobProcessor {
     private static final int MAX_JOBS_PER_PASS = 20;
     private static final Duration LEASE = Duration.ofMinutes(2);
     private final JdbcTemplate jdbc;
+    private final TransactionTemplate transactions;
     private final JobRepository jobs;
     private final EvolutionEventMapper mapper;
     private final MessageService messages;
     private final Clock clock;
 
     public EvolutionJobProcessor(JdbcTemplate jdbc, JobRepository jobs, EvolutionEventMapper mapper,
-                                 MessageService messages, Clock clock) {
+                                 MessageService messages, Clock clock, PlatformTransactionManager transactionManager) {
         this.jdbc = jdbc;
+        this.transactions = new TransactionTemplate(transactionManager);
         this.jobs = jobs;
         this.mapper = mapper;
         this.messages = messages;
@@ -53,44 +56,64 @@ public class EvolutionJobProcessor {
             if (claimed.isEmpty()) return completed;
             Job job = claimed.getFirst();
             try {
-                if (!process(job, clock.instant())) continue;
-                jobs.complete(job.id(), job.leaseToken());
-                completed++;
+                ProcessResult result = transactions.execute(status -> processAndComplete(job, clock.instant()));
+                if (result == ProcessResult.COMPLETED) completed++;
+                if (result == ProcessResult.STALE_LEASE) return completed;
             } catch (RuntimeException ex) {
                 long seconds = Math.min(900L, 10L << Math.min(7, Math.max(0, job.attempts() - 1)));
                 boolean rescheduled = jobs.retry(job.id(), job.leaseToken(), clock.instant(), clock.instant().plusSeconds(seconds));
                 LOG.log(System.Logger.Level.WARNING, "Webhook job processing failed: error={0}, retryScheduled={1}",
                         ex.getClass().getSimpleName(), rescheduled);
+                if (!rescheduled) return completed;
             }
         }
         return completed;
     }
 
     @SuppressWarnings("unchecked")
-    private boolean process(Job job, Instant now) {
-        List<String> payloads = jdbc.query("select payload::text from inbox_events where id=? and expires_at>?",
-                (rs, row) -> rs.getString(1), job.inboxEventId(), Timestamp.from(now));
-        if (payloads.isEmpty()) {
+    private ProcessResult processAndComplete(Job job, Instant now) {
+        List<String> rows = jdbc.query("""
+                select inbox.payload::text
+                  from processing_jobs job
+                  join inbox_events inbox on inbox.id=job.inbox_event_id
+                 where job.job_uuid=? and job.lease_token=? and job.status='PROCESSING'
+                 for update of job, inbox
+                """, (rs, row) -> rs.getString(1), job.id(), job.leaseToken());
+        if (rows.isEmpty()) return ProcessResult.STALE_LEASE;
+        List<Validity> validity = jdbc.query("""
+                select job.lease_expires_at > clock_timestamp() as lease_valid,
+                       inbox.expires_at > clock_timestamp() as inbox_valid
+                  from processing_jobs job
+                  join inbox_events inbox on inbox.id=job.inbox_event_id
+                 where job.job_uuid=? and job.lease_token=? and job.status='PROCESSING'
+                """, (rs, row) -> new Validity(rs.getBoolean("lease_valid"), rs.getBoolean("inbox_valid")),
+                job.id(), job.leaseToken());
+        if (validity.isEmpty() || !validity.getFirst().leaseValid()) return ProcessResult.STALE_LEASE;
+        if (!validity.getFirst().inboxValid()) {
             jobs.expire(job.id(), job.leaseToken());
-            return false;
+            jdbc.update("update inbox_events set payload='{}'::jsonb where id=?", job.inboxEventId());
+            return ProcessResult.EXPIRED;
         }
 
         JsonNode envelope;
         try {
-            envelope = JSON.readTree(payloads.getFirst());
+            envelope = JSON.readTree(rows.getFirst());
         } catch (RuntimeException ex) {
             quarantine(null, "invalid_persisted_envelope", now);
-            return true;
+            jobs.complete(job.id(), job.leaseToken());
+            return ProcessResult.COMPLETED;
         }
         JsonNode data = envelope == null ? null : envelope.get("data");
         if (data == null || !data.isObject()) {
             quarantine(null, "unsupported_or_unverified_envelope", now);
-            return true;
+            jobs.complete(job.id(), job.leaseToken());
+            return ProcessResult.COMPLETED;
         }
         List<EvolutionEvent> events = mapper.map(envelope, "webhook");
         if (events.size() != 1) {
             quarantine(null, "unsupported_or_unverified_envelope", now);
-            return true;
+            jobs.complete(job.id(), job.leaseToken());
+            return ProcessResult.COMPLETED;
         }
 
         EvolutionEvent event = events.getFirst();
@@ -102,7 +125,8 @@ public class EvolutionJobProcessor {
                 || message == null || !message.isObject() || event.timestamp().isEmpty()
                 || event.jid().isEmpty()) {
             quarantine(event.externalId(), "unverified_message_metadata", now);
-            return true;
+            jobs.complete(job.id(), job.leaseToken());
+            return ProcessResult.COMPLETED;
         }
 
         boolean group = event.jid().orElseThrow().endsWith("@g.us");
@@ -113,8 +137,12 @@ public class EvolutionJobProcessor {
         messages.accept(new IncomingMessage(Optional.of(event.externalId()), event.jid().orElseThrow(),
                 optional(participant), optional(alternateChat), optional(alternateParticipant), fromMe.booleanValue(),
                 "notify", false, content, event.timestamp().orElseThrow()));
-        return true;
+        jobs.complete(job.id(), job.leaseToken());
+        return ProcessResult.COMPLETED;
     }
+
+    private enum ProcessResult { COMPLETED, EXPIRED, STALE_LEASE }
+    private record Validity(boolean leaseValid, boolean inboxValid) { }
 
     private void quarantine(String externalId, String reason, Instant now) {
         QuarantineWriter.write(jdbc, "WEBHOOK", externalId, reason, now);

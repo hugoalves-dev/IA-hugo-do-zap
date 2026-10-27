@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -34,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import javax.net.ssl.SSLContext;
@@ -74,6 +76,9 @@ class EvolutionPipelineIntegrationTest {
     @Autowired EvolutionEventMapper mapper;
     @Autowired MessageService messages;
     @Autowired java.time.Clock clock;
+    @Autowired PlatformTransactionManager transactionManager;
+    @Autowired IdentityService identities;
+    @Autowired WatcherProperties watcherProperties;
     @LocalServerPort int port;
 
     @BeforeEach void resetLocalState() {
@@ -171,8 +176,8 @@ class EvolutionPipelineIntegrationTest {
                 return jobRepository.retry(jobId, leaseToken, now, availableAt);
             }
         };
-        var workerA = new EvolutionJobProcessor(jdbc, rendezvousRepository, mapper, messages, clock);
-        var workerB = new EvolutionJobProcessor(jdbc, rendezvousRepository, mapper, messages, clock);
+        var workerA = new EvolutionJobProcessor(jdbc, rendezvousRepository, mapper, messages, clock, transactionManager);
+        var workerB = new EvolutionJobProcessor(jdbc, rendezvousRepository, mapper, messages, clock, transactionManager);
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             var first = pool.submit(workerA::processAvailable);
@@ -208,10 +213,132 @@ class EvolutionPipelineIntegrationTest {
             }
         };
 
-        var processor = new EvolutionJobProcessor(jdbc, expireAfterClaim, mapper, messages, clock);
+        var processor = new EvolutionJobProcessor(jdbc, expireAfterClaim, mapper, messages, clock, transactionManager);
         assertEquals(0, processor.processAvailable());
         assertEquals("EXPIRED", jdbc.queryForObject("select status from processing_jobs", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+    }
+
+    @Test void retentionDefersScrubOfAnInFlightJobUntilEffectsCommit() throws Exception {
+        String jid = "5511444444444@s.whatsapp.net";
+        chatStates.apply(new ChatUpdate(jid, Optional.of(true), Instant.now().minusSeconds(60), true, true,
+                Optional.of("snapshot-retention-race"), Optional.of("Contato"), false, java.util.Map.of()));
+        assertEquals(202, post(event("retention-race", jid, "Conteúdo durante purge")).statusCode());
+
+        CountDownLatch insideMessageService = new CountDownLatch(1);
+        CountDownLatch continueWorker = new CountDownLatch(1);
+        MessageService pausedMessages = pausedMessageService(insideMessageService, continueWorker);
+        var processor = new EvolutionJobProcessor(jdbc, jobRepository, mapper, pausedMessages, clock, transactionManager);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var worker = pool.submit(processor::processAvailable);
+            assertTrue(insideMessageService.await(5, TimeUnit.SECONDS));
+            var purge = pool.submit(() -> new RetentionService(jdbc, transactionManager).purge(Instant.now().plus(Duration.ofDays(8))));
+            purge.get(5, TimeUnit.SECONDS);
+            assertEquals("PROCESSING", jdbc.queryForObject("select status from processing_jobs", String.class));
+            assertEquals(1, jdbc.queryForObject("select count(*) from inbox_events where payload<>'{}'::jsonb", Integer.class));
+            continueWorker.countDown();
+
+            assertEquals(1, worker.get(10, TimeUnit.SECONDS));
+        } finally {
+            continueWorker.countDown();
+            pool.shutdownNow();
+        }
+
+        assertEquals("COMPLETED", jdbc.queryForObject("select status from processing_jobs", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+        jdbc.update("update inbox_events set expires_at=now()-interval '1 second'");
+        new RetentionService(jdbc, transactionManager).purge(Instant.now());
+        assertEquals("{}", jdbc.queryForObject("select payload::text from inbox_events", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+    }
+
+    @Test void leaseExpiringDuringSlowMessageEffectsRollsBackThoseEffects() throws Exception {
+        String jid = "5511333333333@s.whatsapp.net";
+        chatStates.apply(new ChatUpdate(jid, Optional.of(true), Instant.now().minusSeconds(60), true, true,
+                Optional.of("snapshot-lease-race"), Optional.of("Contato"), false, java.util.Map.of()));
+        assertEquals(202, post(event("lease-race", jid, "Conteúdo com lease curto")).statusCode());
+
+        CountDownLatch insideMessageService = new CountDownLatch(1);
+        CountDownLatch continueWorker = new CountDownLatch(1);
+        MessageService pausedMessages = pausedMessageService(insideMessageService, continueWorker);
+        java.util.concurrent.atomic.AtomicBoolean firstClaim = new java.util.concurrent.atomic.AtomicBoolean(true);
+        JobRepository shortLease = new JobRepository() {
+            @Override public List<Job> claim(int limit, Instant now, Duration leaseDuration) {
+                if (!firstClaim.getAndSet(false)) return List.of();
+                List<Job> claimed = jobRepository.claim(limit, now, Duration.ofMillis(300));
+                if (!claimed.isEmpty()) jdbc.update("update processing_jobs set lease_expires_at=now()+interval '300 milliseconds' where job_uuid=?", claimed.getFirst().id());
+                return claimed;
+            }
+            @Override public void complete(UUID jobId, UUID leaseToken) { jobRepository.complete(jobId, leaseToken); }
+            @Override public boolean expire(UUID jobId, UUID leaseToken) { return jobRepository.expire(jobId, leaseToken); }
+            @Override public boolean retry(UUID jobId, UUID leaseToken, Instant now, Instant availableAt) {
+                return jobRepository.retry(jobId, leaseToken, now, availableAt);
+            }
+        };
+        var processor = new EvolutionJobProcessor(jdbc, shortLease, mapper, pausedMessages, clock, transactionManager);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            var worker = pool.submit(processor::processAvailable);
+            assertTrue(insideMessageService.await(5, TimeUnit.SECONDS));
+            Thread.sleep(500);
+            continueWorker.countDown();
+            assertEquals(0, worker.get(10, TimeUnit.SECONDS));
+        } finally {
+            continueWorker.countDown();
+            pool.shutdownNow();
+        }
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void expiredInboxCannotCommitEffectsAfterDeadlinePassesDuringProcessing() throws Exception {
+        String jid = "5511222222222@s.whatsapp.net";
+        chatStates.apply(new ChatUpdate(jid, Optional.of(true), Instant.now().minusSeconds(60), true, true,
+                Optional.of("snapshot-inbox-deadline"), Optional.of("Contato"), false, java.util.Map.of()));
+        assertEquals(202, post(event("inbox-deadline-race", jid, "Conteúdo expirando")).statusCode());
+        jdbc.update("update inbox_events set expires_at=now()+interval '300 milliseconds'");
+
+        CountDownLatch insideMessageService = new CountDownLatch(1);
+        CountDownLatch continueWorker = new CountDownLatch(1);
+        MessageService pausedMessages = pausedMessageService(insideMessageService, continueWorker);
+        var processor = new EvolutionJobProcessor(jdbc, jobRepository, mapper, pausedMessages, clock, transactionManager);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            var worker = pool.submit(processor::processAvailable);
+            assertTrue(insideMessageService.await(5, TimeUnit.SECONDS));
+            Thread.sleep(500);
+            new RetentionService(jdbc, transactionManager).purge(Instant.now());
+            assertEquals("PROCESSING", jdbc.queryForObject("select status from processing_jobs", String.class));
+            assertEquals(1, jdbc.queryForObject("select count(*) from inbox_events where payload<>'{}'::jsonb", Integer.class));
+            continueWorker.countDown();
+            assertEquals(0, worker.get(10, TimeUnit.SECONDS));
+        } finally {
+            continueWorker.countDown();
+            pool.shutdownNow();
+        }
+
+        assertEquals("EXPIRED", jdbc.queryForObject("select status from processing_jobs", String.class));
+        new RetentionService(jdbc, transactionManager).purge(Instant.now());
+        assertEquals("{}", jdbc.queryForObject("select payload::text from inbox_events", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    private MessageService pausedMessageService(CountDownLatch entered, CountDownLatch proceed) {
+        return new MessageService(jdbc, transactionManager, identities, watcherProperties) {
+            @Override public Acceptance accept(IncomingMessage message) {
+                entered.countDown();
+                try {
+                    if (!proceed.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("message service pause timed out");
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("message service pause interrupted", ex);
+                }
+                return messages.accept(message);
+            }
+        };
     }
 
     private HttpResponse<String> post(String body) throws Exception {

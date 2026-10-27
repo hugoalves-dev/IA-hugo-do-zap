@@ -61,10 +61,12 @@ public class JdbcJobRepository implements JobRepository {
     @Override
     public void complete(UUID jobId, UUID leaseToken) {
         int updated = jdbc.update("""
-                update processing_jobs
+                update processing_jobs job
                    set status = 'COMPLETED', lease_token = null, lease_expires_at = null
-                 where job_uuid = ? and lease_token = ? and status = 'PROCESSING'
-                   and lease_expires_at > now()
+                  from inbox_events inbox
+                 where inbox.id=job.inbox_event_id and job.job_uuid = ? and job.lease_token = ?
+                   and job.status = 'PROCESSING' and job.lease_expires_at > clock_timestamp()
+                   and inbox.expires_at > clock_timestamp()
                 """, jobId, leaseToken);
         if (updated != 1) throw new IllegalStateException("Job lease is no longer current");
     }
@@ -81,10 +83,12 @@ public class JdbcJobRepository implements JobRepository {
     @Override
     public boolean retry(UUID jobId, UUID leaseToken, Instant now, Instant availableAt) {
         return jdbc.update("""
-                update processing_jobs
-                   set status = 'PENDING', available_at = ?, lease_token = null, lease_expires_at = null
-                 where job_uuid = ? and lease_token = ? and status = 'PROCESSING'
-                   and lease_expires_at > ?
-                """, Timestamp.from(availableAt), jobId, leaseToken, Timestamp.from(now)) == 1;
+                update processing_jobs job
+                   set status = case when inbox.expires_at <= clock_timestamp() then 'EXPIRED' else 'PENDING' end,
+                       available_at = ?, lease_token = null, lease_expires_at = null
+                  from inbox_events inbox
+                 where inbox.id=job.inbox_event_id and job.job_uuid = ? and job.lease_token = ?
+                   and job.status = 'PROCESSING' and job.lease_expires_at > clock_timestamp()
+                """, Timestamp.from(availableAt), jobId, leaseToken) == 1;
     }
 }
