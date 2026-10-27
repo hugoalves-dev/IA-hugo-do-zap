@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 @Component
 public class N8nClient {
@@ -46,20 +47,20 @@ public class N8nClient {
 
     /** Sends while a caller-provided current-state guard remains true before each HTTP attempt. */
     public boolean send(OutboxAction action, BooleanSupplier mayContinue) {
+        return sendPrepared(() -> mayContinue.getAsBoolean() ? action : null);
+    }
+
+    /** Rebuilds and authorizes the payload immediately before every HTTP attempt. */
+    public boolean sendPrepared(Supplier<OutboxAction> prepareAttempt) {
         int attempts = retryDelays.size() + 1;
-        String payload;
-        try { payload = withCurrentSecret(action.payload()); }
-        catch (RuntimeException ex) {
-            LOG.log(System.Logger.Level.WARNING, "n8n webhook payload is invalid: error={0}", ex.getClass().getSimpleName());
-            return false;
-        }
         for (int attempt = 1; attempt <= attempts; attempt++) {
-            if (!mayContinue.getAsBoolean()) return false;
+            OutboxAction action = prepareAttempt.get();
+            if (action == null) return false;
             try {
                 HttpRequest request = HttpRequest.newBuilder(URI.create(properties.getN8nUrl()))
                         .timeout(timeout)
                         .header("content-type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(payload))
+                        .POST(HttpRequest.BodyPublishers.ofString(withCurrentSecret(action.payload())))
                         .build();
                 HttpResponse<Void> response = http.send(request, HttpResponse.BodyHandlers.discarding());
                 if (response.statusCode() >= 200 && response.statusCode() < 300) return true;

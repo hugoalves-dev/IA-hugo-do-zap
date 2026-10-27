@@ -59,24 +59,29 @@ public class NotificationService {
         try {
             transactions.executeWithoutResult(status -> enqueueArchivedBatch(now));
             for (int sent = 0; sent < 20; sent++) {
-                OutboxAction action = outbox.claimNext(now);
+                Instant claimTime = clock.instant();
+                OutboxAction action = outbox.claimNext(claimTime);
                 if (action == null) return;
-                OutboxAction delivery = revalidateBeforeDelivery(action, now);
-                if (delivery == null) {
-                    outbox.suppress(action, now);
-                    continue;
-                }
-                if (isConnectionAlert(delivery)) {
-                    if (!isCurrentConnectionAlert(delivery)) {
-                        outbox.cancelClaimedConnectionAlert(delivery, clock.instant());
-                        continue;
+                try {
+                    if (isConnectionAlert(action)) {
+                        boolean delivered = n8n.send(action, () -> isCurrentConnectionAlert(action));
+                        if (delivered) outbox.acknowledge(action, clock.instant());
+                        else if (!isCurrentConnectionAlert(action)) outbox.cancelClaimedConnectionAlert(action, clock.instant());
+                        else outbox.retry(action, clock.instant(), "DeliveryFailure");
+                    } else {
+                        OutboxAction[] latest = { action };
+                        boolean delivered = n8n.sendPrepared(() -> {
+                            latest[0] = revalidateBeforeDelivery(action, clock.instant());
+                            return latest[0];
+                        });
+                        if (delivered) outbox.acknowledge(latest[0], clock.instant());
+                        else if (latest[0] == null) outbox.suppress(action, clock.instant());
+                        else outbox.retry(action, clock.instant(), "DeliveryFailure");
                     }
-                    boolean delivered = n8n.send(delivery, () -> isCurrentConnectionAlert(delivery));
-                    if (delivered) outbox.acknowledge(delivery, clock.instant());
-                    else if (!isCurrentConnectionAlert(delivery)) outbox.cancelClaimedConnectionAlert(delivery, clock.instant());
-                    else outbox.retry(delivery, clock.instant(), "DeliveryFailure");
-                } else if (n8n.send(delivery)) outbox.acknowledge(delivery, clock.instant());
-                else outbox.retry(delivery, clock.instant(), "DeliveryFailure");
+                } catch (DataAccessException ex) {
+                    // Unknown policy/state is retryable, never proof that an alert is obsolete.
+                    outbox.retry(action, clock.instant(), "StateReadFailure");
+                }
             }
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.ERROR, "Notification flush failed: error={0}", ex.getClass().getSimpleName());
@@ -128,6 +133,8 @@ public class NotificationService {
             return new OutboxAction(action.id(), action.actionKey(), action.actionType(), writeJson(payload),
                     writeJson(allowedSnapshots), action.attempts(), action.createdAt(),
                     action.sensitiveExpiresAt(), action.leaseToken());
+        } catch (DataAccessException ex) {
+            throw ex;
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.WARNING, "Archived notification suppressed: invalid queued payload");
             return null;
@@ -149,7 +156,7 @@ public class NotificationService {
                     """, (rs, row) -> new ConnectionState(rs.getString("connection_state"), rs.getLong("outage_generation")));
             return !current.isEmpty() && "DISCONNECTED".equals(current.getFirst().connectionState())
                     && current.getFirst().generation() == expectedGeneration;
-        } catch (DataAccessException | NumberFormatException ex) {
+        } catch (NumberFormatException ex) {
             return false;
         }
     }
