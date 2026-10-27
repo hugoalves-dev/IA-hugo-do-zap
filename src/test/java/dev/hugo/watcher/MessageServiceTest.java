@@ -24,6 +24,7 @@ class MessageServiceTest {
     private JdbcTemplate jdbc;
     private ChatStateService chats;
     private MessageService messages;
+    private IdentityService identities;
     private WatcherProperties properties;
 
     @BeforeEach void migrateAndReset() {
@@ -39,7 +40,8 @@ class MessageServiceTest {
         var manager = new DataSourceTransactionManager(dataSource);
         chats = new ChatStateService(jdbc, manager);
         properties = new WatcherProperties();
-        messages = new MessageService(jdbc, manager, new IdentityService(jdbc, manager), properties);
+        identities = new IdentityService(jdbc, manager);
+        messages = new MessageService(jdbc, manager, identities, properties);
     }
 
     @Test void unknownOrUnsynchronizedArchiveStateCannotCreatePendingNotification() {
@@ -120,6 +122,23 @@ class MessageServiceTest {
                 messages.accept(messageAt("at-read-watermark", jid, "2026-10-26T10:05:00Z")));
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         assertEquals(2, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+    }
+
+    @Test void replayedMessageAfterChatAliasesMergeRemainsDeduplicated() {
+        String lid = "1001@lid";
+        String phone = "5511999999999@s.whatsapp.net";
+        archive(lid, "Contato LID");
+        archive(phone, "Contato telefone");
+        assertEquals(MessageService.Acceptance.ACCEPTED,
+                messages.accept(message("repeat-after-merge", lid, Map.of("conversation", "Oi"))));
+        identities.observe(new IdentityObservation(phone, java.util.Set.of(), IdentityEvidence.NONE));
+
+        identities.observe(new IdentityObservation(phone, java.util.Set.of(lid), IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR));
+
+        assertEquals(MessageService.Acceptance.DUPLICATE,
+                messages.accept(message("repeat-after-merge", phone, Map.of("conversation", "Oi"))));
+        assertEquals(1, jdbc.queryForObject("select (payload->>'messageCount')::integer from pending_notification", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
     }
 
     @Test void usesTheConfiguredWorkOnlyNameRegex() {

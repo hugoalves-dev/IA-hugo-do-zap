@@ -154,10 +154,11 @@ public class IdentityService {
 
         mergeContactNames(canonical, aliases);
         mergeChatSnapshotsAndPending(canonical, aliases);
+        mergeProcessedMessageIdentities(canonical, aliases);
         if (!oldCanonicals.isEmpty()) {
             String oldPlaceholders = String.join(",", java.util.Collections.nCopies(oldCanonicals.size(), "?"));
             jdbc.update("update identity_aliases set canonical_identity=? where canonical_identity in (" + oldPlaceholders + ")",
-                    prepend(canonical, oldCanonicals));
+                    prepend(canonical, oldCanonicals).toArray());
         }
         for (String alias : aliases) {
             jdbc.update("""
@@ -166,6 +167,38 @@ public class IdentityService {
                     """, alias, canonical);
         }
         return identityForCanonical(canonical);
+    }
+
+    private void mergeProcessedMessageIdentities(String canonical, Set<String> aliases) {
+        String placeholders = String.join(",", java.util.Collections.nCopies(aliases.size(), "?"));
+        List<MessageDedupRow> rows = jdbc.query("select id,canonical_chat_jid,upstream_message_key,canonical_participant_jid,processed_at "
+                        + "from processed_message where canonical_chat_jid in (" + placeholders
+                        + ") or canonical_participant_jid in (" + placeholders + ") order by id for update",
+                (rs, row) -> new MessageDedupRow(rs.getLong("id"), rs.getString("canonical_chat_jid"),
+                        rs.getString("upstream_message_key"), rs.getString("canonical_participant_jid"),
+                        rs.getTimestamp("processed_at").toInstant()), concat(aliases, aliases).toArray());
+        Map<MessageDedupKey, MessageDedupRow> latestByKey = new LinkedHashMap<>();
+        List<Long> duplicates = new ArrayList<>();
+        for (MessageDedupRow row : rows) {
+            MessageDedupKey key = new MessageDedupKey(
+                    aliases.contains(row.chatJid()) ? canonical : row.chatJid(), row.upstreamMessageKey(),
+                    aliases.contains(row.participantJid()) ? canonical : row.participantJid());
+            MessageDedupRow prior = latestByKey.get(key);
+            if (prior == null) latestByKey.put(key, row);
+            else if (row.processedAt().isAfter(prior.processedAt())) {
+                duplicates.add(prior.id());
+                latestByKey.put(key, row);
+            } else duplicates.add(row.id());
+        }
+        if (!duplicates.isEmpty()) {
+            String ids = String.join(",", java.util.Collections.nCopies(duplicates.size(), "?"));
+            jdbc.update("delete from processed_message where id in (" + ids + ")", duplicates.toArray());
+        }
+        for (Map.Entry<MessageDedupKey, MessageDedupRow> entry : latestByKey.entrySet()) {
+            MessageDedupKey key = entry.getKey();
+            jdbc.update("update processed_message set canonical_chat_jid=?, canonical_participant_jid=? where id=?",
+                    key.chatJid(), key.participantJid(), entry.getValue().id());
+        }
     }
 
     private CanonicalIdentity pairIfAlreadyLinked(Set<String> identities) {
@@ -318,7 +351,12 @@ public class IdentityService {
         merged.put("messageCount", messageCount);
         merged.put("firstMessageAt", first.toString());
         merged.put("lastMessageAt", last.toString());
-        return new PendingMerge(merged, dueAt, updatedAt, newestRow.expiresAt());
+        Instant expiresAt = rows.stream().map(PendingRow::expiresAt).max(Instant::compareTo).orElseThrow();
+        Instant previewExpiresAt = timestamp(newestPayload.get("previewExpiresAt"), newestRow.expiresAt());
+        Instant maxPreviewExpiry = newestRow.updatedAt().plusSeconds(7 * 86_400L);
+        if (previewExpiresAt.isAfter(maxPreviewExpiry)) previewExpiresAt = maxPreviewExpiry;
+        merged.put("previewExpiresAt", previewExpiresAt.toString());
+        return new PendingMerge(merged, dueAt, updatedAt, expiresAt);
     }
 
     private CanonicalIdentity identityForCanonical(String canonical) {
@@ -342,6 +380,12 @@ public class IdentityService {
         values.add(head);
         values.addAll(rest);
         return values;
+    }
+
+    private static List<Object> concat(Set<String> first, Set<String> second) {
+        List<Object> result = new ArrayList<>(first);
+        result.addAll(second);
+        return result;
     }
 
     private static String first(Set<String> values, java.util.function.Predicate<String> predicate) {
@@ -449,4 +493,6 @@ public class IdentityService {
                                    boolean group, boolean synchronizedSnapshot, Instant lastReadAt) { }
     private record PendingRow(String chatJid, String payload, Instant dueAt, Instant updatedAt, Instant expiresAt) { }
     private record PendingMerge(Map<String, Object> payload, Instant dueAt, Instant updatedAt, Instant expiresAt) { }
+    private record MessageDedupRow(long id, String chatJid, String upstreamMessageKey, String participantJid, Instant processedAt) { }
+    private record MessageDedupKey(String chatJid, String upstreamMessageKey, String participantJid) { }
 }

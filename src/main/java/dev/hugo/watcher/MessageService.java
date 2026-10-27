@@ -99,8 +99,12 @@ public class MessageService {
                             ? IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR : IdentityEvidence.NONE)).canonicalJid();
         }
         String dedupKey = sha256(canonicalJid + "\n" + externalId + "\n" + participant);
-        if (jdbc.update("insert into processed_message(message_id, processed_at) values (?, ?) on conflict (message_id) do nothing",
-                dedupKey, Timestamp.from(Instant.now())) == 0) return Acceptance.DUPLICATE;
+        String upstreamMessageKey = sha256(externalId);
+        if (jdbc.update("""
+                insert into processed_message(message_id, processed_at, canonical_chat_jid, upstream_message_key, canonical_participant_jid)
+                values (?, ?, ?, ?, ?)
+                on conflict do nothing
+                """, dedupKey, Timestamp.from(now), canonicalJid, upstreamMessageKey, participant) == 0) return Acceptance.DUPLICATE;
         if (chat.lastReadAt() != null && !receivedAt.isAfter(chat.lastReadAt())) return Acceptance.IGNORED;
 
         String preview = extractPreview(message.content());
@@ -108,14 +112,18 @@ public class MessageService {
         Pending current = readPending(canonicalJid);
         Instant lastAt = current == null || receivedAt.isAfter(current.lastAt()) ? receivedAt : current.lastAt();
         String lastPreview = current == null || !receivedAt.isBefore(current.lastAt()) ? preview : current.preview();
+        int retentionDays = Math.min(7, Math.max(1, properties.getRetentionDays()));
+        Instant expiresAt = now.plusSeconds(retentionDays * 86_400L);
+        Instant previewExpiresAt = current == null || !receivedAt.isBefore(current.lastAt())
+                ? expiresAt : current.previewExpiresAt();
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("messageCount", current == null ? 1 : current.count() + 1);
         payload.put("firstMessageAt", current == null ? receivedAt.toString() : current.firstAt().toString());
         payload.put("lastMessageAt", lastAt.toString());
         payload.put("preview", lastPreview);
+        payload.put("previewExpiresAt", previewExpiresAt.toString());
         payload.put("isGroup", chat.group());
         payload.put("notificationPolicy", policy.name());
-        int retentionDays = Math.min(7, Math.max(1, properties.getRetentionDays()));
         jdbc.update("""
                 insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
                 values (?, ?::jsonb, ?, ?, ?)
@@ -125,7 +133,7 @@ public class MessageService {
                     updated_at=excluded.updated_at,
                     expires_at=excluded.expires_at
                 """, canonicalJid, toJson(payload), Timestamp.from(lastAt), Timestamp.from(now),
-                Timestamp.from(Instant.now().plusSeconds(retentionDays * 86_400L)));
+                Timestamp.from(expiresAt));
         return Acceptance.ACCEPTED;
     }
 
@@ -134,11 +142,13 @@ public class MessageService {
                 select coalesce((payload->>'messageCount')::integer, 0) as message_count,
                        payload->>'firstMessageAt' as first_message_at,
                        payload->>'lastMessageAt' as last_message_at,
-                       payload->>'preview' as preview
+                       payload->>'preview' as preview,
+                       payload->>'previewExpiresAt' as preview_expires_at,
+                       expires_at
                 from pending_notification where chat_jid=? for update
                 """, (rs, row) -> new Pending(rs.getInt("message_count"),
                 Instant.parse(rs.getString("first_message_at")), Instant.parse(rs.getString("last_message_at")),
-                rs.getString("preview")), jid);
+                rs.getString("preview"), parseInstant(rs.getString("preview_expires_at"), rs.getTimestamp("expires_at").toInstant())), jid);
         return rows.isEmpty() ? null : rows.getFirst();
     }
 
@@ -243,7 +253,13 @@ public class MessageService {
         catch (JacksonException ex) { throw new IllegalArgumentException("Could not encode notification preview", ex); }
     }
 
+    private static Instant parseInstant(String value, Instant fallback) {
+        if (value == null) return fallback;
+        try { return Instant.parse(value); }
+        catch (RuntimeException ignored) { return fallback; }
+    }
+
     private record ChatSnapshot(Boolean archived, boolean synchronizedSnapshot, String displayName, boolean group,
                                 Instant lastReadAt) { }
-    private record Pending(int count, Instant firstAt, Instant lastAt, String preview) { }
+    private record Pending(int count, Instant firstAt, Instant lastAt, String preview, Instant previewExpiresAt) { }
 }

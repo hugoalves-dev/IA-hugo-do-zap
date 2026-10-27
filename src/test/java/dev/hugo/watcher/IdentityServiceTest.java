@@ -125,6 +125,29 @@ class IdentityServiceTest {
         assertTrue(jdbc.queryForObject("select sensitive_expires_at <= received_at + interval '7 days' from quarantined_events where reason='alias_merge_state_unknown'", Boolean.class));
     }
 
+    @Test void mergedQueueKeepsLatestSourceExpirationAndScrubsPreviewAtItsOwnSevenDayDeadline() {
+        String phone = "5511999999999@s.whatsapp.net";
+        String lid = "1001@lid";
+        Instant created = Instant.parse("2026-10-20T10:00:00Z");
+        Instant shortExpiry = Instant.parse("2026-10-21T10:00:00Z");
+        Instant longExpiry = Instant.parse("2026-10-27T10:00:00Z");
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values (?,true,?,'phone',false,true)",
+                phone, Timestamp.from(created));
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values (?,true,?,'lid',false,true)",
+                lid, Timestamp.from(created.plusSeconds(1)));
+        insertPendingWithExpiry(phone, created, longExpiry, 1, "2026-10-20T10:00:00Z", "2026-10-20T10:00:00Z", "antiga");
+        insertPendingWithExpiry(lid, shortExpiry.minusSeconds(1), shortExpiry, 1, "2026-10-21T09:59:59Z", "2026-10-21T09:59:59Z", "mais recente");
+
+        var merged = identities.observe(new IdentityObservation(lid, Set.of(phone), IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR));
+
+        assertEquals(longExpiry, jdbc.queryForObject("select expires_at from pending_notification where chat_jid=?", Timestamp.class, merged.canonicalJid()).toInstant());
+        assertEquals(shortExpiry.toString(), jdbc.queryForObject("select payload->>'previewExpiresAt' from pending_notification where chat_jid=?", String.class, merged.canonicalJid()));
+        new SensitiveDataRetentionService(jdbc).purge(shortExpiry);
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, merged.canonicalJid()));
+        assertNull(jdbc.queryForObject("select payload->>'preview' from pending_notification where chat_jid=?", String.class, merged.canonicalJid()));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where expires_at=?", Integer.class, Timestamp.from(longExpiry)));
+    }
+
     @Test void contactDisplayNamesFollowLegacySourcePrecedenceAndRejectTechnicalNames() {
         String jid = "5511999999999@s.whatsapp.net";
         identities.observeContactName(jid, "Nome do chat", ContactNameSource.CHAT);
@@ -143,5 +166,14 @@ class IdentityServiceTest {
                 + "\",\"isGroup\":false,\"notificationPolicy\":\"ANYTIME\"}";
         jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?,?::jsonb,?)", jid, payload,
                 Timestamp.from(Instant.parse(last)));
+    }
+
+    private void insertPendingWithExpiry(String jid, Instant updatedAt, Instant expiresAt, int count, String first,
+                                         String last, String preview) {
+        String payload = "{\"messageCount\":" + count + ",\"firstMessageAt\":\"" + first
+                + "\",\"lastMessageAt\":\"" + last + "\",\"preview\":\"" + preview
+                + "\",\"isGroup\":false,\"notificationPolicy\":\"ANYTIME\"}";
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
+                jid, payload, Timestamp.from(updatedAt), Timestamp.from(updatedAt), Timestamp.from(expiresAt));
     }
 }
