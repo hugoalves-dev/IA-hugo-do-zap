@@ -146,13 +146,16 @@ class NotificationServiceTest {
         seed("5511111111111@s.whatsapp.net", "Contato", false, 1,
                 "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
 
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
         notifications.flush(NOW);
 
         Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where status='PENDING'",
                 java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
         assertEquals(NOW.plusSeconds(15), clock.instant(), "fake transport advances the injected clock once");
-        assertEquals(clock.instant().plusSeconds(10), availableAt,
-                "durable retry backoff starts after the failed transport attempt");
+        assertTrue(!availableAt.isBefore(databaseBefore.plusSeconds(10))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(11)),
+                "durable retry backoff must start from PostgreSQL time");
     }
 
     @Test void TelegramRetryAfterBlocksEveryOutboxMessageUntilServerDelayExpires() {
@@ -238,6 +241,51 @@ class NotificationServiceTest {
                 "a worker clock ahead of PostgreSQL must not bypass the shared cooldown");
     }
 
+    @Test void genericRetryDeadlineUsesDatabaseClockAndCannotBeClaimedByAnAheadWorker() {
+        var worker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant createdAt = databaseNow.minusSeconds(5);
+        worker.enqueue("generic-retry", "other", "{}", "[]", createdAt, databaseNow.plus(Duration.ofDays(5)));
+        OutboxAction action = worker.claimNext(databaseNow);
+
+        worker.retry(action, databaseNow.plus(Duration.ofDays(1)), "TemporaryFailure");
+
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where action_key='generic-retry'",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!availableAt.isBefore(databaseNow.plusSeconds(10))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(11)),
+                "generic retry backoff must start from PostgreSQL time");
+        assertNull(worker.claimNext(databaseNow.plus(Duration.ofDays(1))),
+                "a worker clock ahead of PostgreSQL must not make a durable retry eligible early");
+    }
+
+    @Test void activeLeaseCannotBeReclaimedByAnAheadWorkerButExpiredLeaseCan() {
+        var firstWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        var secondWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        firstWorker.enqueue("leased", "other", "{}", "[]", databaseNow.minusSeconds(1),
+                databaseNow.plus(Duration.ofDays(5)));
+
+        assertEquals("leased", firstWorker.claimNext(databaseNow).actionKey());
+        assertNull(secondWorker.claimNext(databaseNow.plus(Duration.ofMinutes(3))),
+                "a worker clock ahead must not reclaim an unexpired lease");
+
+        jdbc.update("update outbox_actions set lease_expires_at=clock_timestamp()-interval '1 second' where action_key='leased'");
+        assertEquals("leased", secondWorker.claimNext(databaseNow).actionKey(),
+                "a lease that expired by PostgreSQL time must remain reclaimable");
+    }
+
+    @Test void databaseExpiredSensitivePayloadIsNotClaimedByABehindWorkerClock() {
+        var worker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        worker.enqueue("expired", "other", "{}", "[]", databaseNow.minusSeconds(10), databaseNow.minusSeconds(1));
+
+        assertNull(worker.claimNext(databaseNow.minusSeconds(2)),
+                "database expiry must not be extended by a worker clock that is behind");
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_key='expired'", String.class));
+    }
+
     private TelegramTransport fakeTransport() {
         return text -> {
             requestCount.incrementAndGet();
@@ -285,6 +333,7 @@ class NotificationServiceTest {
         responseStatus.set(200);
 
         clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
         notifications.flush(clock.instant());
 
         assertEquals(1, requestCount.get(), "a now-blocked group must not reach Telegram");
@@ -302,6 +351,7 @@ class NotificationServiceTest {
         responseStatus.set(200);
 
         clock.advance(Duration.ofHours(5));
+        makePendingOutboxDue();
         notifications.flush(clock.instant());
 
         assertEquals(1, requestCount.get(), "a WORK_ONLY retry outside the work window must not be sent");
@@ -323,6 +373,7 @@ class NotificationServiceTest {
                 java.sql.Timestamp.from(NOW.plusSeconds(1)), concurrentlyUpdated);
         responseStatus.set(200);
         clock.advance(Duration.ofSeconds(20));
+        makePendingOutboxDue();
         notifications.flush(clock.instant());
 
         assertTrue(receivedBody.get().contains("Contato atual"));
@@ -355,6 +406,7 @@ class NotificationServiceTest {
         });
         notifications.flush(NOW);
         clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
         notifications.flush(clock.instant());
         assertEquals(2, requestCount.get());
         assertTrue(receivedBody.get().contains("Atual"));
@@ -471,7 +523,7 @@ class NotificationServiceTest {
         var connections = new ConnectionService(jdbc, manager, outbox, properties, Duration.ofSeconds(60));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, NOW, "connection_lost", 408));
         String key = jdbc.queryForObject("select 'whatsapp_connection_lost:' || outage_generation from watcher_connection_state where singleton_id=1", String.class);
-        outbox.enqueue(key, "whatsapp_connection_lost", "{}", "[]", NOW, NOW.plusSeconds(86400));
+        outbox.enqueue(key, "whatsapp_connection_lost", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
         if (afterTelegramSend) {
             responseStatus.set(503);
             requestHook.set(ignored -> jdbc.execute("alter table watcher_connection_state rename to unavailable_connection_state"));
@@ -486,14 +538,15 @@ class NotificationServiceTest {
         responseStatus.set(200);
         requestHook.set(ignored -> { });
         clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
         notifications.flush(clock.instant());
         assertEquals(afterTelegramSend ? 2 : 1, requestCount.get());
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key=?", String.class, key));
     }
 
     @Test void laterActionClaimReceivesFreshLeaseAfterLongEarlierDelivery() {
-        outbox.enqueue("first", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
-        outbox.enqueue("second", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
+        outbox.enqueue("first", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        outbox.enqueue("second", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
         AtomicReference<OutboxAction> stolen = new AtomicReference<>();
         requestHook.set(ignored -> {
             if (requestCount.get() == 1) clock.advance(Duration.ofSeconds(130));
@@ -519,6 +572,7 @@ class NotificationServiceTest {
         });
         notifications.flush(NOW);
         clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
         jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
         notifications.flush(clock.instant());
         assertEquals(1, requestCount.get(), "READ terminates the old pending generation before retry");
@@ -573,6 +627,7 @@ class NotificationServiceTest {
         jdbc.update("update chat_snapshot set archived=true where chat_jid=?", jid);
         responseStatus.set(200);
         clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
         notifications.flush(clock.instant());
         assertEquals(1, requestCount.get(), "rearchive must not authorize the previous incarnation");
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
@@ -586,6 +641,10 @@ class NotificationServiceTest {
         jdbc.update("delete from pending_notification where chat_jid=?", jid);
         jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
                 jid, row.get("payload"), row.get("due_at"), row.get("updated_at"), row.get("expires_at"));
+    }
+
+    private void makePendingOutboxDue() {
+        jdbc.update("update outbox_actions set available_at=clock_timestamp()-interval '1 second' where status='PENDING'");
     }
 
     private void seed(String jid, String name, boolean group, int count, String first, String last, String preview, Instant now) {
