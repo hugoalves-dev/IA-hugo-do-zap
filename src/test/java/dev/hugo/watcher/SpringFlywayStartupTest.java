@@ -13,7 +13,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
+        properties = "watcher.runtime.scheduling-enabled=false")
 class SpringFlywayStartupTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
@@ -33,7 +34,7 @@ class SpringFlywayStartupTest {
     @Autowired JdbcTemplate jdbc;
 
     @Test void appliesFlywayMigrationsAutomaticallyDuringApplicationStartup() {
-        assertEquals("8", jdbc.queryForObject(
+        assertEquals("10", jdbc.queryForObject(
                 "select version from flyway_schema_history order by installed_rank desc limit 1", String.class));
         assertEquals("UNKNOWN", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from inbox_events", Integer.class));

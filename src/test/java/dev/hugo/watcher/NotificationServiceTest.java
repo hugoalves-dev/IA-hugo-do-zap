@@ -331,6 +331,86 @@ class NotificationServiceTest {
         assertEquals(2, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'", Integer.class));
     }
 
+    @Test void readThenRecreatedPendingDoesNotResendObsoletePreviewOnInternalRetry() {
+        String jid = "5511000000091@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "old sensitive preview", NOW);
+        requestHook.set(ignored -> {
+            if (requestCount.get() == 1) {
+                new ChatStateService(jdbc, manager).clearRead(jid, NOW, java.util.Optional.of(0), java.util.Optional.empty(), java.util.Optional.empty());
+                jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
+                        jid, "{\"messageCount\":1,\"firstMessageAt\":\"2026-10-26T11:00:01Z\",\"lastMessageAt\":\"2026-10-26T11:00:01Z\",\"preview\":\"new preview\"}",
+                        java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW.plusSeconds(86400)));
+            }
+            responseStatus.set(503);
+        });
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get(), "READ terminates the old pending generation before retry");
+        assertEquals("1", jdbc.queryForObject("select payload->>'messageCount' from pending_notification", String.class));
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions", String.class));
+    }
+
+    @Test void findsAnytimeAfterDeferredWorkOnlyRowsBeforeApplyingBatchLimit() throws Exception {
+        properties.setMaxBatchSize(1);
+        seed("5511000000092@s.whatsapp.net", "Equipe JC", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "work", NOW);
+        seed("5511000000093@s.whatsapp.net", "Amigo", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:01:00Z", "anytime", NOW);
+        clock.advance(Duration.ofHours(5));
+        notifications.flush(clock.instant());
+        assertNotNull(receivedBody.get(), "deferred first row must not starve eligible later row");
+        assertEquals("5511000000093@s.whatsapp.net", JSON.readTree(receivedBody.get()).get("chats").get(0).get("jid").stringValue());
+    }
+
+    @Test void excludesExistingGroupPendingWhenGroupsDisabled() {
+        properties.setIncludeGroups(false);
+        seed("120363000000000091@g.us", "Grupo", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "group", NOW);
+        notifications.flush(NOW);
+        assertEquals(0, requestCount.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void disablingGroupsDuringDeliveryStopsInternalRetry() {
+        seed("120363000000000092@g.us", "Grupo", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "group", NOW);
+        requestHook.set(ignored -> { properties.setIncludeGroups(false); responseStatus.set(503); });
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void acknowledgmentDoesNotDeleteRecreatedPendingWithIdenticalWatermarks() {
+        String jid = "5511000000094@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "preview", NOW);
+        requestHook.set(ignored -> recreatePendingIdentically(jid));
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class),
+                "ACK must compare generation even when every payload watermark is identical");
+    }
+
+    @Test void durableRetryDoesNotResendPreviousArchiveGeneration() {
+        String jid = "5511000000095@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "obsolete preview", NOW);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+        assertEquals(3, requestCount.get());
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", jid);
+        recreatePendingIdentically(jid);
+        jdbc.update("update chat_snapshot set archived=true where chat_jid=?", jid);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(11));
+        notifications.flush(clock.instant());
+        assertEquals(3, requestCount.get(), "rearchive must not authorize the previous incarnation");
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        notifications.flush(clock.instant());
+        assertEquals(4, requestCount.get(), "new generation remains deliverable on the next batch");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    private void recreatePendingIdentically(String jid) {
+        var row = jdbc.queryForMap("select payload::text,due_at,updated_at,expires_at from pending_notification where chat_jid=?", jid);
+        jdbc.update("delete from pending_notification where chat_jid=?", jid);
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
+                jid, row.get("payload"), row.get("due_at"), row.get("updated_at"), row.get("expires_at"));
+    }
+
     private void seed(String jid, String name, boolean group, int count, String first, String last, String preview, Instant now) {
         Instant updated = now.minusSeconds(3600);
         Instant expires = updated.plusSeconds(7 * 86400L);

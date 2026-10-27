@@ -10,11 +10,26 @@ import java.sql.DriverManager;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @Testcontainers(disabledWithoutDocker = true)
 class DatabaseMigrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+
+    @Test void upgradesExistingPendingRowsWithGenerationWithoutChangingPayload() throws Exception {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_generation").defaultSchema("upgrade_generation")
+                .target("9").load().migrate();
+        jdbc.update("insert into upgrade_generation.pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,now(),now(),now()+interval '1 day')",
+                "fixture-upgrade@s.whatsapp.net", "{\"messageCount\":2}");
+        Flyway.configure().dataSource(source).schemas("upgrade_generation").defaultSchema("upgrade_generation")
+                .load().migrate();
+        assertNotNull(jdbc.queryForObject("select generation from upgrade_generation.pending_notification", java.util.UUID.class));
+        assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from upgrade_generation.pending_notification", String.class));
+    }
 
     @Test void flywayIsRepeatableAndArchivedRemainsTriState() throws Exception {
         var flyway = Flyway.configure()

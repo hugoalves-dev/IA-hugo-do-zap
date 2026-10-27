@@ -125,20 +125,20 @@ public class NotificationOutboxRepository {
 
     private void clearIfUnchanged(String snapshotJson) {
         List<PendingSnapshot> snapshots = jdbc.query("""
-                select chat_jid,message_count,first_message_at,last_message_at,updated_at
+                select chat_jid,message_count,first_message_at,last_message_at,updated_at,pending_generation
                 from jsonb_to_recordset(?::jsonb) as snapshot(
-                    chat_jid text,message_count integer,first_message_at text,last_message_at text,updated_at timestamptz)
+                    chat_jid text,message_count integer,first_message_at text,last_message_at text,updated_at timestamptz,pending_generation text)
                 """, (rs, row) -> new PendingSnapshot(rs.getString("chat_jid"), rs.getInt("message_count"),
                 rs.getString("first_message_at"), rs.getString("last_message_at"),
-                rs.getTimestamp("updated_at").toInstant()), snapshotJson);
+                rs.getTimestamp("updated_at").toInstant(), rs.getString("pending_generation")), snapshotJson);
         for (PendingSnapshot snapshot : snapshots) {
             jdbc.update("""
                     delete from pending_notification p using chat_snapshot c
                     where p.chat_jid=? and c.chat_jid=p.chat_jid and c.archived is true
                       and p.payload->>'messageCount'=? and p.payload->>'firstMessageAt'=?
-                      and p.payload->>'lastMessageAt'=? and p.updated_at=?
+                      and p.payload->>'lastMessageAt'=? and p.updated_at=? and p.generation=?::uuid
                     """, snapshot.chatJid(), Integer.toString(snapshot.messageCount()), snapshot.firstMessageAt(),
-                    snapshot.lastMessageAt(), Timestamp.from(snapshot.updatedAt()));
+                    snapshot.lastMessageAt(), Timestamp.from(snapshot.updatedAt()), snapshot.generation());
         }
     }
 
@@ -148,5 +148,5 @@ public class NotificationOutboxRepository {
     }
 
     private record PendingSnapshot(String chatJid, int messageCount, String firstMessageAt,
-                                   String lastMessageAt, Instant updatedAt) { }
+                                   String lastMessageAt, Instant updatedAt, String generation) { }
 }

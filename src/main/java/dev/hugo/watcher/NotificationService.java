@@ -111,7 +111,8 @@ public class NotificationService {
                 Map<String, Object> snapshot = snapshots.get(i);
                 String chatJid = snapshot.get("chat_jid") instanceof String value ? value : null;
                 PendingRow row = chatJid == null ? null : current.get(chatJid);
-                if (row == null) continue;
+                if (row == null || !row.generation().equals(snapshot.get("pending_generation"))) continue;
+                if (row.group() && !properties.isIncludeGroups()) continue;
                 String displayName = resolveDisplayName(row);
                 if (row.group() && isBlockedGroup(displayName)) continue;
                 String policy = isWorkOnly(displayName) ? "WORK_ONLY" : "ANYTIME";
@@ -173,6 +174,7 @@ public class NotificationService {
 
         for (PendingRow row : pending) {
             if (row == null) continue;
+            if (row.group() && !properties.isIncludeGroups()) continue;
             String displayName = resolveDisplayName(row);
             if (row.group() && isBlockedGroup(displayName)) {
                 jdbc.update("delete from pending_notification where chat_jid=?", row.chatJid());
@@ -190,6 +192,7 @@ public class NotificationService {
             }
             Map<String, Object> snapshot = new LinkedHashMap<>();
             snapshot.put("chat_jid", row.chatJid());
+            snapshot.put("pending_generation", row.generation());
             snapshot.put("message_count", row.messageCount());
             snapshot.put("first_message_at", row.firstMessageAt().toString());
             snapshot.put("last_message_at", row.lastMessageAt().toString());
@@ -217,7 +220,7 @@ public class NotificationService {
 
     private List<PendingRow> readPending(Instant now) {
         return jdbc.query("""
-                select p.chat_jid, p.payload::text as payload, p.updated_at, p.expires_at,
+                select p.chat_jid, p.generation::text as pending_generation, p.payload::text as payload, p.updated_at, p.expires_at,
                        s.display_name as chat_name, s.is_group,
                        coalesce(alias.canonical_identity, p.chat_jid) as canonical_jid,
                        identity.display_name as identity_name, identity.phone_jid,
@@ -230,7 +233,6 @@ public class NotificationService {
                 where s.archived is true and s.synchronized_snapshot is true
                   and p.due_at <= ? and p.expires_at > ?
                 order by p.due_at,p.chat_jid
-                limit ?
                 """, (rs, rowNum) -> {
             String payloadText = rs.getString("payload");
             Map<String, Object> payload = readObject(payloadText);
@@ -251,8 +253,8 @@ public class NotificationService {
                     rs.getString("chat_name"), rs.getString("identity_name"), rs.getBoolean("is_group"),
                     phoneJid, lidJid, username, integer(payload.get("messageCount")),
                     first, last, preview, previewExpiry, rs.getTimestamp("updated_at").toInstant(),
-                    rs.getTimestamp("expires_at").toInstant());
-        }, Timestamp.from(now), Timestamp.from(now), properties.getMaxBatchSize());
+                    rs.getTimestamp("expires_at").toInstant(), rs.getString("pending_generation"));
+        }, Timestamp.from(now), Timestamp.from(now));
     }
 
     private LegacyChat toLegacyChat(PendingRow row, String displayName, String policy, ZoneId zone, Instant now) {
@@ -391,7 +393,7 @@ public class NotificationService {
     private record PendingRow(String chatJid, String canonicalJid, String chatName, String identityName,
                               boolean group, String phoneJid, String lidJid, String username, int messageCount,
                               Instant firstMessageAt, Instant lastMessageAt, String preview, Instant previewExpiry,
-                              Instant updatedAt, Instant expiresAt) { }
+                              Instant updatedAt, Instant expiresAt, String generation) { }
     private record ConnectionState(String connectionState, long generation) { }
     private record LegacyChat(int messageCount, Map<String, Object> payload) { }
 }
