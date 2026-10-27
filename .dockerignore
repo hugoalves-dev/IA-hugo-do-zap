@@ -1,6 +1,12 @@
 .env
 .git
+.superpowers
 data
+migration-copy
+target
 node_modules
 dist
 coverage
+*.db
+*.db-shm
+*.db-wal

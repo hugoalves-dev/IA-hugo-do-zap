@@ -1,17 +1,92 @@
 services:
   watcher:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      SERVER_PORT: "8080"
       TZ: ${TZ:-America/Sao_Paulo}
-    volumes:
-      - ./data:/app/data
+      WATCHER_TIMEZONE: ${WATCHER_TIMEZONE:-America/Sao_Paulo}
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:?Set the existing PostgreSQL watcher database URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:?Set the dedicated watcher database role}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?Set the watcher database password}
+      WATCHER_N8N_URL: ${WATCHER_N8N_URL:?Set the n8n webhook URL}
+      WATCHER_N8N_SECRET: ${WATCHER_N8N_SECRET:?Set the n8n webhook secret}
+      WATCHER_EVOLUTION_WEBHOOK_TOKEN: ${WATCHER_EVOLUTION_WEBHOOK_TOKEN:?Set a separate Evolution webhook bearer token}
+      WATCHER_EVOLUTION_INSTANCE: ${WATCHER_EVOLUTION_INSTANCE:-watcher-evolution}
+      WATCHER_NOTIFICATION_DAYS: ${WATCHER_NOTIFICATION_DAYS:-1,2,3,4,5}
+      WATCHER_NOTIFICATION_WINDOWS_0_START: ${WATCHER_NOTIFICATION_WINDOWS_0_START:-08:00}
+      WATCHER_NOTIFICATION_WINDOWS_0_END: ${WATCHER_NOTIFICATION_WINDOWS_0_END:-12:00}
+      WATCHER_NOTIFICATION_WINDOWS_1_START: ${WATCHER_NOTIFICATION_WINDOWS_1_START:-13:30}
+      WATCHER_NOTIFICATION_WINDOWS_1_END: ${WATCHER_NOTIFICATION_WINDOWS_1_END:-17:30}
+      WATCHER_ALLOWED_NAME_REGEX: ${WATCHER_ALLOWED_NAME_REGEX:-(^|[^A-Z0-9])JC([^A-Z0-9]|$)}
+      WATCHER_INCLUDE_GROUPS: ${WATCHER_INCLUDE_GROUPS:-true}
+      WATCHER_NEVER_NOTIFY_GROUP_NAMES_0: ${WATCHER_NEVER_NOTIFY_GROUP_NAMES_0:-233/234}
+      WATCHER_MAX_BATCH_SIZE: ${WATCHER_MAX_BATCH_SIZE:-50}
+      WATCHER_RETENTION_DAYS: ${WATCHER_RETENTION_DAYS:-7}
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: never
     networks:
-      - n8n_internal
+      - infra_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  evolution-api:
+    image: ${EVOLUTION_IMAGE:?Set the official Evolution API image pinned by tag and digest}
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: "8080"
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://evolution-api:8080}
+      SERVER_DISABLE_DOCS: "true"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: ${EVOLUTION_DATABASE_URL:?Set the separate Evolution PostgreSQL database URL}
+      DATABASE_CONNECTION_CLIENT_NAME: watcher-evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: watcher-evolution
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_LOCAL_ENABLED: "false"
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?Set the Evolution API key}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - infra_network
+      - evolution_backend
+
+  redis:
+    image: ${REDIS_IMAGE:?Set the Redis image pinned by tag and digest}
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - evolution_backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  evolution_instances:
 
 networks:
-  n8n_internal:
-    name: infra_network
+  infra_network:
     external: true
+    name: infra_network
+  evolution_backend:
+    internal: true

@@ -1,21 +1,15 @@
-FROM node:24-bookworm-slim AS build
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY tsconfig.json ./
-COPY src ./src
-COPY tests ./tests
-RUN npm run typecheck && npm run build && npm test && npm prune --omit=dev
+FROM maven:3.9.11-eclipse-temurin-25 AS build
+WORKDIR /build
+COPY pom.xml ./
+COPY src/main ./src/main
+RUN mvn -B -Dmaven.test.skip=true package
 
-FROM node:24-bookworm-slim AS runtime
-ENV NODE_ENV=production
+FROM eclipse-temurin:25-jre-alpine AS runtime
 WORKDIR /app
-COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
-RUN mkdir -p /app/data/auth && chown -R node:node /app/data
-COPY --from=build --chown=node:node /app/dist ./dist
-USER node
-VOLUME ["/app/data"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["node", "dist/src/healthcheck.js"]
-CMD ["node", "dist/src/index.js"]
+RUN addgroup -S app && adduser -S -G app -u 10001 app
+COPY --from=build --chown=app:app /build/target/whatsapp-archived-watcher-1.0.0-SNAPSHOT.jar /app/app.jar
+USER app
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/actuator/health || exit 1
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "/app/app.jar"]
