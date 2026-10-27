@@ -44,32 +44,41 @@ public class DebounceService {
     }
 
     private void enqueueTransaction(IncomingMessage message, Instant at) {
+        enqueueTransaction(message, at, at, at.plus(Duration.ofDays(limits.getSensitiveRetentionDays())));
+    }
+
+    private void enqueueTransaction(IncomingMessage message, Instant at, Instant capturedAt, Instant sensitiveExpiresAt) {
         lockIdentityMerge();
         String chat = canonical(message.chatJid());
         String participant = message.participantJid().map(this::canonical).orElse("");
         lockBatch(chat, participant);
         String messageId = message.externalId().orElseThrow(() -> new IllegalArgumentException("external message ID required"));
         Timestamp now = Timestamp.from(at);
-        Integer duplicate = jdbc.queryForObject("select count(*) from simulation_batch_messages where chat_jid=? and participant_jid=? and external_id=?", Integer.class,
-                chat, participant, messageId);
-        if (duplicate != null && duplicate > 0) return;
+        List<UUID> duplicate = jdbc.query("select batch_id from simulation_batch_messages where chat_jid=? and participant_jid=? and external_id=?",
+                (rs, row) -> rs.getObject(1, UUID.class), chat, participant, messageId);
+        if (!duplicate.isEmpty()) {
+            jdbc.update("update simulation_batches set expires_at=least(expires_at,?) where batch_id=?",
+                    Timestamp.from(sensitiveExpiresAt),duplicate.getFirst());
+            return;
+        }
 
         List<UUID> open = jdbc.query("select batch_id from simulation_batches where chat_jid=? and participant_jid=? and status='OPEN' for update",
                 (rs, row) -> rs.getObject(1, UUID.class), chat, participant);
         UUID id;
         if (open.isEmpty()) {
-            id = createBatch(chat, participant, now, Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())));
+            id = createBatch(chat, participant, now, Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())), capturedAt, sensitiveExpiresAt);
         } else {
             id = open.getFirst();
             Integer size = jdbc.queryForObject("select count(*) from simulation_batch_messages where batch_id=?", Integer.class, id);
             if (size != null && size >= limits.getMaxMessages()) {
                 jdbc.update("update simulation_batches set status='READY', due_at=? where batch_id=?", now, id);
-                id = createBatch(chat, participant, now, now);
+                id = createBatch(chat, participant, now, now, capturedAt, sensitiveExpiresAt);
             } else {
                 jdbc.update("""
-                        update simulation_batches set last_message_at=?, due_at=least(first_message_at + (? * interval '1 second'), ?)
+                        update simulation_batches set last_message_at=?, due_at=least(first_message_at + (? * interval '1 second'), ?),
+                            expires_at=least(expires_at, ?)
                         where batch_id=?
-                        """, now, limits.getMaxWaitSeconds(), Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())), id);
+                        """, now, limits.getMaxWaitSeconds(), Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())), Timestamp.from(sensitiveExpiresAt), id);
             }
         }
         try {
@@ -83,7 +92,8 @@ public class DebounceService {
         }
     }
 
-    private UUID createBatch(String chat, String participant, Timestamp now, Timestamp dueAt) {
+    private UUID createBatch(String chat, String participant, Timestamp now, Timestamp dueAt,
+                             Instant capturedAt, Instant sensitiveExpiresAt) {
         jdbc.execute((ConnectionCallback<Void>) connection -> {
             try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(947221, 1)")) { statement.execute(); }
             return null;
@@ -91,13 +101,14 @@ public class DebounceService {
         Integer active = jdbc.queryForObject("select count(*) from simulation_batches where status in ('OPEN','READY','CLAIMED')", Integer.class);
         if (active != null && active >= limits.getMaxPendingBatches()) throw new IllegalStateException("simulation batch capacity reached");
         UUID id = UUID.randomUUID();
-        Instant at = now.toInstant();
+        Instant configuredDeadline = capturedAt.plus(Duration.ofDays(limits.getSensitiveRetentionDays()));
+        Instant deadline = sensitiveExpiresAt.isBefore(configuredDeadline) ? sensitiveExpiresAt : configuredDeadline;
         jdbc.update("""
                 insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at)
                 values (?,?,?,'OPEN',?,?,?,?,?,?)
-                """, id, chat, participant, now, now, dueAt, now,
-                Timestamp.from(at.plus(Duration.ofDays(limits.getSensitiveRetentionDays()))),
-                Timestamp.from(at.plus(Duration.ofDays(limits.getAuditRetentionDays()))));
+                """, id, chat, participant, now, now, dueAt, Timestamp.from(capturedAt),
+                Timestamp.from(deadline),
+                Timestamp.from(capturedAt.plus(Duration.ofDays(limits.getAuditRetentionDays()))));
         return id;
     }
 
@@ -124,14 +135,23 @@ public class DebounceService {
                 Boolean drained = transactions.execute(status -> {
                     lockIdentityMerge();
                     List<Capture> rows = jdbc.query("""
-                            select id,shadow_payload::text from processed_message
+                            select id,shadow_payload::text,processed_at,shadow_expires_at from processed_message
                              where shadow_payload is not null and shadow_expires_at>?
-                             order by id for update skip locked limit 1
-                            """, (rs, row) -> new Capture(rs.getLong(1), rs.getString(2)), Timestamp.from(now));
+                             order by coalesce((shadow_payload->>'receivedAt')::timestamptz,processed_at),id
+                             for update skip locked limit 1
+                            """, (rs, row) -> new Capture(rs.getLong(1), rs.getString(2),
+                            rs.getTimestamp(3).toInstant(),rs.getTimestamp(4).toInstant()), Timestamp.from(now));
                     if (rows.isEmpty()) return false;
                     Capture capture = rows.getFirst();
                     IncomingMessage message = JSON.readValue(capture.payload(), IncomingMessage.class);
-                    enqueueTransaction(message, now);
+                    Instant receivedAt = message.receivedAt() == null ? capture.capturedAt() : message.receivedAt();
+                    // Replay original windows, not the time at which a delayed poll drains the capture.
+                    jdbc.update("""
+                            update simulation_batches set status='READY'
+                             where chat_jid=? and participant_jid=? and status='OPEN' and due_at<=?
+                            """, canonical(message.chatJid()), message.participantJid().map(this::canonical).orElse(""),
+                            Timestamp.from(receivedAt));
+                    enqueueTransaction(message, receivedAt, capture.capturedAt(), capture.expiresAt());
                     jdbc.update("update processed_message set shadow_payload=null,shadow_expires_at=null where id=?", capture.id());
                     return true;
                 });
@@ -154,7 +174,7 @@ public class DebounceService {
         return rows.isEmpty() ? jid : rows.getFirst();
     }
 
-    private record Capture(long id, String payload) { }
+    private record Capture(long id, String payload, Instant capturedAt, Instant expiresAt) { }
 
     private List<Batch> claimTransaction(Instant now) {
         lockIdentityMerge();

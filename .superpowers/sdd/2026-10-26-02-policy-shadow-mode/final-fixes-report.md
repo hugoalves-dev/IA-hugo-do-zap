@@ -48,3 +48,23 @@ Resultado final: **BUILD SUCCESS; 72 testes, zero falhas, zero erros, zero ignor
 - `Classification.explicitPersonalReference` ainda é dado de entrada do engine; `SimulationService` usa `Classification.unavailable()`, sem inferir intenção da mensagem. Antes do plano 3, referência explícita deverá ser verificada deterministicamente contra menção estrutural, nome/apelido cadastrado ou resposta a mensagem de autoria comprovada. Boolean fornecido por IA e gatilho de grupo não bastam. Testes devem cobrir referência ausente, pessoa diferente, citação sem autoria comprovada e tentativa de prompt injection.
 - Nenhum calendário factual foi inventado. O teste de integração usa entrada explicitamente nomeada como fixture fictícia; UNKNOWN não altera disponibilidade, e VALIDATED exige atestação manual. Sistema não verifica automaticamente a fonte publicada.
 - Verificação foi local. Não comprova CI, deploy, runtime de produção, classificação IA nem entrega WhatsApp/Telegram.
+
+
+## Correção load-bearing de retenção/replay após a revisão
+
+A revisão do commit de correções encontrou dois defeitos introduzidos na transferência da captura: o poll usava seu horário como origem do lote e renovava o prazo sensível. Uma captura aguardando seis dias ganhava sete dias novos. Mensagens recebidas em janelas distintas também eram agrupadas na mesma janela do poll.
+
+Correção restrita a `DebounceService` e seus testes:
+
+- Transferência lê `processed_at` e `shadow_expires_at` originais. Criação do lote e metadados usa a origem persistida, sem renovação pelo poll.
+- Deadline do lote é o mínimo entre seu prazo existente e o deadline das capturas incorporadas, inclusive quando a mensagem já está deduplicada no lote. Lotes com prazos diferentes expiram integralmente no menor prazo: isso pode apagar o item mais novo antes do seu prazo individual, nunca manter o item antigo além do prazo original. Não houve mudança de schema nem de `RetentionService`.
+- Capturas pendentes são ordenadas pelo timestamp de recebimento, com fallback para `processed_at`, antes do replay. Lote OPEN cuja janela original já terminou vira READY antes de incorporar a próxima captura. Debounce usa recebimento original, preservando tanto 10 segundos de inatividade quanto máximo de 30 segundos, independentemente do atraso do poll ou da ordem de ingestão.
+- RED PostgreSQL confirmou quatro falhas: captura antiga expirava em 03/11 em vez de 28/10; lote com deadline curto era prorrogado; backlog das marcas 0/9/18/27/31/42 segundos não reconstruía três lotes; recaptura duplicada mantinha o prazo prorrogado. Os testes verificam transferência, lote misto, deduplicação, conteúdo/ordem dos lotes e purge exatamente no prazo original.
+
+Verificação adicional: **BUILD SUCCESS; 51 testes, zero falhas, zero erros, zero ignorados**, PostgreSQL 17.11 Testcontainers, duração 48,685 s. `git diff --check` sem erros.
+
+```powershell
+mvn '-Dtest=DebounceServiceTest,MessageServiceTest,IdentityServiceTest,SimulationServiceTest,RetentionServiceTest,RetentionRegressionTest' '-DargLine=-Dapi.version=1.44' test
+```
+
+Mesmas variáveis de Java/Docker documentadas acima. Nenhuma suíte completa, nenhum acesso ao conteúdo de `target/`, nenhuma mudança em `.idea/` e nenhum trabalho do plano 3.

@@ -33,6 +33,7 @@ class DebounceServiceTest {
         Flyway.configure().dataSource(source).load().migrate();
         jdbc.execute("drop trigger if exists pause_simulation_batch_insert on simulation_batches");
         jdbc.execute("drop function if exists pause_simulation_batch_insert()");
+        jdbc.update("delete from processed_message");
         jdbc.update("delete from simulation_decisions");
         jdbc.update("delete from simulation_batch_messages");
         jdbc.update("delete from simulation_batches");
@@ -108,6 +109,73 @@ class DebounceServiceTest {
             assertEquals("simulation batch capacity reached", rejected.getMessage());
         }
         assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batches where status in ('OPEN','READY','CLAIMED')", Integer.class));
+    }
+
+    @Test void oldCaptureKeepsOriginalDeadlineThroughTransferAndPurge() {
+        Instant now = Instant.parse("2026-10-27T10:00:00Z");
+        Instant originalDeadline = Instant.parse("2026-10-28T10:00:00Z");
+        capture(at("old-capture", "old@s.whatsapp.net", null, "2026-10-21T10:00:00Z"),
+                Instant.parse("2026-10-21T10:00:00Z"), originalDeadline);
+        new DebounceService(jdbc, limits).claimReady(now);
+        assertEquals(originalDeadline, jdbc.queryForObject("select expires_at from simulation_batches", java.sql.Timestamp.class).toInstant());
+        var retention = new dev.hugo.watcher.RetentionService(jdbc,
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()));
+        retention.purge(originalDeadline.minusSeconds(1));
+        assertEquals(1,jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+        retention.purge(originalDeadline);
+        assertEquals(0,jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+    }
+
+    @Test void mixedDeadlinesUseEarliestBatchDeadlineWithoutExtendingEitherItem() {
+        Instant now = Instant.parse("2026-10-27T10:00:00Z");
+        Instant earliest = Instant.parse("2026-10-27T10:00:30Z");
+        capture(at("short", "mixed@s.whatsapp.net", null, "2026-10-21T10:00:00Z"),
+                Instant.parse("2026-10-21T10:00:00Z"),earliest);
+        capture(at("long", "mixed@s.whatsapp.net", null, "2026-10-21T10:00:05Z"),
+                Instant.parse("2026-10-21T10:00:05Z"),Instant.parse("2026-10-28T10:00:05Z"));
+        new DebounceService(jdbc, limits).claimReady(now);
+        assertEquals(1,jdbc.queryForObject("select count(*) from simulation_batches",Integer.class));
+        assertEquals(2,jdbc.queryForObject("select count(*) from simulation_batch_messages",Integer.class));
+        assertEquals(earliest,jdbc.queryForObject("select expires_at from simulation_batches",java.sql.Timestamp.class).toInstant());
+        new dev.hugo.watcher.RetentionService(jdbc,new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource())).purge(earliest);
+        assertEquals(0,jdbc.queryForObject("select count(*) from simulation_batch_messages",Integer.class));
+    }
+
+    @Test void backlogPreservesReceiveTimeInactivityAndMaximumWindow() {
+        Instant first = Instant.parse("2026-10-27T10:00:00Z");
+        // Ingestion order differs from event time. Poll time must not collapse the original windows.
+        for (int offset : List.of(31,0,9,18,27,42)) {
+            Instant received = first.plusSeconds(offset);
+            capture(at("backlog-"+offset,"backlog@s.whatsapp.net",null,received.toString()),
+                    first.plusSeconds(60),Instant.parse("2026-11-03T10:01:00Z"));
+        }
+        List<Batch> batches = new DebounceService(jdbc,limits).claimReady(Instant.parse("2026-10-27T11:00:00Z"));
+        assertEquals(3,batches.size());
+        assertEquals(List.of("backlog-0","backlog-9","backlog-18","backlog-27"),
+                batches.get(0).messages().stream().map(m -> m.externalId().orElseThrow()).toList());
+        assertEquals("backlog-31",batches.get(1).messages().getFirst().externalId().orElseThrow());
+        assertEquals("backlog-42",batches.get(2).messages().getFirst().externalId().orElseThrow());
+        assertEquals(first,jdbc.queryForObject("select min(first_message_at) from simulation_batches",java.sql.Timestamp.class).toInstant());
+    }
+
+    @Test void duplicateCaptureCannotLeaveLaterDeadlineOnExistingPayload() {
+        Instant now = Instant.parse("2026-10-27T10:00:00Z");
+        IncomingMessage message = at("duplicate-deadline","duplicate@s.whatsapp.net",null,"2026-10-21T10:00:00Z");
+        var service = new DebounceService(jdbc,limits);
+        service.enqueue(message,now);
+        Instant deadline = Instant.parse("2026-10-28T10:00:00Z");
+        capture(message,Instant.parse("2026-10-21T10:00:00Z"),deadline);
+        service.claimReady(now);
+        assertEquals(deadline,jdbc.queryForObject("select expires_at from simulation_batches",java.sql.Timestamp.class).toInstant());
+        assertEquals(1,jdbc.queryForObject("select count(*) from simulation_batch_messages",Integer.class));
+    }
+
+    private void capture(IncomingMessage message, Instant processedAt, Instant expiresAt) {
+        jdbc.update("""
+                insert into processed_message(message_id,processed_at,shadow_payload,shadow_expires_at)
+                values (?,?,?::jsonb,?)
+                """,message.externalId().orElseThrow(),java.sql.Timestamp.from(processedAt),
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(message),java.sql.Timestamp.from(expiresAt));
     }
 
     private void pauseBatchInserts() {
