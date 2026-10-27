@@ -41,7 +41,8 @@ public class NotificationOutboxRepository {
         jdbc.update("""
                 insert into outbox_actions(action_key, action_type, payload, pending_snapshot, status,
                     attempts, available_at, created_at, updated_at, sensitive_expires_at)
-                values (?, ?, ?::jsonb, ?::jsonb, 'PENDING', 0, ?, ?, ?, ?)
+                values (?, ?, ?::jsonb, ?::jsonb, 'PENDING', 0, ?, ?, ?,
+                    least(?::timestamptz, clock_timestamp() + interval '7 days', ?::timestamptz + interval '7 days'))
                 on conflict (action_key) do update set
                     payload=excluded.payload,
                     pending_snapshot=excluded.pending_snapshot,
@@ -56,7 +57,8 @@ public class NotificationOutboxRepository {
                     lease_expires_at=null
                 where outbox_actions.status='ACKNOWLEDGED'
                 """, actionKey, actionType, payload, pendingSnapshot, Timestamp.from(createdAt),
-                Timestamp.from(createdAt), Timestamp.from(createdAt), Timestamp.from(sensitiveExpiresAt));
+                Timestamp.from(createdAt), Timestamp.from(createdAt), Timestamp.from(sensitiveExpiresAt),
+                Timestamp.from(createdAt));
     }
 
     public boolean hasActiveAction(String actionType, Instant now) {

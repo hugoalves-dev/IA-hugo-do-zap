@@ -45,4 +45,10 @@ Os testes injetam `TelegramTransport` falso e não chamam a rede Telegram. Nenhu
 - Testes PostgreSQL reproduzem retry com clock adiantado, lease ativo/expirado e expiração sensível com clock atrasado. As fixtures simulam passagem do deadline atualizando a linha do banco.
 - Verificação focada: `NotificationServiceTest`, `EvolutionPipelineIntegrationTest`, `SpringFlywayStartupTest`, `TelegramBotApiTransportTest` — 43 testes, 0 falhas, 0 erros.
 
+### TTL sensível e relógio do worker
+
+- O constraint anterior limitava `sensitive_expires_at` a 7 dias após `created_at`; ambos os valores vinham do worker. Teste RED com clock 2 dias adiantado confirmou retenção possível de 9 dias a partir da inserção PostgreSQL.
+- `enqueue` agora persiste `LEAST(expiração solicitada, clock_timestamp()+7 dias, created_at+7 dias)`. Isso mantém o teto de 7 dias do banco, satisfaz o constraint legado e preserva deadlines mais curtos de conteúdo.
+- Teste GREEN verifica o teto contra o relógio PostgreSQL e confirma que um deadline específico mais curto permanece igual. Verificação focada final: 44 testes, 0 falhas, 0 erros.
+
 O branch não foi enviado nem publicado. A revisão e o push ficam para o responsável pelo plano.

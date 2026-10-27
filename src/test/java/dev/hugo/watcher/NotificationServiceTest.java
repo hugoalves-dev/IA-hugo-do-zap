@@ -286,6 +286,27 @@ class NotificationServiceTest {
         assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_key='expired'", String.class));
     }
 
+    @Test void enqueueCapsSensitiveTtlAtSevenDaysFromDatabaseTimeButKeepsEarlierContentDeadline() {
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant workerCreatedAt = databaseBefore.plus(Duration.ofDays(2));
+        Instant workerMaximumExpiry = workerCreatedAt.plus(Duration.ofDays(7));
+        Instant shortContentExpiry = databaseBefore.plus(Duration.ofDays(2));
+
+        outbox.enqueue("worker-clock-ahead", "other", "{}", "[]", workerCreatedAt, workerMaximumExpiry);
+        outbox.enqueue("short-content-deadline", "other", "{}", "[]", workerCreatedAt, shortContentExpiry);
+
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant maxExpiry = jdbc.queryForObject("select sensitive_expires_at from outbox_actions where action_key='worker-clock-ahead'",
+                java.sql.Timestamp.class).toInstant();
+        Instant retainedShortExpiry = jdbc.queryForObject("select sensitive_expires_at from outbox_actions where action_key='short-content-deadline'",
+                java.sql.Timestamp.class).toInstant();
+
+        assertTrue(!maxExpiry.isAfter(databaseAfter.plus(Duration.ofDays(7))),
+                "a worker clock ahead must not extend sensitive retention beyond seven days from database insert time");
+        assertEquals(shortContentExpiry, retainedShortExpiry,
+                "database cap must preserve a shorter content-specific deadline");
+    }
+
     private TelegramTransport fakeTransport() {
         return text -> {
             requestCount.incrementAndGet();
