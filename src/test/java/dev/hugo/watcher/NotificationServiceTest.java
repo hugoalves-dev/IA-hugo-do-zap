@@ -318,6 +318,54 @@ class NotificationServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
     }
 
+    @Test void modeChangeBetweenFailureAndRetrySuppressesPersistedAction() {
+        String jid = "5511555555556@s.whatsapp.net";
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        seed(jid, "Contato", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        var retryAt = jdbc.queryForObject("select available_at from outbox_actions where action_type='archived_messages'", java.sql.Timestamp.class);
+        notifications.flush(clock.instant());
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='archived_messages'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select attempts from outbox_actions where action_type='archived_messages'", Integer.class));
+        assertEquals(retryAt, jdbc.queryForObject("select available_at from outbox_actions where action_type='archived_messages'", java.sql.Timestamp.class));
+
+        archiveModes.setMode(ArchiveMode.UNARCHIVED_ONLY);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(20));
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
+
+        assertEquals(3, requestCount.get(), "retry must revalidate the persisted action against the current mode");
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
+    @Test void repeatedFlushReusesSuppressedGenerationWithoutCreatingDuplicateOutboxRows() {
+        String jid = "5511555555557@s.whatsapp.net";
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        seed(jid, "Contato", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        String generation = jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, jid);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", jid);
+        clock.advance(Duration.ofSeconds(20));
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(generation, jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, jid));
+
+        jdbc.update("update chat_snapshot set archived=true where chat_jid=?", jid);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(1));
+        notifications.flush(clock.instant());
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='archived_messages'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
     @Test void internalRetryStopsWhenWorkWindowEndsAndPreservesDeferredPending() {
         seed("5511000000003@s.whatsapp.net", "Equipe JC", false, 1,
                 "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);

@@ -215,7 +215,7 @@ public class NotificationService {
         Map<String, Object> stablePayload = new LinkedHashMap<>(payload);
         stablePayload.remove("generatedAt");
         outbox.enqueue(ARCHIVED_MESSAGES + ":" + sha256(archiveModes.getMode().name() + "\n" + snapshotJson
-                        + "\n" + writeJson(stablePayload) + "\n" + now), ARCHIVED_MESSAGES,
+                        + "\n" + writeJson(stablePayload)), ARCHIVED_MESSAGES,
                 payloadJson, snapshotJson, now, sensitiveExpiry);
         LOG.log(System.Logger.Level.INFO, "Archived notification queued: chats={0}, messages={1}",
                 chats.size(), chats.stream().mapToInt(LegacyChat::messageCount).sum());

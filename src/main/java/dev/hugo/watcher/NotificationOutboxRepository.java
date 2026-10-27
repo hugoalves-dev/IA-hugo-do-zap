@@ -29,7 +29,19 @@ public class NotificationOutboxRepository {
                 insert into outbox_actions(action_key, action_type, payload, pending_snapshot, status,
                     attempts, available_at, created_at, updated_at, sensitive_expires_at)
                 values (?, ?, ?::jsonb, ?::jsonb, 'PENDING', 0, ?, ?, ?, ?)
-                on conflict (action_key) do nothing
+                on conflict (action_key) do update set
+                    payload=excluded.payload,
+                    pending_snapshot=excluded.pending_snapshot,
+                    status='PENDING',
+                    attempts=0,
+                    available_at=excluded.available_at,
+                    created_at=excluded.created_at,
+                    updated_at=excluded.updated_at,
+                    sensitive_expires_at=excluded.sensitive_expires_at,
+                    last_error=null,
+                    lease_token=null,
+                    lease_expires_at=null
+                where outbox_actions.status='ACKNOWLEDGED'
                 """, actionKey, actionType, payload, pendingSnapshot, Timestamp.from(createdAt),
                 Timestamp.from(createdAt), Timestamp.from(createdAt), Timestamp.from(sensitiveExpiresAt));
     }
