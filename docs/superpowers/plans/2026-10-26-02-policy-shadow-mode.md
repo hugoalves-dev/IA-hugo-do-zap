@@ -1,8 +1,10 @@
 # Plano 2 — Políticas, disponibilidade e Shadow Mode
 
+> **Futuro, não autorizado para iniciar agora.** Só iniciar após concluir o plano 1 e receber aprovação explícita do usuário. A instrução vigente exige push por tarefa; esta atualização documental não inicia execução deste plano.
+
 > **Para execução:** use `superpowers:executing-plans` ou `superpowers:subagent-driven-development`, com TDD e testes direcionados por tarefa.
 
-**Objetivo:** implementar no Spring políticas configuráveis, disponibilidade, lotes e simulações auditáveis para todos os chats arquivados.
+**Objetivo:** implementar no Spring políticas configuráveis, disponibilidade, lotes e simulações auditáveis para todos os chats incluídos pelo modo de escopo runtime do plano 1. O padrão `ALL` abrange todos os chats; `ARCHIVED_ONLY` e `UNARCHIVED_ONLY` são restrições configuráveis. `UNKNOWN` só entra em `ALL`.
 
 **Arquitetura:** consumir eventos e snapshots duráveis do plano 1; decisões determinísticas usam precedência global → perfil → override e produzem auditoria, sem efeitos WhatsApp em Shadow Mode.
 
@@ -13,8 +15,8 @@
 ## Restrições e revisão
 
 - `ai_classification`, `intelligent_alerts` e `auto_reply` desativados por padrão; kill switch bloqueia ações reais sem desligar o fluxo legado.
-- Shadow Mode abrange chats arquivados conhecidos, registra permissões e bloqueios, não envia respostas WhatsApp nem alerta individual simulado; relatórios administrativos seguem plano 3.
-- Estado desconhecido, lacuna ou erro bloqueia ações; simulação e ações reais têm cooldowns separados; limite inicial real 60 minutos configurável.
+- Shadow Mode abrange o modo de escopo selecionado, registra permissões e bloqueios, não envia respostas WhatsApp nem alerta individual simulado; administração Telegram é futura e segue plano 3, após aprovação.
+- `UNKNOWN` só pode ser avaliado em `ALL`; em `ARCHIVED_ONLY` e `UNARCHIVED_ONLY`, estado desconhecido, lacuna ou erro exclui o evento e bloqueia ações. Simulação e ações reais têm cooldowns separados; limite inicial real 60 minutos configurável.
 - Trechos e payloads sensíveis expiram em até 7 dias; metadados por padrão em 90 dias configuráveis. Sem dados pessoais em logs.
 - Revisão: override parcial não apaga herança; DST/virada de ano e dias municipais inválidos não inventam feriados; duas pessoas em um grupo não compartilham lote; repetição não viola cooldown; saída de IA não concede autorização.
 
@@ -39,7 +41,7 @@
 **Interfaces:** `DebounceService.enqueue(IncomingMessage, Instant)` agrupa por chat e remetente em grupos; `claimReady(Instant)` entrega lote após 10 s de inatividade ou 30 s desde primeira mensagem. `SimulationService.evaluate(Batch): SimulationDecision` persiste resultado sem efeitos externos.
 
 - [ ] Escrever `DebounceServiceTest` com relógio injetável para 10 s, máximo 30 s, remetentes distintos, mensagens duplicadas e recuperação após reinício; `SimulationServiceTest` para archived UNKNOWN, bloqueios e falha de persistência.
-- [ ] Rodar `mvn -Dtest=DebounceServiceTest,SimulationServiceTest test` e observar falha esperada.
+- [ ] Rodar `mvn -Dtest=DebounceServiceTest,SimulationServiceTest test` e observar falha esperada; cobrir elegibilidade de `UNKNOWN` somente em `ALL`.
 - [ ] Implementar lotes duráveis com limites configuráveis, snapshots e auditoria `wouldAlert`, `wouldReply`, `templateId`, `decisionReason`, `blockedReason`.
 - [ ] Repetir testes e confirmar sucesso; commit somente arquivos da tarefa.
 

@@ -2,9 +2,9 @@
 
 > **Para execução:** use `superpowers:executing-plans` ou `superpowers:subagent-driven-development`; execute cada tarefa com teste vermelho, implementação e teste verde. Este plano substitui `2026-10-20-evolution-api-isolated-poc.md`: o usuário recusou a POC como etapa prévia. A validação da integração continua necessária antes do cutover.
 
-**Objetivo:** substituir integralmente o runtime TypeScript por Java 25/Spring Boot 4.x e Evolution API, preservando comportamento e contrato n8n existentes.
+**Objetivo:** substituir integralmente o runtime TypeScript por Java 25/Spring Boot 4.x e Evolution API, preservando o comportamento legado durante coexistência e rollback. A integração nova usa Telegram Bot API diretamente via wrapper open-source `pengrad/java-telegram-bot-api`; n8n não integra o transporte novo.
 
-**Arquitetura:** Evolution recebe eventos do WhatsApp; webhook privado do Spring valida e persiste inbox PostgreSQL antes do ACK. Workers com leases processam eventos idempotentemente, atualizam snapshots e entregam notificações por outbox. O legado só é desligado no cutover autorizado.
+**Arquitetura:** Evolution recebe eventos do WhatsApp; webhook privado do Spring valida e persiste inbox PostgreSQL antes do ACK. Workers com leases processam eventos idempotentemente, atualizam snapshots e entregam notificações pela outbox à Telegram Bot API via wrapper pengrad. Entrega externa é at-least-once: retries após resultado incerto podem duplicar; não declarar exactly-once. O legado só é desligado no cutover autorizado.
 
 **Stack:** Maven, Java 25 JVM, Spring Boot 4.x, PostgreSQL/Flyway, JDBC, Testcontainers, Docker Compose, Evolution API oficial fixada e Redis isolado.
 
@@ -16,10 +16,11 @@
 - Ao terminar o plano 1, aguardar aprovação explícita do usuário antes de iniciar os planos 2 e 3.
 
 - Preservar `watcher.db`, sessão, dados e produção; não executar operações de VPS, pareamento, cutover ou envio real sem autorização operacional explícita.
-- Não chamar `archiveChat` ou `chatModify`. Arquivamento desconhecido ou desatualizado bloqueia ações.
+- Não chamar `archiveChat` ou `chatModify`. O modo de escopo tem configuração runtime `ALL` (padrão), `ARCHIVED_ONLY` ou `UNARCHIVED_ONLY`. `UNKNOWN` é considerado apenas em `ALL`; nos modos restritos, estado ausente, atrasado ou desconhecido exclui o evento com motivo auditável.
+- Não afirmar completude/paridade da Evolution em `ARCHIVED_ONLY` ou `UNARCHIVED_ONLY` sem evidência específica do estado necessário. O plano 1 implementa os modos e informa precisamente qual deles teve a cobertura verificada.
 - Evolution oficial primeiro; usar fork apenas depois de falha demonstrada e revisão da origem/licença. Fixar commit e digest; sem `latest`.
 - Spring e Evolution usam bancos e usuários distintos na instância PostgreSQL existente; sem SQLite novo, broker, GraalVM native ou AOT.
-- Sem dependência direta de Baileys no novo serviço; manter contrato `archived_messages` e `whatsapp_connection_lost` do n8n.
+- Sem dependência direta de Baileys no novo serviço. Contratos `archived_messages` e `whatsapp_connection_lost` pertencem ao transporte n8n histórico e só são mantidos durante coexistência/rollback; o serviço Java novo notifica Telegram diretamente via wrapper pengrad.
 - Não registrar segredos, conteúdo bruto ou dados pessoais em logs; retenção de snippets no máximo 7 dias.
 - Executar testes direcionados por tarefa. Suíte completa somente mediante pedido explícito do usuário; relatar a ausência de verificação ampla.
 - Trabalho parcial não rastreado já existe em `pom.xml`, `src/main/java/dev/hugo/watcher/NotificationPolicy.java` e respectivo teste. Conferir e adaptar antes de reutilizar; não presumir que represente a migração completa.
@@ -39,15 +40,15 @@
 - `.../evolution/EvolutionWebhookController.java`, `EvolutionEvent.java`, `EvolutionEventMapper.java`: ingresso e mapeamento versionado.
 - `.../persistence/InboxRepository.java`, `JobRepository.java`, `OutboxRepository.java`: transações, leases e reentregas.
 - `.../identity/IdentityService.java`, `.../watcher/ChatStateService.java`, `MessageService.java`, `NotificationPolicy.java`: identidade, snapshots e política.
-- `.../notification/NotificationService.java`, `N8nClient.java`, `ConnectionService.java`: agendamento, contrato e recuperação.
+- `.../notification/NotificationService.java`, `TelegramBotClient.java` baseado em `pengrad/java-telegram-bot-api`, `ConnectionService.java`: agendamento direto, entrega at-least-once e recuperação.
 - `src/test/java/dev/hugo/watcher/**`: testes por componente; `src/test/resources/fixtures/evolution/`: fixtures sintéticas explicitamente rotuladas e, quando disponíveis, schemas reais sanitizados.
 - `Dockerfile`, `compose.yaml`, `.env.example`, `.gitignore`, `.dockerignore`, `README.md`: JVM e operação; manter os arquivos de legado versionados até a etapa final de remoção.
 
 ### Tarefa 1: Bootstrap, configuração e banco
 
-**Interfaces:** `WatcherApplication`; `WatcherProperties` valida URL/segredo n8n, timezone, dias, janelas, regex, grupos e limites; Flyway cria as tabelas acima com chaves únicas, índices e coluna `archived` tri-state.
+**Interfaces:** `WatcherApplication`; `WatcherProperties` valida configuração da Evolution, Telegram Bot API/wrapper pengrad, timezone, dias, janelas, regex, grupos e limites; Flyway cria as tabelas acima com chaves únicas, índices, coluna `archived` tri-state e modo runtime `ALL` (padrão), `ARCHIVED_ONLY` ou `UNARCHIVED_ONLY`.
 
-- [ ] Escrever `WatcherPropertiesTest` para secret/URL ausentes, URL insegura fora de `n8n`, dias 1–7 e intervalo inválido; `DatabaseMigrationTest` inicia PostgreSQL real e executa Flyway duas vezes sem perda.
+- [ ] Escrever `WatcherPropertiesTest` para credenciais/URL da Evolution e token Telegram ausentes, URL insegura, dias 1–7 e intervalo inválido; `DatabaseMigrationTest` inicia PostgreSQL real e executa Flyway duas vezes sem perda.
 - [ ] Executar `mvn -Dtest=WatcherPropertiesTest,DatabaseMigrationTest test`; confirmar falha pela ausência de implementação.
 - [ ] Implementar bootstrap, dependências de web/JDBC/Flyway/PostgreSQL/Testcontainers, propriedades e migração; sem alterar dependências fora do necessário à migração.
 - [ ] Reexecutar os testes direcionados; esperar sucesso e registrar resultado. Commit apenas arquivos da tarefa.
@@ -73,20 +74,20 @@
 
 ### Tarefa 4: Paridade de estado e seleção de mensagens
 
-**Interfaces:** `ChatStateService.apply(ChatUpdate)` aplica eventos ordenados por versão/timestamp verificável; `MessageService.accept(IncomingMessage)` deduplica atomicamente e cria pendência apenas para chat arquivado conhecido e sincronizado.
+**Interfaces:** `ChatStateService.apply(ChatUpdate)` aplica eventos ordenados por versão/timestamp verificável; `MessageService.accept(IncomingMessage)` deduplica atomicamente e seleciona chats conforme modo runtime. Em `ALL` aceita `archived=true`, `false` e `UNKNOWN`; em modos restritos aceita somente estado compatível conhecido e sincronizado.
 
-- [ ] Criar `ChatStateServiceTest` e `MessageServiceTest`: bootstrap desconhecido, update antigo, desarquivamento limpa pendência, eventos de leitura limpam fila, conteúdo próprio/status/protocolo é ignorado, grupos desativados são ignorados, aliases compartilham dedup, nomes bloqueados e política `WORK_ONLY` são preservados.
+- [ ] Criar `ChatStateServiceTest` e `MessageServiceTest`: modos runtime `ALL` (padrão), `ARCHIVED_ONLY`, `UNARCHIVED_ONLY`; `UNKNOWN` só elegível em `ALL`; bootstrap desconhecido, update antigo, desarquivamento limpa pendência, eventos de leitura limpam fila, conteúdo próprio/status/protocolo é ignorado, grupos desativados são ignorados, aliases compartilham dedup, nomes bloqueados e política `WORK_ONLY` são preservados.
 - [ ] Executar `mvn -Dtest=ChatStateServiceTest,MessageServiceTest,NotificationPolicyTest test`; confirmar falha onde não implementado.
 - [ ] Portar comportamento de `src/watcher-state.ts`, `notify-handler.ts`, `message-filter.ts`, `contact-identity.ts`, `message-preview.ts` e `config.ts` para serviços Java transacionais. Preservar regex configurável, janela local, preview e limite de retenção; mensagens de histórico não viram mensagens novas.
 - [ ] Reexecutar testes; esperar sucesso. Commit dos arquivos da tarefa.
 
-### Tarefa 5: Outbox, n8n e desconexões
+### Tarefa 5: Outbox, Telegram direto e desconexões
 
-**Interfaces:** `NotificationService.flush(Instant)` prepara payload legado em outbox; `N8nClient.send(OutboxAction)` usa timeout e política de retry; `ConnectionService.onState(ConnectionEvent)` implementa período de graça e alerta de pareamento.
+**Interfaces:** `NotificationService.flush(Instant)` prepara notificações Telegram em outbox; cliente baseado em `pengrad/java-telegram-bot-api` usa timeout e política de retry; `ConnectionService.onState(ConnectionEvent)` implementa período de graça e alerta de pareamento. Transporte legado n8n fica fora da implementação nova.
 
-- [ ] Criar `NotificationServiceTest`, `N8nClientTest`, `ConnectionServiceTest`: shape exato do payload legado, fuso/total, adiamento WORK_ONLY, exclusão condicional após ACK, nova mensagem concorrente preservada, timeout/5xx mantém outbox, desconexão breve não alerta e `device_removed` alerta uma vez.
-- [ ] Executar `mvn -Dtest=NotificationServiceTest,N8nClientTest,ConnectionServiceTest test`; confirmar falha esperada.
-- [ ] Implementar agendador sem sobreposição, outbox durável e retries/backoff; nunca afirmar exactly-once no destino. Compatibilidade com n8n validada com HTTP fake e fixture do payload existente.
+- [ ] Criar `NotificationServiceTest`, teste do cliente Telegram e `ConnectionServiceTest`: destino/shape Telegram esperado, fuso/total, adiamento WORK_ONLY, exclusão condicional após ACK, nova mensagem concorrente preservada, timeout/5xx mantém outbox, retry após resultado remoto incerto admite duplicata, desconexão breve não alerta e `device_removed` alerta uma vez.
+- [ ] Executar testes direcionados de notificação, cliente Telegram e conexão; confirmar falha esperada.
+- [ ] Implementar agendador sem sobreposição, outbox durável e retries/backoff; documentar entrega at-least-once e não afirmar exactly-once. Preservar o legado n8n apenas para coexistência/rollback.
 - [ ] Reexecutar testes; esperar sucesso. Commit dos arquivos da tarefa.
 
 ### Tarefa 6: Migração de dados, retenção e operação
@@ -100,9 +101,9 @@
 
 ### Tarefa 7: Integração real, corte e remoção TypeScript
 
-- [ ] Adicionar testes de integração dirigidos para webhook → inbox → job → snapshot → outbox → fake n8n, incluindo falha/retentativa, duplicata e reinício. Executar e registrar resultados.
+- [ ] Adicionar testes de integração dirigidos para webhook → inbox → job → snapshot → outbox → fake Telegram Bot API, incluindo falha/retentativa, duplicata possível após resultado incerto e reinício. Executar e registrar resultados.
 - [ ] Documentar versão/commit/digest, segurança, evidência de snapshot inicial e pós-reconexão, `archived` true/false manuais, grupos, LID/PN e perda/retry do webhook. Estes testes usam o serviço implementado; não criar harness de POC. A ausência de evidência bloqueia **ativação**, não implementação.
 - [ ] Preparar checklist revisável de backup/restauração, comparação de paridade, exclusão mútua de notificações, rollback e monitoramento. Solicitar autorização separada antes de parear, alterar VPS ou fazer cutover.
 - [ ] Somente depois de corte autorizado e validado, retirar `src/*.ts`, testes Node, `package*.json`, `tsconfig.json` e imagens antigas; preservar backup e rollback. Sem aprovação, entregar código Java e deixar produção intacta.
 
-**Saída:** serviço Java testado localmente; status operacional separado dos testes. Sem dados reais não declarar paridade de Evolution comprovada nem cutover concluído.
+**Saída:** serviço Java testado localmente; status operacional separado dos testes. Sem evidência real, não declarar paridade Evolution completa nos modos `ARCHIVED_ONLY` ou `UNARCHIVED_ONLY`, nem cutover concluído. Ao concluir plano 1, parar e aguardar aprovação explícita do usuário antes de iniciar planos 2 ou 3.

@@ -6,7 +6,9 @@
 
 ## 1. Intenção, resultado e limites
 
-Evoluir o watcher existente substituindo gradualmente a integração direta com Baileys por **Evolution API**, testando primeiro a distribuição **oficial** e recorrendo ao **fork não oficial de AlmogCohen** caso a oficial não atenda aos critérios de aceitação, e introduzindo um núcleo Spring Boot 4.x (Java 25 LTS, JVM convencional) para identificar solicitações e urgências em **conversas arquivadas** do WhatsApp, gerenciar disponibilidade por horário/feriados, notificar seletivamente pelo Telegram e, numa fase posterior e explicitamente autorizada, enviar respostas automáticas **apenas por templates preaprovados**. Administrar a solução por Telegram (comandos + botões), mantendo o n8n como transportador de mensagens; uma interface Next.js com SSR fica para o futuro.
+Evoluir o watcher existente substituindo gradualmente a integração direta com Baileys por **Evolution API**, recorrendo à distribuição oficial e ao fork não oficial de AlmogCohen conforme critérios de aceitação, e introduzindo um núcleo Spring Boot 4.x (Java 25 LTS, JVM convencional). O modo padrão monitora **todos os chats**; `ARCHIVED_ONLY` e `UNARCHIVED_ONLY` são modos de escopo configuráveis em runtime. `UNKNOWN` é elegível somente em `ALL`. O sistema identifica solicitações e urgências, gerencia disponibilidade, notifica pelo Telegram e, numa fase posterior e explicitamente autorizada, pode enviar respostas automáticas **apenas por templates preaprovados**. O Spring usa diretamente Telegram Bot API por meio do wrapper open-source `pengrad/java-telegram-bot-api`; n8n não faz parte do transporte novo. Uma interface Next.js com SSR fica para o futuro.
+
+> **Decisão vigente:** o usuário recusou a POC separada como pré-requisito de implementação. Referências abaixo a gates, tarefas e decisões de POC descrevem o histórico da proposta, não uma etapa autorizada nem um requisito para iniciar o plano 1.
 
 **Critérios de sucesso:**
 - Preservar integralmente o comportamento legado até a ativação consciente de cada recurso novo.
@@ -15,7 +17,7 @@ Evoluir o watcher existente substituindo gradualmente a integração direta com 
 - Nunca conceder permissões a partir da saída de IA; o modelo apenas classifica.
 - Reduzir envio de dados pessoais a terceiros, impor teto de custos e não responder em situação de erro.
 
-**Fora do escopo inicial:** painel Next.js, integração com Google Calendar, conversas não arquivadas, memória conversacional ampla, geração livre de texto, análise de mídia, criação/manutenção de um gateway Baileys próprio, alterações no código da Evolution API e qualquer compilação Native Image/GraalVM. A mudança documentada não autoriza implementação ou deploy.
+**Fora do escopo inicial:** painel Next.js, integração com Google Calendar, memória conversacional ampla, geração livre de texto, análise de mídia, criação/manutenção de um gateway Baileys próprio, alterações no código da Evolution API e qualquer compilação Native Image/GraalVM. A mudança documentada não autoriza implementação ou deploy.
 
 ## 2. Base real observada no projeto
 
@@ -24,7 +26,7 @@ O repositório existente usa TypeScript/Node, Baileys `7.0.0-rc14`, `better-sqli
 - `chat_state` armazena arquivamento, grupo, nome e política `WORK_ONLY`/`ANYTIME`, derivada de nome/regex; `contact_identity` resolve LID/PN/JID.
 - `pending_notification` guarda contagens e **`last_message_preview`**; `processed_message` guarda hashes para deduplicação.
 - O código coleta somente mensagens `notify` recebidas, elegíveis e com estado arquivado conhecido; ignora mensagens do próprio usuário, status e eventos de protocolo.
-- O fluxo legado aplica janelas de expediente para `WORK_ONLY`, agrega pendências e envia um webhook autenticado ao n8n; o n8n entrega no Telegram.
+- **Histórico do legado:** o fluxo TypeScript aplica janelas de expediente para `WORK_ONLY`, agrega pendências e envia webhook autenticado ao n8n, que entrega no Telegram. Esse contrato permanece relevante somente durante coexistência/rollback; a arquitetura nova elimina n8n.
 - `watcher.db` já utiliza WAL. Os testes cobrem o fluxo legado, identidade, grupos, deduplicação, arquivamento e filtragem.
 - O README está parcialmente desatualizado quanto a contato único/armazenamento: **não** usar sua descrição como fonte de verdade sobre a versão atual.
 
@@ -58,19 +60,19 @@ Na migração, preservar o watcher TypeScript/Baileys atual e suas tabelas sem s
                                 v
              [Spring Boot 4.x / Java 25 / JVM convencional]
                  - recepção validada e inbox idempotente
-                 - snapshots archived e identidade LID/PN/JID
+                 - snapshots de chat, escopo runtime e identidade LID/PN/JID
                  - regras, debounce, perfis, disponibilidade
                  - Shadow Mode, Gemini/OpenRouter e auditoria
-                 - Telegram admin e emissão de relatórios
+                 - notificações Telegram por outbox (administração futura no plano 3)
                                 |
                                 v
-                       [n8n] -> [Telegram]
+                       [wrapper pengrad] -> [Telegram Bot API]
 
   PRODUÇÃO ATUAL (intocada até cutover explícito):
   [Watcher TypeScript + Baileys] -> [n8n] -> [Telegram]
 ```
 
-**Critérios obrigatórios da POC antes de escolher implementação:**
+**Registro histórico da proposta de POC (recusada como gate de implementação):** os critérios a seguir eram critérios de aceitação da POC proposta; não exigem criar ou concluir POC separada. As mesmas evidências técnicas pertinentes continuam necessárias para declarar suporte funcional ou autorizar cutover.
 - Verificar **`archived=true` e `archived=false` reais** quando uma conversa é arquivada/desarquivada **manualmente no cliente WhatsApp**, sem chamar `archiveChat` ou `chatModify` via API. Verificar `chats.update` e eventos/snapshot inicial `chats.set` / `chats.upsert` conforme disponíveis.
 - Verificar histórico/sincronização inicial com chats **já arquivados**, inclusive chats que já existem no banco da Evolution, e comportamento depois de reiniciar, desconectar e reconectar. Sem snapshot completo, estabelecer mecanismo **realmente verificável** de bootstrap/reconciliação; do contrário o critério falha.
 - Validar DM, grupos, mensagens novas e eventos descartáveis, `@lid`, PN/JID, alias e mudança de nome, deduplicação, ordenação, timestamps e suporte aos eventos necessários à detecção de referência pessoal e replies.
@@ -84,17 +86,17 @@ Na migração, preservar o watcher TypeScript/Baileys atual e suas tabelas sem s
 
 **Contrato e segurança:** o Spring expõe receptor interno de webhooks; valida tamanho, schema, instância, origem e mecanismo de autenticação **efetivamente configurável na versão testada**. Se a Evolution não fornecer autenticação adequada por evento, restringir exposição pela rede Docker e interpor proxy de ingress com autenticação quando necessário, sem fingir que HMAC existe nativamente. Definir chave idempotente composta a partir de identificadores **estáveis e presentes** no payload (ou de derivação testada), persistir inbox antes de responder sucesso e tratar redelivery. Estados de arquivamento fora de ordem ou desconhecidos bloqueiam ações; reconciliar em vez de inferir. Identificar lacunas irrecuperáveis e suspender o motor real.
 
-**Ownership:** a Evolution API é dona da sessão WhatsApp e da infraestrutura de integração **apenas após cutover**; o Spring é dono das políticas, IA, simulação, decisões, Telegram admin e estado operacional da automação. O watcher TypeScript permanece dono do comportamento produtivo até migração deliberada. O Shadow Mode não envia respostas ao WhatsApp nem avisos individuais simulados, ressalvados relatório diário e comandos administrativos via n8n.
+**Ownership:** a Evolution API é dona da sessão WhatsApp e da infraestrutura de integração **apenas após cutover**; o Spring é dono das políticas, IA, simulação, decisões, Telegram admin e estado operacional da automação. O watcher TypeScript permanece dono do comportamento produtivo até migração deliberada. O Shadow Mode não envia respostas ao WhatsApp nem avisos individuais simulados, ressalvados relatório diário e comandos administrativos explicitamente autorizados enviados diretamente pelo cliente Telegram do Spring.
 
 **Build do núcleo Java:** Maven + JAR JVM + Docker multi-stage. **Sem GraalVM, Native Image, Spring AOT ou compilação nativa.** Avaliar memória/CPU reais para ajustar heap e capacidade. Spring Boot 4.x com Java 25 conforme https://docs.spring.io/spring-boot/system-requirements.html. ASP.NET Core Minimal API e Quarkus deixam de ser opções para esta implementação, sem impedir revisão futura.
 
-**Cutover/rollback:** testar a Evolution oficial primeiro, ativar o fork **somente se** testes demonstrarem problema impeditivo com a oficial e o fork cumprir a matriz. Antes da migração, provar paridade de estados `archived`, entrega, identidades, custos, falhas e reconexão. Fazer corte controlado evitando notificações duplicadas entre integrações WhatsApp/n8n, mantendo backup de credenciais e rollback documentado. Caso algum critério falhe, manter a produção em TypeScript, sem degradação silenciosa.
+**Cutover/rollback:** avaliar a Evolution oficial e, se necessário, o fork conforme evidências; não tratar qualquer teste como POC separada obrigatória. Antes da migração, verificar estados de chat, entrega, identidades, custos, falhas e reconexão no escopo usado. Fazer corte controlado evitando notificações duplicadas entre legado e Java, mantendo backup de credenciais e rollback documentado. Caso algum critério falhe, manter a produção em TypeScript, sem degradação silenciosa.
 
 ## 4. Escopo e filtragem de mensagens
 
-- Monitorar **apenas conversas com `archived=true`** no instante da recepção. Desarquivar torna a conversa inelegível para novas decisões; arquivar novamente torna-a elegível.
-- Abranger contatos privados e grupos arquivados. O Shadow Mode é global para todos eles, sem importar regras que bloqueiam ações; registrar ações que *teriam* sido negadas.
-- Processar **mensagens novas**, não varrer/reprocessar histórico indiscriminadamente. A Evolution API fornece eventos/snapshots conforme a distribuição testada; o Spring reconcilia e registra o estado de arquivamento conhecido no instante do evento. Ausência, defasagem, lacuna na sincronização ou conflito de estado causa descarte seguro com motivo auditável.
+- Monitorar por padrão **todos os chats** (`ALL`), incluindo contatos privados e grupos. Modos `ARCHIVED_ONLY` e `UNARCHIVED_ONLY` limitam o escopo e são configuráveis em runtime; `ALL` também inclui chats com estado `UNKNOWN`. `UNKNOWN` fica fora dos modos restritos e sempre bloqueia ações que dependam de saber se o chat está arquivado.
+- O Shadow Mode abrange o escopo vigente e registra ações que *teriam* sido negadas, sem efeitos WhatsApp.
+- Processar **mensagens novas**, não varrer/reprocessar histórico indiscriminadamente. A Evolution API fornece eventos/snapshots conforme a distribuição testada; o Spring reconcilia e registra estado e modo de escopo no instante do evento. Ausência, defasagem, lacuna na sincronização ou conflito causa exclusão segura nos modos restritos, com motivo auditável. Não declarar cobertura completa da Evolution em `ARCHIVED_ONLY` ou `UNARCHIVED_ONLY` sem comprovar paridade do estado correspondente; a conclusão de implantação deve informar o modo efetivamente validado.
 - Identidade estável: consumir e validar os mapeamentos LID/PN/JID da Evolution API escolhida, mantendo identidade canônica e aliases no Spring para preservar overrides mesmo quando o nome muda. Se não houver mapeamento, não inventar telefone.
 - Deduplicar no Spring por identificadores reais de evento/mensagem da Evolution API (ou chave composta testada), sem supor que exista `eventId` nativo. Não alterar a deduplicação do legado. Eventos atrasados não podem sobrescrever estados mais novos.
 - Debounce **10 segundos de inatividade**, com **30 segundos máximos** por lote. Um buffer por conversa; em grupos segmentar lotes por remetente para não misturar solicitações. Limites de tamanho de lote e concorrência são configuráveis.
@@ -122,17 +124,17 @@ Cada recurso novo (`ai_classification`, `intelligent_alerts`, `auto_reply`) nasc
 
 ## 6. Pipeline e tratamento de erros
 
-1. A **Evolution API oficial**, ou somente se necessário o **fork AlmogCohen validado**, recebe eventos WhatsApp, envia os webhooks configurados ao receptor HTTP privado do Spring e mantém sessão/infra de integração próprias. Durante a POC o watcher TypeScript produtivo continua independente.
+1. A **Evolution API oficial**, ou o **fork AlmogCohen se necessário**, recebe eventos WhatsApp, envia webhooks configurados ao receptor HTTP privado do Spring e mantém sessão/infra próprias. Durante implementação e coexistência, o watcher TypeScript produtivo continua independente.
 2. Spring valida o formato, a identidade da instância e a autenticação configurada/protegida no ingress. A partir de dados realmente existentes, constrói chave idempotente, persiste `inbox_events` no PostgreSQL e só confirma o HTTP após commit. Duplicatas recebem ACK idempotente. **Não há garantia presumida** de webhook persistente ou retries pela Evolution; verificar e registrar o comportamento.
 3. Atualiza snapshot e aliases, aplicando o estado `archived` somente quando conhecido e conciliável. Reconcilia sincronização inicial e pós-reconexão; se não houver maneira confiável de provar o estado, falha fechada e não dispara nova ação real.
-4. Processa mensagens novas de chats arquivados com debounce de **10s de inatividade** e **30s máximos** por lote, separando remetentes de grupo.
+4. Aplica modo de escopo runtime: `ALL` (padrão) processa chats arquivados, não arquivados e `UNKNOWN`; `ARCHIVED_ONLY` e `UNARCHIVED_ONLY` processam somente estado compatível conhecido e sincronizado. `UNKNOWN` só é elegível em `ALL`. Processa mensagens novas, com debounce de **10s de inatividade** e **30s máximos** por lote, separando remetentes de grupo.
 5. Resolve `global → profile → override`, disponibilidade e gatilhos; classifica por `ClassificationService` quando o filtro determinístico pedir IA.
 6. Valida resultado do modelo, autorização explícita, template, orçamento, cooldown e kill switch **fora da IA**. Persiste `Decision` (`wouldAlert`, `wouldReply`, `templateId`, `decisionReason`, `blockedReason`) e auditoria, agregando métricas para relatórios.
-7. No Shadow Mode não existe envio WhatsApp. Futuramente, envio real somente pela **API REST da Evolution escolhida**, via comando autenticado do Spring com chave de idempotência e confirmação/observação de resultado; n8n continua roteando alertas e relatórios ao Telegram.
+7. No Shadow Mode não existe envio WhatsApp. Futuramente, envio real somente pela **API REST da Evolution escolhida**, via comando autenticado do Spring com chave de idempotência e confirmação/observação de resultado. O transporte novo de notificações Telegram é direto via wrapper pengrad e tem semântica at-least-once; n8n só permanece como histórico durante coexistência/rollback.
 
 **Fail-closed:** payload ausente/inválido, webhook inesperado, autenticação rejeitada, duplicidade conflitante, lacuna de eventos, estado de arquivamento incerto, perda de sincronização, timeout, falha de persistência, provedor IA indisponível, privacidade incompatível, baixa confiança ou orçamento excedido impedem novas ações reais. Classificação incerta gera `UNCERTAIN`, sem fallback por discordância subjetiva.
 
-**Entrega confiável:** transação de recebimento persiste inbox/jobs no PostgreSQL; worker do próprio Spring processa por `FOR UPDATE SKIP LOCKED`, lease expirável, retries/backoff e falhas auditáveis; outbox PostgreSQL protege a passagem de decisão para tentativa de envio. Confirmar webhook HTTP apenas após commit. Não manter transação SQL aberta durante IA/requisição externa. Para webhook perdido, verificar retry/reconciliação da Evolution na distribuição efetiva; **não inventar** uma outbox dentro da Evolution. Se eventos essenciais não forem recuperáveis, reprovar POC. Sem broker adicional no MVP.
+**Entrega confiável:** transação de recebimento persiste inbox/jobs no PostgreSQL; worker do próprio Spring processa por `FOR UPDATE SKIP LOCKED`, lease expirável, retries/backoff e falhas auditáveis; outbox PostgreSQL protege a passagem de decisão para tentativa de envio. Confirmar webhook HTTP apenas após commit. Não manter transação SQL aberta durante IA/requisição externa. Para webhook perdido, verificar retry/reconciliação da Evolution na distribuição efetiva; **não inventar** uma outbox dentro da Evolution. Se eventos essenciais não forem recuperáveis, bloquear declaração de paridade e ativação. Sem broker adicional no MVP.
 
 **Isolamento:** falhas da Evolution API ou do Spring durante testes não podem alterar fluxo, dados, credenciais ou notificação do watcher legado. Nenhuma migração real sem checklist de rollback.
 
@@ -169,7 +171,7 @@ Referências oficiais verificadas em 2026-10-16:
 | --- | --- |
 | `inbox_events` | Eventos recebidos e deduplicados (`UNIQUE` por chave estável testada), metadata de origem e ingestão |
 | `processing_jobs` | Jobs duráveis, execução agendada, lease expirável, tentativas/backoff e falhas inspecionáveis |
-| `outbox_actions` | Operações n8n/Telegram e futuros comandos WhatsApp, tentativas e chaves de idempotência |
+| `outbox_actions` | Entregas Telegram diretas e futuros comandos WhatsApp, tentativas e chaves locais de idempotência |
 | `chat_snapshot` e `identity_aliases` | Estado `archived` conhecido e mapeamentos LID/PN/JID |
 | `profiles` e `chat_policies` | Perfis, políticas e overrides por identidade |
 | `response_templates` | Templates versionados e autorizações explícitas |
@@ -181,21 +183,23 @@ Referências oficiais verificadas em 2026-10-16:
 
 **Sem broker no MVP:** PostgreSQL é a fila durável interna, com polling de worker. `LISTEN/NOTIFY` pode acordar workers, mas não substituir os dados persistidos/polling de recuperação: https://www.postgresql.org/docs/current/sql-listen.html. `SKIP LOCKED` foi projetado também para cenários de consumidores concorrentes de tabelas tipo fila: https://www.postgresql.org/docs/current/sql-select.html.
 
-**Migração:** exportar e reconciliar perfis e identidades do watcher existente, sem migrar só por nome exibido. Não compartilhar sessão Baileys legada com Evolution sem procedimento validado. Reconciliar estado `archived` efetivamente recebido na POC, preservar rollback e não duplicar notificações no n8n.
+**Migração:** exportar e reconciliar perfis e identidades do watcher existente, sem migrar só por nome exibido. Não compartilhar sessão Baileys legada com Evolution sem procedimento validado. **Histórico da proposta recusada:** a reconciliação do estado `archived` foi descrita como resultado da POC; agora é evidência de integração no plano 1, sem POC separada. Preservar rollback e evitar duplicação entre transporte legado e novo.
 
 **Retenção:** trechos mínimos e sanitizados **até 7 dias**, incluindo dados sensíveis eventualmente em inbox, processing_jobs e outbox, com purga automática testada. Metadados sem conteúdo por padrão **90 dias**, configuráveis. Cobrir `pending_notification.last_message_preview` legado sem quebrar suas filas. A limpeza Spring **não remove** textos persistidos pela própria Evolution, logs ou backups; revisar retenção desses recursos separadamente.
 
 Segredos e credenciais em configuração protegida, não em tabelas de domínio. Isolar acessos, volumes, usuários, backups e conexões.
 
-## 9. Telegram e n8n
+## 9. Telegram direto (n8n legado)
 
-**MVP Telegram:** comandos rápidos (`/status`, `/ocupado`, `/disponivel`, `/ferias`, `/simulacao`, `/relatorio`, `/emergencia`) e menus com botões para perfis, conversas, grupos, templates, pontos facultativos, orçamento, modo simulado e autorizações. Respostas administrativas e resumos usam o n8n para envio; o Watcher não deve duplicar o cliente de mensagens Telegram sem necessidade.
+**Transporte novo:** usar Telegram Bot API diretamente pelo wrapper open-source `pengrad/java-telegram-bot-api`, no Spring, incluindo envio de relatórios e respostas administrativas autorizadas. A entrega é **at-least-once**: outbox durável e retries podem repetir uma mensagem após resultado incerto; não prometer exactly-once nem confundir chave idempotente local com deduplicação no Telegram. n8n não participa do transporte novo.
 
-O Spring Boot recebe `getUpdates` por long polling como **único consumidor de updates** da conta do bot. Se houver webhook de entrada nesse bot, não ativar polling simultaneamente. Caso o menu exija reconhecer callbacks por API, manter esse trecho limitado e documentado, sem mover o sistema de dispatch do n8n para o código Java.
+**Administração Telegram (plano 3, futuro):** comandos rápidos (`/status`, `/ocupado`, `/disponivel`, `/ferias`, `/simulacao`, `/relatorio`, `/emergencia`) e menus com botões para perfis, conversas, grupos, templates, pontos facultativos, orçamento, modo simulado e autorizações. O plano 1 não implementa administração nem menus; seu escopo de transporte deve ficar limitado às notificações definidas nele.
+
+Se a implementação futura receber `getUpdates`, Spring será o **único consumidor de updates** da conta do bot. Não ativar polling simultaneamente a webhook de entrada do mesmo bot.
 
 **Segurança:** administrador único por `TELEGRAM_ADMIN_USER_ID`, `TELEGRAM_ADMIN_CHAT_ID` e tipo de chat privado; validar autor, chat e callback em toda operação. Confirmar operações destrutivas, mudança de regras globais e ativação de envios reais. Botões antigos, expirados e já consumidos são inválidos. Auditoria de comandos sem segredos. `/emergencia` tem prioridade e funciona sem IA.
 
-**Contrato com n8n:** manter `WhatsApp Archived Watcher - Telegram Digest` ativo e seu webhook autenticado. Acrescentar somente suporte retrocompatível a novos tipos de payload (`simulation_daily_summary`, `intelligent_alert` e interações de UI necessárias), mantendo o papel de transporte. A formatação e a escolha da ação pertencem ao Spring, mas o envio Telegram permanece no workflow; verificar quais ajustes pontuais no node `Montar mensagem` serão necessários antes da implementação. Não quebrar `archived_messages` nem alertas de reconexão.
+**Compatibilidade histórica:** durante coexistência/rollback, o n8n legado pode continuar recebendo os payloads legados `archived_messages` e alertas de reconexão. A arquitetura nova entrega direto à Telegram Bot API via wrapper pengrad. Remoção ou alteração do workflow legado ocorre somente no cutover autorizado; não adicionar payloads novos ao n8n.
 
 **Relatório do Shadow Mode:** resumo diário em horário configurável (mensagens candidatas, chamadas IA, solicitações, críticos, bloqueios, custos, erros e simulações de resposta); `/relatorio` com filtros e detalhes. Não enviar automaticamente cada evento simulado. O resumo diário é mensagem administrativa real, explicitamente autorizada, sem conteúdo de mensagem bruta.
 
@@ -203,9 +207,11 @@ O Spring Boot recebe `getUpdates` por long polling como **único consumidor de u
 
 ## 10. Estratégia de testes e aceitação
 
-Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhooks da Evolution API oficial e do fork, fakes para Gemini, OpenRouter, n8n e Telegram e **PostgreSQL real com Testcontainers** em testes), com casos:
+> Referências a “gate de POC” e “durante toda POC” nesta seção são históricas; a POC separada foi recusada. Testes de integração e evidência Evolution continuam no plano 1, sem condicionar o início da implementação a uma POC.
+
+Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhooks da Evolution API oficial e do fork, fakes para Gemini, OpenRouter e Telegram e **PostgreSQL real com Testcontainers** em testes), com casos:
 - Legado continua notificando com política/janelas pré-existentes, mesmo quando Shadow Mode ou IA falham.
-- Todas as conversas arquivadas podem ser simuladas; conversas normais e histórico remoto não são processados.
+- `ALL` considera chats arquivados, não arquivados e `UNKNOWN`; modos restritos consideram somente o estado compatível conhecido, e `UNKNOWN` nunca entra neles. Mensagens de histórico remoto não são processadas como novas.
 - Desarquivar, read-status, exclusões, aliases LID/PN, eventos duplicados, grupos e mensagens do próprio usuário.
 - Debounce de 10s/30s e divisão por remetente nos grupos, com relógio injetável.
 - Palavra-chave de grupo pode selecionar **template**, mas **não** gerar alerta crítico sem referência pessoal explícita.
@@ -216,27 +222,29 @@ Cobertura automatizada de unidade, contrato HTTP e integração (fixtures/webhoo
 - Simulação não toca envio WhatsApp nem gera alerta inteligente real; cooldown simulado não toca cooldown real.
 - Expiração de snippets em até 7 dias inclusive preview legado, metadados mantidos segundo política.
 - Telegram rejeita administrador incorreto, grupos, replay de callbacks e mudanças perigosas sem confirmação.
-- Payload legado no n8n permanece aceito e entrega os mesmos avisos.
-- Gate de POC **com a Evolution API oficial primeiro**: `archived` inicial, updates **originados por ações manuais no WhatsApp**, desarquivamento, reconexão, contatos e grupos, chats já conhecidos do banco, mensagens fora de ordem e identidades LID/PN; repetir a matriz no fork somente se a oficial falhar. Confirmar **zero chamadas** a `archiveChat`/`chatModify` e registrar desconexões e `401 device_removed` como falhas de estabilidade. Estado `archived` mantido apenas localmente, sem sincronização real verificável com WhatsApp, **não atende** ao requisito de monitorar os chats efetivamente arquivados.
-- Verificar autenticação **real** do webhook e restrição de rede; payload inválido, replay quando possível, duplicidade, ACK somente após **commit PostgreSQL**, queda do Java e eventuais retries realmente fornecidos pela Evolution. Sem outbox presumida na Evolution. Se perder evento essencial sem recuperação confiável, reprovar a POC.
+- Entrega Telegram por outbox/retry é at-least-once e pode duplicar quando o resultado remoto é incerto; testes não devem alegar exactly-once.
+- **Histórico da POC recusada:** a matriz antiga incluía `archived` inicial, updates manuais, reconexão, contatos/grupos, identidade LID/PN e ordenação; reaproveitar evidência aplicável, sem abrir POC como etapa. Não chamar `archiveChat`/`chatModify`. Não declarar cobertura de `ARCHIVED_ONLY` ou `UNARCHIVED_ONLY` como completa sem evidência da Evolution para esse modo.
+- Verificar autenticação **real** do webhook e restrição de rede; payload inválido, replay quando possível, duplicidade, ACK somente após **commit PostgreSQL**, queda do Java e eventuais retries realmente fornecidos pela Evolution. Sem outbox presumida na Evolution. Se perder evento essencial sem recuperação confiável, bloquear declaração de paridade e ativação.
 - PostgreSQL existente com usuários/bancos distintos; migrations Flyway; worker `SKIP LOCKED` concorrente, leases expirados, retry, dead-letter, rollback e outbox idempotente com Testcontainers. Broker RabbitMQ somente se justificar por falha concreta de transporte.
-- Watcher legado mantém notificações durante toda POC e Shadow Mode; comparar resultados, evitar duplicidade no cutover, preservar sessão e testar rollback. Nem oficial nem fork podem ser promovidos sem critérios funcionais e de segurança.
+- O watcher legado mantém notificações durante coexistência e Shadow Mode; comparar resultados, evitar duplicidade no cutover, preservar sessão e testar rollback. Nem oficial nem fork podem ser promovidos sem critérios funcionais e de segurança.
 - Spring Boot 4.x/Java 25 executa em JAR JVM/container sem GraalVM, Native Image ou pipeline AOT; medir consumo na VPS.
 
 **Critério de liberação:** validar a distribuição Evolution API escolhida (oficial prioritária; fork somente após falha demonstrada), depois Shadow Mode; revisar falsos positivos/negativos e custos reais; liberar ações por opt-in de perfil/conversa/situação e com kill switch testado. A integração por Evolution API continua baseada em tecnologia **não oficial do WhatsApp** e envolve risco de restrição da conta, não eliminado pelas permissões locais.
 
-## 11. Incrementos sugeridos (ainda não são plano de implementação)
+## 11. Histórico de incrementos sugeridos (não é autorização de execução)
 
-1. **POC isolada da Evolution API oficial:** fixar release/commit, preparar Docker Compose com PostgreSQL/Redis conforme requisitos, instância de teste e rede privada; avaliar webhook/snapshot `archived`, reconexão, sincronização inicial, LID/PN, grupos, latência e memória. Preservar 100% do watcher TypeScript produtivo.
+> A sequência abaixo foi registrada antes das decisões atuais. A POC separada foi recusada; o plano 1 é o único plano autorizado para execução. Planos 2 e 3 exigem aprovação explícita do usuário após conclusão do plano 1.
+
+1. **Histórico — POC isolada da Evolution API oficial (recusada como pré-requisito):** fixar release/commit, preparar Docker Compose com PostgreSQL/Redis conforme requisitos, instância de teste e rede privada; avaliar webhook/snapshot de chat, reconexão, sincronização inicial, LID/PN, grupos, latência e memória. Preservar 100% do watcher TypeScript produtivo.
 2. **Fallback explícito:** se a oficial falhar em critério obrigatório, documentar evidência e testar o fork https://github.com/AlmogCohen/evolution-api (`fork/2.3.7` fixada em commit) com **a mesma matriz**; validar segurança/build, sem confundir suporte a webhook com persistência em PostgreSQL. Se também falhar, interromper migração e manter o legado.
 3. **Núcleo Spring Boot 4.x / Java 25 na JVM:** Docker JVM, **PostgreSQL existente da VPS** com banco/usuário exclusivos e Flyway, webhooks, inbox/jobs/outbox transacionais, worker `FOR UPDATE SKIP LOCKED`, snapshot/reconciliação; sem Native Image, GraalVM, AOT, Kafka, RabbitMQ obrigatório ou gateway próprio de Baileys.
 4. **Shadow Mode:** debounce, perfis, disponibilidade/feriados, políticas, auditoria, segurança e testes fail-closed; sem envio WhatsApp e sem alertas simulados individuais.
 5. **IA e privacidade:** Gemini/OpenRouter, orçamento, filtros de dados, retenção, comparação de resultados e relatórios.
-6. **Administração Telegram via Spring:** comandos privados, menus, auditoria e relatório diário entregue pelo n8n preservando payload legado.
-7. **Cutover reversível:** comparar comportamento dos serviços, documentar migração da sessão, evitar duplicação no n8n, testar rollback e somente então permitir recursos reais mediante opt-in/kill switch. Next.js SSR fica para fase futura.
+6. **Administração Telegram via Spring (plano 3, futuro):** comandos privados, menus e auditoria; relatório direto pela Telegram Bot API via wrapper pengrad. Preservar o transporte legado durante coexistência.
+7. **Cutover reversível:** comparar comportamento dos serviços, documentar migração da sessão, evitar duplicação entre legado e Java, testar rollback e somente então permitir recursos reais mediante opt-in/kill switch. Next.js SSR fica para fase futura.
 
 **Não implementar ou implantar esta arquitetura até aprovação explícita do plano de execução.**
 
 ## 12. Aprovação e próximo gate
 
-Este documento registra as decisões do brainstorming e a revisão para **Evolution API oficial primeiro, fork AlmogCohen como fallback condicionado, Spring Boot 4.x na JVM, PostgreSQL existente da VPS com bancos isolados e jobs duráveis no PostgreSQL, sem GraalVM/AOT nativo nem gateway Baileys próprio**. O proprietário deve revisar e aprovar **esta especificação escrita**, inclusive os defaults propostos (cooldown inicial de 60 minutos, retenção de metadados de 90 dias, limites de fila e necessidade de configurar orçamento). Só então iniciar `superpowers:writing-plans` para produzir o plano executável. **Nenhum código de produção é autorizado por esta spec isoladamente.**
+Esta especificação registra decisões históricas e vigentes. Decisões vigentes: Spring Boot 4.x/JVM, PostgreSQL com bancos isolados, jobs duráveis, monitoramento default `ALL`, modos runtime `ALL`/`ARCHIVED_ONLY`/`UNARCHIVED_ONLY` com `UNKNOWN` elegível apenas em `ALL`, Telegram direto via wrapper pengrad com semântica at-least-once, sem GraalVM/AOT nativo nem gateway Baileys próprio. A recusa da POC separada não comprova compatibilidade Evolution nem autoriza deploy. Executar somente o plano 1; exigir aprovação explícita do usuário após sua conclusão antes de iniciar planos 2 ou 3. Cada tarefa exige push para branch de trabalho conforme instrução do usuário. Nenhum código de produção é autorizado por esta spec isoladamente.

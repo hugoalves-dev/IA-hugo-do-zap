@@ -1,12 +1,14 @@
 # Plano 3 — IA, Telegram e ações controladas
 
+> **Futuro, não autorizado para iniciar agora.** Só iniciar após concluir o plano 1 e receber aprovação explícita do usuário. A instrução vigente exige push por tarefa; esta atualização documental não inicia execução deste plano.
+
 > **Para execução:** use `superpowers:executing-plans` ou `superpowers:subagent-driven-development`, com TDD e testes direcionados por tarefa.
 
-**Objetivo:** adicionar classificação assistida, orçamento, administração Telegram e entrega controlada, preservando n8n e as autorizações independentes da IA.
+**Objetivo:** adicionar classificação assistida, orçamento, administração Telegram e entrega controlada direta via Telegram Bot API/wrapper pengrad, com autorizações independentes da IA. n8n permanece apenas como transporte histórico durante coexistência/rollback.
 
-**Arquitetura:** processadores do plano 2 chamam provedores por interface com limites transacionais; comandos administrativos privados modificam configurações auditadas; outbox entrega relatórios n8n e, apenas após opt-in explícito, comandos WhatsApp via Evolution.
+**Arquitetura:** processadores do plano 2 chamam provedores por interface com limites transacionais; comandos administrativos privados modificam configurações auditadas; outbox entrega relatórios diretamente via Telegram Bot API usando `pengrad/java-telegram-bot-api` e, apenas após opt-in explícito, comandos WhatsApp via Evolution. Entrega Telegram é at-least-once: retry pode duplicar envio após resultado remoto incerto.
 
-**Stack:** Java 25, Spring Boot 4.x, PostgreSQL/Flyway, cliente HTTP, Gemini e OpenRouter, Telegram Bot API, n8n.
+**Stack:** Java 25, Spring Boot 4.x, PostgreSQL/Flyway, cliente HTTP, Gemini e OpenRouter, Telegram Bot API e wrapper open-source `pengrad/java-telegram-bot-api`.
 
 **Spec:** `docs/superpower/spec/2026-10-16-archived-watcher-automation-design.md`, com a rejeição da POC separada. **Pré-requisitos de código:** planos `2026-10-26-01-spring-evolution-migration.md` e `2026-10-26-02-policy-shadow-mode.md`.
 
@@ -17,7 +19,7 @@
 - IA classifica entrada não confiável; nunca decide permissões, ferramentas, templates, orçamento ou ações. Falha/baixa confiança retorna `UNCERTAIN`.
 - Telegram administra apenas usuário e chat privados configurados; polling é único consumidor e não pode coexistir com webhook de entrada do mesmo bot.
 - Novos envios são desativados por padrão; kill switch prioritário, cooldown por conversa e template preaprovado são obrigatórios. Nunca chamar API de alterar arquivamento.
-- Retenção máxima de trechos 7 dias; backups, Evolution, n8n, Telegram e provedores têm retenção separada. Evitar segredos, conteúdo bruto e identificadores em logs.
+- Retenção máxima de trechos 7 dias; backups, Evolution, Telegram e provedores têm retenção separada. n8n só se aplica ao transporte legado durante coexistência/rollback. Evitar segredos, conteúdo bruto e identificadores em logs.
 - Revisão: prompt injection não muda regras; falha de rota privada não vaza dados; concorrência não ultrapassa orçamento; callback antigo ou repetido não altera configuração; timeout de envio não é tratado como prova de não entrega.
 
 ## Arquivos e contratos
@@ -52,7 +54,7 @@
 
 - [ ] Criar `TelegramUpdateHandlerTest`, `CallbackTokenServiceTest`, `AdminCommandServiceTest` para usuário/chat incorretos, grupos, replay/expiração, confirmação de mudança perigosa, `/emergencia` sem IA e expiração de overrides.
 - [ ] Rodar `mvn -Dtest=TelegramUpdateHandlerTest,CallbackTokenServiceTest,AdminCommandServiceTest test` e observar falha esperada.
-- [ ] Implementar polling exclusivo e comandos `/status`, `/ocupado`, `/disponivel`, `/ferias`, `/simulacao`, `/relatorio`, `/emergencia`, menus de políticas/templates/feriados/orçamentos, com auditoria sem segredos. Respostas administrativas são encaminhadas pelo n8n.
+- [ ] Implementar polling exclusivo via wrapper pengrad e comandos `/status`, `/ocupado`, `/disponivel`, `/ferias`, `/simulacao`, `/relatorio`, `/emergencia`, menus de políticas/templates/feriados/orçamentos, com auditoria sem segredos. Enviar respostas administrativas diretamente via Telegram Bot API.
 - [ ] Repetir testes e confirmar sucesso; commit arquivos da tarefa.
 
 ### Tarefa 4: Relatórios e respostas autorizadas
@@ -61,11 +63,11 @@
 
 - [ ] Criar `ReportServiceTest`, `WhatsAppActionServiceTest` para resumo diário sem conteúdo bruto, bloqueio de ação em Shadow Mode, opt-in por conversa/situação, limite/cooldown, autorização revogada antes do envio, timeout e tentativa duplicada.
 - [ ] Rodar `mvn -Dtest=ReportServiceTest,WhatsAppActionServiceTest test` e observar falha esperada.
-- [ ] Implementar payloads retrocompatíveis `simulation_daily_summary` e `intelligent_alert`, dispatcher outbox, cliente Evolution REST e reconciliação de resultado incerto; não presumir exactly-once. Manter todo envio real desligado.
+- [ ] Implementar notificações Telegram `simulation_daily_summary` e `intelligent_alert` via dispatcher outbox, cliente Evolution REST e reconciliação de resultado incerto; documentar Telegram at-least-once e não presumir exactly-once. Manter todo envio real de WhatsApp desligado.
 - [ ] Repetir testes e confirmar sucesso; commit arquivos da tarefa.
 
 ### Tarefa 5: Aceitação e ativação
 
-- [ ] Executar testes dirigidos de ponta a ponta com fakes Gemini/OpenRouter/Telegram/n8n/Evolution e PostgreSQL real; conferir budget, privacidade, kill switch e isolamento Shadow Mode.
-- [ ] Preparar checklist de custos, rotas privadas, retenção, autorizações, rollback e evidências de paridade Evolution. Solicitar autorização operacional antes de configurar provedores pagos, parear dispositivo, alterar n8n/VPS ou ativar envios reais.
+- [ ] Executar testes dirigidos de ponta a ponta com fakes Gemini/OpenRouter/Telegram/Evolution e PostgreSQL real; conferir budget, privacidade, kill switch e isolamento Shadow Mode.
+- [ ] Preparar checklist de custos, rotas privadas, retenção, autorizações, rollback e evidências de paridade Evolution. Solicitar autorização operacional antes de configurar provedores pagos, parear dispositivo, alterar VPS ou ativar envios reais.
 - [ ] Entregar resultados de testes, riscos e status de cada flag; não declarar integrações reais validadas apenas com fakes.
