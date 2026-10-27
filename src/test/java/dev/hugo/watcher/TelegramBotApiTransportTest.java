@@ -8,6 +8,7 @@ import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +33,7 @@ class TelegramBotApiTransportTest {
 
         assertFalse(result.delivered());
         assertEquals(null, result.retryAfter());
+        assertTrue(result.rateLimited());
     }
 
     private static SendResponse failedResponse(int code, ResponseParameters parameters) {

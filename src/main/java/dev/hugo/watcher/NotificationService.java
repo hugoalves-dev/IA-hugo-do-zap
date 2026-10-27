@@ -73,14 +73,14 @@ public class NotificationService {
                                 ? telegram.send(telegramFormatter.format(action)) : TelegramDeliveryResult.failure();
                         if (result.delivered()) outbox.acknowledge(action, clock.instant());
                         else if (!isCurrentConnectionAlert(action)) outbox.cancelClaimedConnectionAlert(action, clock.instant());
-                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.retryAfter());
+                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
                     } else {
                         OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());
                         TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
                                 : telegram.send(telegramFormatter.format(latest));
                         if (result.delivered()) outbox.acknowledge(latest, clock.instant());
                         else if (latest == null) outbox.suppress(action, clock.instant());
-                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.retryAfter());
+                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
                     }
                 } catch (DataAccessException ex) {
                     // Unknown policy/state is retryable, never proof that an alert is obsolete.

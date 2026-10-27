@@ -159,34 +159,83 @@ class NotificationServiceTest {
         outbox = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
         notifications = new NotificationService(jdbc, manager, outbox, fakeTransport(),
                 new TelegramMessageFormatter(), properties, clock, archiveModes);
-        outbox.enqueue("first", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
-        outbox.enqueue("second", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
+        outbox.enqueue("first", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        outbox.enqueue("second", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
         responseStatus.set(429);
         retryAfter.set(Duration.ofSeconds(30));
 
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
         notifications.flush(NOW);
 
         assertEquals(1, requestCount.get(), "a 429 must stop this flush from sending the next queued message");
-        assertEquals(java.sql.Timestamp.from(NOW.plusSeconds(30).plusMillis(250)),
-                jdbc.queryForObject("select available_at from outbox_actions where action_key='first'", java.sql.Timestamp.class));
-        clock.advance(Duration.ofSeconds(30));
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where action_key='first'",
+                java.sql.Timestamp.class).toInstant();
+        Instant nextAllowedAt = jdbc.queryForObject("select next_allowed_at from telegram_delivery_rate_limit where singleton_id=1",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!availableAt.isBefore(databaseBefore.plusSeconds(30).plusMillis(250))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(31)),
+                "retry_after deadline must use PostgreSQL time");
+        assertEquals(availableAt, nextAllowedAt);
+        clock.advance(Duration.ofDays(2));
         notifications.flush(clock.instant());
-        assertEquals(1, requestCount.get(), "no queued action may resend before retry_after expires");
-        clock.advance(Duration.ofMillis(250));
+        assertEquals(1, requestCount.get(), "an ahead client clock must not bypass retry_after cooldown");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=clock_timestamp()-interval '1 second' where singleton_id=1");
+        jdbc.update("update outbox_actions set available_at=clock_timestamp()-interval '1 second' where status='PENDING'");
         responseStatus.set(200);
         notifications.flush(clock.instant());
-        assertEquals(2, requestCount.get());
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=clock_timestamp()-interval '1 second' where singleton_id=1");
+        notifications.flush(clock.instant());
+        assertEquals(3, requestCount.get());
+    }
+
+    @Test void Telegram429WithoutRetryAfterUsesSharedConservativeCooldown() {
+        outbox = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        notifications = new NotificationService(jdbc, manager, outbox, fakeTransport(),
+                new TelegramMessageFormatter(), properties, clock, archiveModes);
+        outbox.enqueue("limited", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        outbox.enqueue("queued", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        responseStatus.set(429);
+        retryAfter.set(null);
+
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        notifications.flush(NOW);
+
+        assertEquals(1, requestCount.get());
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where action_key='limited'",
+                java.sql.Timestamp.class).toInstant();
+        Instant nextAllowedAt = jdbc.queryForObject("select next_allowed_at from telegram_delivery_rate_limit where singleton_id=1",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!availableAt.isBefore(databaseBefore.plusSeconds(60))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(61)),
+                "missing retry_after must schedule a conservative durable action delay");
+        assertEquals(availableAt, nextAllowedAt, "global cooldown must match retry deadline");
+
+        clock.advance(Duration.ofDays(2));
+        notifications.flush(clock.instant());
+        assertEquals(1, requestCount.get(), "other queued messages must remain blocked during the global cooldown");
     }
 
     @Test void PostgreSqlRateLimitCoordinatesIndependentOutboxRepositoryInstances() {
         var firstWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
         var secondWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
-        firstWorker.enqueue("worker-a", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
-        firstWorker.enqueue("worker-b", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
+        Instant createdAt = Instant.now().minusSeconds(1);
+        Instant expiresAt = createdAt.plus(Duration.ofDays(6));
+        firstWorker.enqueue("worker-a", "other", "{}", "[]", createdAt, expiresAt);
+        firstWorker.enqueue("worker-b", "other", "{}", "[]", createdAt, expiresAt);
 
-        assertEquals("worker-a", firstWorker.claimNext(NOW).actionKey());
-        assertNull(secondWorker.claimNext(NOW.plusMillis(999)));
-        assertEquals("worker-b", secondWorker.claimNext(NOW.plusSeconds(1)).actionKey());
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant clientNow = Instant.now();
+        assertEquals("worker-a", firstWorker.claimNext(clientNow).actionKey());
+        Instant nextAllowedAt = jdbc.queryForObject("select next_allowed_at from telegram_delivery_rate_limit where singleton_id=1",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!nextAllowedAt.isBefore(databaseBefore.plusSeconds(1))
+                        && !nextAllowedAt.isAfter(databaseAfter.plusSeconds(1)),
+                "rate reservation must use PostgreSQL time, not the worker clock");
+        assertNull(secondWorker.claimNext(clientNow.plus(Duration.ofDays(1))),
+                "a worker clock ahead of PostgreSQL must not bypass the shared cooldown");
     }
 
     private TelegramTransport fakeTransport() {
@@ -194,9 +243,9 @@ class NotificationServiceTest {
             requestCount.incrementAndGet();
             receivedBody.set(text);
             requestHook.get().accept(text);
-            return responseStatus.get() == 200
-                    ? TelegramDeliveryResult.success()
-                    : TelegramDeliveryResult.failure(retryAfter.get());
+            if (responseStatus.get() == 200) return TelegramDeliveryResult.success();
+            if (responseStatus.get() == 429) return TelegramDeliveryResult.rateLimited(retryAfter.get());
+            return TelegramDeliveryResult.failure(retryAfter.get());
         };
     }
 

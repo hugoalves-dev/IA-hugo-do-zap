@@ -34,11 +34,12 @@ public class TelegramBotApiTransport implements TelegramTransport {
             if (response != null && response.isOk()) return TelegramDeliveryResult.success();
             LOG.log(System.Logger.Level.WARNING, "Telegram delivery rejected: errorCode={0}",
                     response == null ? "no-response" : response.errorCode());
-            Duration retryAfter = response != null && response.errorCode() == 429
+            boolean rateLimited = response != null && response.errorCode() == 429;
+            Duration retryAfter = rateLimited
                     && response.parameters() != null && response.parameters().retryAfter() != null
                     && response.parameters().retryAfter() > 0
                     ? Duration.ofSeconds(response.parameters().retryAfter()) : null;
-            return TelegramDeliveryResult.failure(retryAfter);
+            return rateLimited ? TelegramDeliveryResult.rateLimited(retryAfter) : TelegramDeliveryResult.failure();
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.WARNING, "Telegram delivery failed: error={0}", ex.getClass().getSimpleName());
             return TelegramDeliveryResult.failure();

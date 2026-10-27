@@ -32,4 +32,10 @@ Os testes injetam `TelegramTransport` falso e não chamam a rede Telegram. Nenhu
 - A alegação de quebra de surrogate no limite baixo não se confirma: `substring(0, end)` exclui o índice `end`, mas inclui o low surrogate em `end - 1`, junto com o high em `end - 2`. Quando `end - 1` é high, o código reduz `end` e evita incluir um par incompleto. Dois testes Unicode posicionam um emoji exatamente nas duas fronteiras e verificam UTF-16 bem formado; passaram sem alteração no truncamento de produção.
 - Verificação focada desta revisão: `TelegramBotApiTransportTest`, `TelegramMessageFormatterTest`, `NotificationServiceTest` e `SpringFlywayStartupTest` — 36 testes; `EvolutionPipelineIntegrationTest` e `DatabaseMigrationTest` — 10 testes. Ambos os comandos passaram.
 
+### Ajustes adicionais após revisão
+
+- Respostas 429 agora mantêm o marcador `rateLimited` mesmo sem `retry_after`; nesse caso, ação e cooldown global usam 60 s mais margem de 250 ms. Falha sem status 429 continua usando apenas o backoff exponencial normal.
+- Claims comparam o cooldown com `clock_timestamp()` do PostgreSQL e reservam o próximo envio a partir do mesmo relógio. Deadlines de 429 com e sem `retry_after` também são calculados pelo relógio do banco dentro da transação; clocks adiantados de workers não liberam envios antes do deadline.
+- Testes PostgreSQL cobrem worker adiantado, deadline baseado em relógio do banco, 429 sem parâmetro, bloqueio de outras linhas da outbox e 429 com `retry_after`. A validação focada final (`TelegramBotApiTransportTest`, `NotificationServiceTest`, `EvolutionPipelineIntegrationTest`, `SpringFlywayStartupTest`) passou: 40 testes, 0 falhas, 0 erros.
+
 O branch não foi enviado nem publicado. A revisão e o push ficam para o responsável pelo plano.
