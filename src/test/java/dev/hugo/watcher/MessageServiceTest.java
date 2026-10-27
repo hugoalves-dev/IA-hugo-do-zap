@@ -99,7 +99,7 @@ class MessageServiceTest {
         assertEquals(2, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
         jdbc.update("update simulation_batches set status='COMPLETED'");
-        new DebounceService(jdbc, limits, manager).claimReady(Instant.now());
+        new DebounceService(jdbc, limits, manager).claimReady(Instant.now().plusSeconds(31));
         assertEquals(0, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
         assertEquals(2, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
     }
@@ -118,7 +118,7 @@ class MessageServiceTest {
         } finally {
             jdbc.execute("alter table temporarily_unavailable_messages rename to simulation_batch_messages");
         }
-        debounce.claimReady(Instant.now());
+        debounce.claimReady(Instant.now().plusSeconds(31));
         assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
     }
 

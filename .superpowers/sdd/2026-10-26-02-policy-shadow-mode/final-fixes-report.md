@@ -7,7 +7,7 @@ Correções dos achados P1/P2 de `review-7ebf71a..cd6c9a6.diff`. Plano 3, proved
 ## Correções
 
 - **Ingestão isolada:** `MessageService` não chama mais `DebounceService.enqueue`. O mesmo INSERT deduplicado de `processed_message` captura o snapshot opcional e seu prazo, atomicamente com a notificação legado. Falha no processamento shadow nunca reverte uma aceitação já confirmada. Desligado, shadow não grava payload e o scheduler continua condicionado à flag.
-- **Recuperação e backpressure:** o poll drena até 100 snapshots, cada qual em transação própria. `FOR UPDATE SKIP LOCKED`, deduplicação e remoção somente após enqueue confirmado impedem dupla captura. Saturação ou erro DB reverte somente a transação shadow e conserva o snapshot para outro poll/reinício. Capturas e payloads expiram em até 7 dias; retenção apaga payloads vencidos. O backlog usa a retenção já limitada de `processed_message`; a capacidade de lotes continua configurável. Um capture bloqueado segura os seguintes no poll atual, evitando descartar eventos para aliviar pressão.
+- **Recuperação e backpressure:** o poll drena até 100 snapshots, cada qual em transação própria. `FOR UPDATE SKIP LOCKED`, deduplicação e remoção somente após enqueue confirmado impedem dupla captura. Saturação ou erro DB reverte somente a transação shadow e conserva o snapshot para outro poll/reinício. Capturas e payloads expiram em até 7 dias; retenção apaga payloads vencidos. O backlog usa a retenção já limitada de `processed_message`; a capacidade de lotes continua configurável. Captura com falha permanece durável e recebe backoff de 30 segundos, sem impedir outras capturas elegíveis; não há descarte para aliviar pressão.
 - **Políticas reais:** `PersistedPolicyRepository` carrega global, perfil e override parcial; `PolicyResolver` mantém precedência e origem. O perfil legado é fallback apenas quando não há perfil explícito por chat. `AvailabilityService` recebe timezone configurada, override temporário e `HolidayService` persistido. Auditoria grava valores/origens da policy, disponibilidade, fonte e motivo mesmo com IA desativada. `ALL` mantém elegibilidade de estado desconhecido; modos restritos continuam bloqueando UNKNOWN.
 - **Decisão:** disponibilidade incompleta bloqueia com auditoria. Durante indisponibilidade, alerta inteligente exige urgência crítica e referência pessoal explícita. Autorizações e templates continuam obrigatórios. Gate real é calculado antes do cooldown simulado; cooldown simulado suprime somente `wouldAlert`/`wouldReply`, sem negar um gate real independentemente elegível. Isso registra elegibilidade, sem realizar envio.
 - **Aliases:** somente o par explícito já exigido por `IdentityService` permite merge. Autorizações exatas são preservadas, cooldowns usam máximos por dimensão, lotes são reindexados, mensagens do mesmo chat/remetente/external ID são deduplicadas. IDs de lotes e auditoria são preservados. Policies explícitas divergentes entre aliases permanecem armazenadas e geram `NO_POLICY`/bloqueio auditado, sem escolher uma silenciosamente.
@@ -68,3 +68,22 @@ mvn '-Dtest=DebounceServiceTest,MessageServiceTest,IdentityServiceTest,Simulatio
 ```
 
 Mesmas variáveis de Java/Docker documentadas acima. Nenhuma suíte completa, nenhum acesso ao conteúdo de `target/`, nenhuma mudança em `.idea/` e nenhum trabalho do plano 3.
+
+
+## Correção load-bearing de chegada fora de ordem entre polls
+
+A reprodução PostgreSQL confirmou que um lote OPEN começando às 10:00:10 rejeitava uma captura posterior cujo recebimento original era 10:00:05: `last_message_at` retrocedia e violava `first_message_at <= last_message_at`. A captura retida também interrompia a drenagem de outros chats. O cast SQL do horário de recebimento inválido podia falhar antes de identificar a captura responsável.
+
+Mudança pontual:
+
+- Dentro da mesma janela, recomputar `first_message_at=min`, `last_message_at=max` e `due_at=min(first+30s,last+10s)`. Deadlines sensíveis continuam usando o mínimo já protegido; o atraso não renova retenção.
+- Uma captura anterior que abriria lacuna de pelo menos 10 segundos, estenderia a duração para 30 segundos ou excederia tamanho máximo ganha lote READY separado. O lote OPEN mais novo mantém timestamps e deadline; lotes já auditados não são reabertos. Criação do lote atrasado usa o mesmo controle transacional de capacidade global.
+- V19 adiciona `processed_message.shadow_retry_at` com índice parcial. Falha de uma captura reverte só sua transferência, mantém payload, origem e prazo, e grava espera de 30 segundos em transação separada. A espera sobrevive a reinício. O poll prossegue com outros registros elegíveis, inclusive quando uma captura precisa de capacidade para lote separado mas outra cabe em lote existente.
+- `pg_input_is_valid` protege a ordenação antes de converter timestamp; payload inválido segue retido para retry até seu prazo original. Falha de infraestrutura que impeça selecionar ou registrar o retry interrompe o poll, sem afirmar transferência nem apagar captura.
+- Testes de recuperação de saturação/erro DB agora respeitam os 30 segundos de backoff, usando avanço explícito do relógio de chamada.
+
+TDD PostgreSQL: **cinco RED observados**, depois **BUILD SUCCESS; 56 testes focados, zero falhas, zero erros, zero ignorados**, PostgreSQL 17.11 Testcontainers, duração 50,399 s. Comando: o mesmo conjunto de seis classes da verificação adicional anterior. `git diff --check` sem erros.
+
+Casos novos: dois polls com recebimento 10:00:10 seguido de 10:00:05 e claim no limite correto; captura anterior fora da janela sem antecipar lote mais novo; atraso que ultrapassaria 30 segundos; timestamp inválido sem bloquear dois outros chats, inclusive após recriar serviço; capacidade global de um lote preservada com captura atrasada retida e mensagem do lote existente progredindo. Testes anteriores de prazos, purge, duplicação e concorrência permanecem verdes.
+
+Escopo: `DebounceService`, V19, testes correspondentes, dois avanços de relógio em `MessageServiceTest` e este relatório. Nenhuma alteração do plano 3, envio real, `.idea/` ou leitura do conteúdo de `target/`.

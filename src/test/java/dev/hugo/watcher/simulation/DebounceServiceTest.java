@@ -170,6 +170,81 @@ class DebounceServiceTest {
         assertEquals(1,jdbc.queryForObject("select count(*) from simulation_batch_messages",Integer.class));
     }
 
+    @Test void lateMessageAcrossPollsKeepsFirstLastAndOriginalWindow() {
+        Instant firstPoll = Instant.parse("2026-10-27T10:00:10Z");
+        Instant deadline = Instant.parse("2026-10-28T10:00:00Z");
+        var service = new DebounceService(jdbc,limits);
+        capture(at("newer","late@s.whatsapp.net",null,"2026-10-27T10:00:10Z"),firstPoll,deadline);
+        assertTrue(service.claimReady(firstPoll).isEmpty());
+        capture(at("late","late@s.whatsapp.net",null,"2026-10-27T10:00:05Z"),firstPoll.plusSeconds(1),deadline.plusSeconds(60));
+        assertTrue(service.claimReady(firstPoll.plusSeconds(2)).isEmpty());
+        assertEquals(2,jdbc.queryForObject("select count(*) from simulation_batch_messages",Integer.class));
+        assertEquals(Instant.parse("2026-10-27T10:00:05Z"),jdbc.queryForObject("select first_message_at from simulation_batches",java.sql.Timestamp.class).toInstant());
+        assertEquals(firstPoll,jdbc.queryForObject("select last_message_at from simulation_batches",java.sql.Timestamp.class).toInstant());
+        assertEquals(deadline,jdbc.queryForObject("select expires_at from simulation_batches",java.sql.Timestamp.class).toInstant());
+        assertTrue(service.claimReady(Instant.parse("2026-10-27T10:00:19Z")).isEmpty());
+        var ready = service.claimReady(Instant.parse("2026-10-27T10:00:20Z"));
+        assertEquals(List.of("late","newer"),ready.getFirst().messages().stream().map(m -> m.externalId().orElseThrow()).toList());
+    }
+
+    @Test void lateMessageOutsideOriginalWindowDoesNotCloseNewerOpenBatch() {
+        Instant firstPoll = Instant.parse("2026-10-27T10:00:10Z");
+        Instant deadline = Instant.parse("2026-10-28T10:00:00Z");
+        var service = new DebounceService(jdbc,limits);
+        capture(at("recent","isolated@s.whatsapp.net",null,"2026-10-27T10:00:10Z"),firstPoll,deadline);
+        service.claimReady(firstPoll);
+        capture(at("old-window","isolated@s.whatsapp.net",null,"2026-10-27T09:59:35Z"),firstPoll.plusSeconds(1),deadline);
+        var late = service.claimReady(firstPoll.plusSeconds(2));
+        assertEquals(1,late.size());
+        assertEquals("old-window",late.getFirst().messages().getFirst().externalId().orElseThrow());
+        assertEquals(1,jdbc.queryForObject("select count(*) from simulation_batches where status='OPEN'",Integer.class));
+        assertTrue(service.claimReady(firstPoll.plusSeconds(9)).isEmpty());
+        assertEquals("recent",service.claimReady(firstPoll.plusSeconds(10)).getFirst().messages().getFirst().externalId().orElseThrow());
+    }
+
+    @Test void lateMessageCannotExpandExistingBatchBeyondThirtySeconds() {
+        Instant first = Instant.parse("2026-10-27T10:00:10Z");
+        var service = new DebounceService(jdbc,limits);
+        for (int offset : List.of(0,9,18,25)) {
+            service.enqueue(at("window-"+offset,"maximum@s.whatsapp.net",null,first.plusSeconds(offset).toString()),first.plusSeconds(offset));
+        }
+        capture(at("too-early","maximum@s.whatsapp.net",null,"2026-10-27T10:00:05Z"),first.plusSeconds(26),Instant.parse("2026-10-28T10:00:00Z"));
+        var late = service.claimReady(first.plusSeconds(26));
+        assertEquals(1,late.size());
+        assertEquals("too-early",late.getFirst().messages().getFirst().externalId().orElseThrow());
+        assertEquals(1,jdbc.queryForObject("select count(*) from simulation_batches where status='OPEN' and first_message_at='2026-10-27T10:00:10Z' and last_message_at='2026-10-27T10:00:35Z' and due_at='2026-10-27T10:00:40Z'",Integer.class));
+    }
+
+    @Test void malformedCaptureDoesNotBlockOtherChatsOrExtendItsDeadline() {
+        Instant now = Instant.parse("2026-10-27T10:00:10Z");
+        Instant deadline = Instant.parse("2026-10-28T10:00:00Z");
+        capture(at("malformed","bad@s.whatsapp.net",null,"2026-10-27T10:00:00Z"),now.minusSeconds(10),deadline);
+        jdbc.update("update processed_message set shadow_payload=jsonb_set(shadow_payload,'{receivedAt}',to_jsonb(?::text)) where message_id=?","not-an-instant","malformed");
+        capture(at("healthy","healthy@s.whatsapp.net",null,"2026-10-27T10:00:01Z"),now,deadline);
+        var ready = new DebounceService(jdbc,limits).claimReady(now.plusSeconds(2));
+        assertEquals(1,ready.size());
+        assertEquals("healthy@s.whatsapp.net",ready.getFirst().chatJid());
+        assertEquals(1,jdbc.queryForObject("select count(*) from processed_message where message_id='malformed' and shadow_payload is not null and shadow_expires_at='2026-10-28T10:00:00Z'",Integer.class));
+        capture(at("healthy-again","another@s.whatsapp.net",null,"2026-10-27T10:00:02Z"),now.plusSeconds(3),deadline);
+        assertEquals("another@s.whatsapp.net",new DebounceService(jdbc,limits).claimReady(now.plusSeconds(4)).getFirst().chatJid());
+    }
+
+    @Test void capacityRejectsSeparateLateBatchButAllowsExistingChatToProgress() {
+        limits.setMaxPendingBatches(1);
+        Instant now = Instant.parse("2026-10-27T10:00:10Z");
+        Instant deadline = Instant.parse("2026-10-28T10:00:00Z");
+        var service = new DebounceService(jdbc,limits);
+        capture(at("capacity-new","busy@s.whatsapp.net",null,"2026-10-27T10:00:10Z"),now,deadline);
+        service.claimReady(now);
+        capture(at("capacity-old","busy@s.whatsapp.net",null,"2026-10-27T09:59:35Z"),now.plusSeconds(1),deadline);
+        capture(at("capacity-next","busy@s.whatsapp.net",null,"2026-10-27T10:00:12Z"),now.plusSeconds(2),deadline);
+        service.claimReady(now.plusSeconds(2));
+        assertEquals(1,jdbc.queryForObject("select count(*) from simulation_batches",Integer.class));
+        assertEquals(2,jdbc.queryForObject("select count(*) from simulation_batch_messages",Integer.class));
+        assertEquals(1,jdbc.queryForObject("select count(*) from processed_message where message_id='capacity-old' and shadow_payload is not null",Integer.class));
+        assertEquals(deadline,jdbc.queryForObject("select shadow_expires_at from processed_message where message_id='capacity-old'",java.sql.Timestamp.class).toInstant());
+    }
+
     private void capture(IncomingMessage message, Instant processedAt, Instant expiresAt) {
         jdbc.update("""
                 insert into processed_message(message_id,processed_at,shadow_payload,shadow_expires_at)
