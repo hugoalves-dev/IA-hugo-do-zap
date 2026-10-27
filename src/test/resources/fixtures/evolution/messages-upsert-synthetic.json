@@ -1,0 +1,11 @@
+{
+  "event": "messages.upsert",
+  "instance": "synthetic-instance",
+  "data": {
+    "key": {
+      "id": "synthetic-message-1",
+      "remoteJid": "5511999999999@s.whatsapp.net"
+    },
+    "messageTimestamp": 1700000000
+  }
+}
