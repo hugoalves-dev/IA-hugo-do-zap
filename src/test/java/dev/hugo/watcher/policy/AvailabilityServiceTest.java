@@ -23,6 +23,7 @@ class AvailabilityServiceTest {
     @Container static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
     private JdbcTemplate jdbc;
     private AvailabilityService availability;
+    private GlobalPolicyRepository globalPolicies;
     private static final ZoneId SAO_PAULO = ZoneId.of("America/Sao_Paulo");
 
     @BeforeEach void migrateAndClearCalendar() {
@@ -30,7 +31,9 @@ class AvailabilityServiceTest {
         jdbc = new JdbcTemplate(source);
         Flyway.configure().dataSource(source).load().migrate();
         jdbc.update("delete from holiday_calendar");
+        jdbc.update("delete from availability_overrides");
         availability = new AvailabilityService(new HolidayService(jdbc));
+        globalPolicies = new GlobalPolicyRepository(jdbc);
     }
 
     @Test void expiredTemporaryOverrideFallsThroughToWorkWindow() {
@@ -56,14 +59,18 @@ class AvailabilityServiceTest {
 
     @Test void activeTemporaryOverrideTakesPrecedenceOverValidatedHoliday() {
         insertHoliday(LocalDate.of(2026, 10, 27), "SP", "Validated fixture", "https://official.example/2026", 2026, "VALIDATED", false);
-        var policy = policy(false, new TemporaryAvailabilityOverride(
+        var temporary = new TemporaryAvailabilityOverride(
                 AvailabilityState.AVAILABLE, Instant.parse("2026-10-27T12:00:00Z"),
-                Instant.parse("2026-10-27T14:00:00Z")));
+                Instant.parse("2026-10-27T14:00:00Z"));
+        globalPolicies.saveTemporaryAvailabilityOverride(temporary);
+        var policy = policy(false, globalPolicies.temporaryAvailabilityOverride().orElseThrow());
 
-        Availability result = availability.at(Instant.parse("2026-10-27T13:00:00Z"), SAO_PAULO, policy);
+        Availability result = availability.at(Instant.parse("2026-10-27T12:00:00Z"), SAO_PAULO, policy);
 
         assertEquals(AvailabilityState.AVAILABLE, result.state());
         assertEquals(AvailabilitySource.TEMPORARY_OVERRIDE, result.source());
+        assertEquals(1, jdbc.queryForObject("select count(*) from availability_overrides where singleton_id=1", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from chat_policy_overrides", Integer.class));
     }
 
     @Test void validatedStateAndMunicipalHolidaysApplyWithinTheirCalendarYear() {
@@ -87,11 +94,24 @@ class AvailabilityServiceTest {
         assertEquals(AvailabilitySource.WORK_WINDOW, result.source());
     }
 
+    @Test void holidayDateUsesSaoPauloCalendarAcrossUtcMidnight() {
+        insertHoliday(LocalDate.of(2026, 10, 27), "SP", "Timezone fixture", "https://official.example/sp/2026", 2026, "VALIDATED", false);
+
+        Availability result = availability.at(Instant.parse("2026-10-28T02:00:00Z"), SAO_PAULO, policy(false, null));
+
+        assertEquals(AvailabilitySource.VALIDATED_HOLIDAY, result.source());
+        assertEquals("Timezone fixture", result.reason());
+    }
+
     private void insertHoliday(LocalDate day, String jurisdiction, String name, String source, int year, String status, boolean optional) {
+        String validatedBy = "VALIDATED".equals(status) ? "fixture-maintainer" : null;
+        java.sql.Timestamp validatedAt = "VALIDATED".equals(status)
+                ? java.sql.Timestamp.from(Instant.parse("2026-10-27T12:00:00Z")) : null;
         jdbc.update("""
-                insert into holiday_calendar(local_date, jurisdiction, name, source, calendar_year, validation_status, optional)
-                values (?, ?, ?, ?, ?, ?, ?)
-                """, day, jurisdiction, name, source, year, status, optional);
+                insert into holiday_calendar(local_date, jurisdiction, name, source, calendar_year, validation_status,
+                                            optional, validated_by, validated_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, day, jurisdiction, name, source, year, status, optional, validatedBy, validatedAt);
     }
 
     private EffectivePolicy policy(boolean includeOptional, TemporaryAvailabilityOverride temporary) {
@@ -101,8 +121,7 @@ class AvailabilityServiceTest {
                         java.time.DayOfWeek.WEDNESDAY, java.time.DayOfWeek.THURSDAY, java.time.DayOfWeek.FRIDAY),
                 PolicyField.WINDOWS, List.of(new WorkWindow(LocalTime.of(8, 0), LocalTime.of(12, 0)),
                         new WorkWindow(LocalTime.of(13, 30), LocalTime.of(17, 30))),
-                PolicyField.INCLUDE_OPTIONAL_HOLIDAYS, includeOptional));
-        return new PolicyResolver().resolve(global, new Profile("default", java.util.Map.of()),
-                new ChatOverride(java.util.Map.of(), temporary));
+                PolicyField.INCLUDE_OPTIONAL_HOLIDAYS, includeOptional), temporary);
+        return new PolicyResolver().resolve(global, new Profile("default", java.util.Map.of()), new ChatOverride(java.util.Map.of()));
     }
 }

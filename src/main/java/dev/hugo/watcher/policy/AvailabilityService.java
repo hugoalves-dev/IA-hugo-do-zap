@@ -25,7 +25,7 @@ public class AvailabilityService {
 
         boolean includeOptional = Boolean.TRUE.equals(policy.value(PolicyField.INCLUDE_OPTIONAL_HOLIDAYS));
         for (HolidayEntry holiday : holidays.on(instant.atZone(zone).toLocalDate())) {
-            if (!holiday.verified() || (holiday.optional() && !includeOptional)) continue;
+            if (!holiday.hasManualAttestation() || (holiday.optional() && !includeOptional)) continue;
             return new Availability(AvailabilityState.UNAVAILABLE,
                     holiday.optional() ? AvailabilitySource.OPTIONAL_HOLIDAY : AvailabilitySource.VALIDATED_HOLIDAY,
                     holiday.name());

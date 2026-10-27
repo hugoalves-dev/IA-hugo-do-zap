@@ -31,4 +31,14 @@ class PolicyResolverTest {
         assertEquals(Set.of(DayOfWeek.MONDAY, DayOfWeek.FRIDAY), restored.value(PolicyField.WORK_DAYS));
         assertEquals(PolicySource.PROFILE, restored.origin(PolicyField.WORK_DAYS));
     }
+
+    @Test void temporaryAvailabilityOverrideBelongsToGlobalPolicy() {
+        var temporary = new TemporaryAvailabilityOverride(AvailabilityState.UNAVAILABLE,
+                java.time.Instant.parse("2026-10-27T12:00:00Z"), java.time.Instant.parse("2026-10-27T14:00:00Z"));
+        GlobalPolicy global = new GlobalPolicy(Map.<PolicyField, Object>of(PolicyField.MODE, ScheduleMode.ANYTIME), temporary);
+
+        EffectivePolicy resolved = new PolicyResolver().resolve(global, new Profile("ANYTIME", Map.of()), ChatOverride.empty());
+
+        assertEquals(temporary, resolved.temporaryAvailability());
+    }
 }

@@ -2,6 +2,7 @@ package dev.hugo.watcher;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -11,6 +12,7 @@ import java.sql.DriverManager;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Testcontainers(disabledWithoutDocker = true)
 class DatabaseMigrationTest {
@@ -76,5 +78,35 @@ class DatabaseMigrationTest {
         assertEquals("ANYTIME", jdbc.queryForObject(
                 "select fields->>'mode' from upgrade_policy.policy_profiles where profile_name='ANYTIME'", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_policy.holiday_calendar", Integer.class));
+    }
+
+    @Test void holidayValidationRequiresRecordedManualAttestation() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("holiday_attestation").defaultSchema("holiday_attestation")
+                .target("13").load().migrate();
+        jdbc.update("""
+                insert into holiday_attestation.holiday_calendar(local_date,jurisdiction,name,source,calendar_year,validation_status)
+                values ('2026-10-27','LINS','legacy fixture','https://official.example/2026',2026,'VALIDATED')
+                """);
+        Flyway.configure().dataSource(source).schemas("holiday_attestation").defaultSchema("holiday_attestation")
+                .load().migrate();
+        assertEquals("UNKNOWN", jdbc.queryForObject("""
+                select validation_status from holiday_attestation.holiday_calendar where name='legacy fixture'
+                """, String.class));
+
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("""
+                insert into holiday_attestation.holiday_calendar(local_date,jurisdiction,name,source,calendar_year,validation_status)
+                values ('2026-10-27','LINS','unattested fixture','https://official.example/2026',2026,'VALIDATED')
+                """));
+
+        jdbc.update("""
+                insert into holiday_attestation.holiday_calendar(local_date,jurisdiction,name,source,calendar_year,
+                    validation_status,validated_by,validated_at)
+                values ('2026-10-27','LINS','fixture','https://official.example/2026',2026,'VALIDATED',?,?)
+                """, "fixture-maintainer", java.sql.Timestamp.from(java.time.Instant.parse("2026-10-27T12:00:00Z")));
+        assertEquals("fixture-maintainer", jdbc.queryForObject(
+                "select validated_by from holiday_attestation.holiday_calendar where name='fixture'", String.class));
     }
 }

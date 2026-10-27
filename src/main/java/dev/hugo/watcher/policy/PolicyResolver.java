@@ -16,7 +16,7 @@ public final class PolicyResolver {
         apply(resolved, global.fields(), PolicySource.GLOBAL);
         apply(resolved, profile.fields(), PolicySource.PROFILE);
         apply(resolved, chatOverride.fields(), PolicySource.CHAT_OVERRIDE);
-        return new EffectivePolicy(Map.copyOf(resolved), chatOverride.temporaryAvailability());
+        return new EffectivePolicy(Map.copyOf(resolved), global.temporaryAvailability());
     }
 
     private void apply(Map<PolicyField, ResolvedPolicyField> target, Map<PolicyField, Object> fields, PolicySource source) {
