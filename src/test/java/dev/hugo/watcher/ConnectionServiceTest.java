@@ -21,6 +21,8 @@ class ConnectionServiceTest {
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
     private JdbcTemplate jdbc;
+    private DataSourceTransactionManager manager;
+    private WatcherProperties properties;
     private ConnectionService connections;
 
     @BeforeEach void migrateAndReset() {
@@ -29,8 +31,8 @@ class ConnectionServiceTest {
         Flyway.configure().dataSource(dataSource).load().migrate();
         jdbc.update("delete from outbox_actions");
         jdbc.update("delete from watcher_connection_state");
-        var manager = new DataSourceTransactionManager(dataSource);
-        var properties = new WatcherProperties();
+        manager = new DataSourceTransactionManager(dataSource);
+        properties = new WatcherProperties();
         properties.setN8nSecret("synthetic-test-secret");
         connections = new ConnectionService(jdbc, manager, new NotificationOutboxRepository(jdbc, manager), properties, Duration.ofSeconds(60));
     }
@@ -41,6 +43,32 @@ class ConnectionServiceTest {
         connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, openedAt.plusSeconds(1), "connection_lost", 503));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, openedAt.plusSeconds(20), "open", null));
         connections.flushGracePeriod(openedAt.plusSeconds(120));
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='whatsapp_connection_lost'", Integer.class));
+    }
+
+    @Test void firstRecoverableCloseStartsGraceAndDuplicateCloseDoesNotRestartIt() {
+        Instant startedAt = Instant.parse("2026-10-26T10:00:00Z");
+
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, startedAt, "connection_lost", 408));
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, startedAt.plusSeconds(20), "connection_lost", 408));
+
+        assertEquals(1L, jdbc.queryForObject("select outage_generation from watcher_connection_state where singleton_id=1", Long.class));
+        assertEquals(startedAt, jdbc.queryForObject("select outage_started_at from watcher_connection_state where singleton_id=1", java.sql.Timestamp.class).toInstant());
+        connections.flushGracePeriod(startedAt.plusSeconds(59));
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='whatsapp_connection_lost'", Integer.class));
+        var restarted = new ConnectionService(jdbc, manager, new NotificationOutboxRepository(jdbc, manager), properties, Duration.ofSeconds(60));
+        restarted.flushGracePeriod(startedAt.plusSeconds(60));
+        restarted.flushGracePeriod(startedAt.plusSeconds(120));
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='whatsapp_connection_lost'", Integer.class));
+    }
+
+    @Test void firstRecoverableCloseCanReconnectBeforeGraceWithoutAlert() {
+        Instant startedAt = Instant.parse("2026-10-26T10:00:00Z");
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, startedAt, "connection_lost", 408));
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, startedAt.plusSeconds(20), "open", 200));
+
+        connections.flushGracePeriod(startedAt.plusSeconds(120));
 
         assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='whatsapp_connection_lost'", Integer.class));
     }

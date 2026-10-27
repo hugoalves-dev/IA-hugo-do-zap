@@ -39,3 +39,7 @@ O repositório não fixa uma release/tag nem digest da imagem Evolution. Portant
 - A documentação oficial Baileys associa `loggedOut`/401 a sessão revogada e novo QR: [Baileys troubleshooting](https://github.com/WhiskeySockets/docs/blob/main/advanced/troubleshooting.mdx), [Baileys `DisconnectReason`](https://github.com/WhiskeySockets/Baileys/blob/master/src/Types/index.ts).
 
 Assim, o webhook mapeia o `close + 401` para alerta de novo pareamento e aceita esse evento como o primeiro sinal persistido. O operador ainda precisa configurar a Evolution da instalação para publicar `connection.update` no webhook autenticado do watcher e validar um payload sanitizado da release efetivamente fixada antes de ativar a integração em produção.
+
+## Limite da revalidação
+
+A consulta de estado e a montagem do payload ocorrem imediatamente antes da chamada HTTP e não mantêm uma transação/lock no PostgreSQL durante o request externo. Uma mudança de arquivamento, nome ou política concorrente que aconteça depois dessa consulta enquanto o HTTP está em andamento não consegue cancelar uma entrega já iniciada. No ACK, snapshots e arquivamento são comparados de novo para preservar pending alterado; uma garantia atômica entre PostgreSQL e o destino HTTP não existe neste contrato.

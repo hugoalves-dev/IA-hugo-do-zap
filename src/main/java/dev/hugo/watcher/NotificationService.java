@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.Clock;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -38,16 +39,18 @@ public class NotificationService {
     private final NotificationOutboxRepository outbox;
     private final N8nClient n8n;
     private final WatcherProperties properties;
+    private final Clock clock;
     private final AtomicBoolean flushing = new AtomicBoolean();
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                NotificationOutboxRepository outbox, N8nClient n8n,
-                               WatcherProperties properties) {
+                               WatcherProperties properties, Clock clock) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.outbox = outbox;
         this.n8n = n8n;
         this.properties = properties;
+        this.clock = clock;
     }
 
     public void flush(Instant now) {
@@ -62,8 +65,8 @@ public class NotificationService {
                     outbox.suppress(action, now);
                     continue;
                 }
-                if (n8n.send(delivery)) outbox.acknowledge(delivery, now);
-                else outbox.retry(delivery, now, "DeliveryFailure");
+                if (n8n.send(delivery)) outbox.acknowledge(delivery, clock.instant());
+                else outbox.retry(delivery, clock.instant(), "DeliveryFailure");
             }
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.ERROR, "Notification flush failed: error={0}", ex.getClass().getSimpleName());

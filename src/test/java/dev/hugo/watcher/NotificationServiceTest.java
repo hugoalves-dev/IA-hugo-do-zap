@@ -17,8 +17,10 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -43,6 +45,7 @@ class NotificationServiceTest {
     private final AtomicInteger requestCount = new AtomicInteger();
     private final AtomicReference<java.util.function.Consumer<String>> requestHook = new AtomicReference<>(ignored -> { });
     private final AtomicReference<String> receivedBody = new AtomicReference<>();
+    private MutableClock clock;
 
     @BeforeEach void setup() throws Exception {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
@@ -71,10 +74,11 @@ class NotificationServiceTest {
         properties = new WatcherProperties();
         properties.setN8nUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/webhook");
         properties.setN8nSecret("fixture-secret");
+        clock = new MutableClock(NOW);
         var manager = new DataSourceTransactionManager(dataSource);
         outbox = new NotificationOutboxRepository(jdbc, manager);
         var client = new N8nClient(properties, HttpClient.newHttpClient(), Duration.ofSeconds(2), List.of(Duration.ZERO, Duration.ZERO));
-        notifications = new NotificationService(jdbc, manager, outbox, client, properties);
+        notifications = new NotificationService(jdbc, manager, outbox, client, properties, clock);
     }
 
     @AfterEach void stopServer() { if (server != null) server.stop(0); }
@@ -140,6 +144,21 @@ class NotificationServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='PENDING'", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where status='PENDING'", String.class).contains("fixture-secret"));
+    }
+
+    @Test void schedulesRetryBackoffFromClockAfterHttpAttemptsFinish() {
+        responseStatus.set(503);
+        requestHook.set(ignored -> clock.advance(Duration.ofSeconds(15)));
+        seed("5511111111111@s.whatsapp.net", "Contato", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+
+        notifications.flush(NOW);
+
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where status='PENDING'",
+                java.sql.Timestamp.class).toInstant();
+        assertEquals(NOW.plusSeconds(45), clock.instant(), "fake HTTP advances the injected clock for all attempts");
+        assertEquals(clock.instant().plusSeconds(10), availableAt,
+                "backoff must begin after the final failed HTTP attempt, not at flush start");
     }
 
     @Test void revalidatesAQueuedGroupAgainstItsCurrentBlockedNameBeforeRetrying() {
@@ -238,5 +257,15 @@ class NotificationServiceTest {
                 insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
                 values (?, ?::jsonb, ?, ?, ?)
                 """, jid, payload, java.sql.Timestamp.from(Instant.parse(last)), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
+    }
+
+    private static final class MutableClock extends Clock {
+        private final AtomicReference<Instant> now;
+
+        private MutableClock(Instant initial) { now = new AtomicReference<>(initial); }
+        private void advance(Duration duration) { now.updateAndGet(value -> value.plus(duration)); }
+        @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
+        @Override public Clock withZone(ZoneId zone) { return this; }
+        @Override public Instant instant() { return now.get(); }
     }
 }

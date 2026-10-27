@@ -51,19 +51,20 @@ public class ConnectionService {
             StateRow current = readStateForUpdate();
             if (event.state() == ConnectionEvent.State.CONNECTED) {
                 jdbc.update("""
-                        update watcher_connection_state set connected=true,outage_started_at=null,reason=null,
+                        update watcher_connection_state set connection_state='CONNECTED',outage_started_at=null,reason=null,
                             status_code=null,manual_pairing_required=false,alerted=false where singleton_id=1
                         """);
                 return;
             }
             boolean pairing = event.state() == ConnectionEvent.State.DEVICE_REMOVED
                     || event.state() == ConnectionEvent.State.MANUAL_PAIRING_REQUIRED;
-            if (!current.connected() && (!pairing || current.manualPairingRequired() || current.alerted())) return;
+            if ("DISCONNECTED".equals(current.connectionState())
+                    && (!pairing || current.manualPairingRequired() || current.alerted())) return;
             long generation = current.generation() + 1;
             String reason = event.reason() == null || event.reason().isBlank()
                     ? pairing ? "device_removed" : "connection_lost" : event.reason();
             jdbc.update("""
-                    update watcher_connection_state set connected=false,outage_generation=?,outage_started_at=?,
+                    update watcher_connection_state set connection_state='DISCONNECTED',outage_generation=?,outage_started_at=?,
                         reason=?,status_code=?,manual_pairing_required=?,alerted=false where singleton_id=1
                     """, generation, Timestamp.from(at), reason, event.statusCode(), pairing);
             if (pairing) {
@@ -79,7 +80,7 @@ public class ConnectionService {
         transactions.executeWithoutResult(status -> {
             ensureState();
             StateRow current = readStateForUpdate();
-            if (current.connected() || current.alerted() || current.manualPairingRequired()
+            if (!"DISCONNECTED".equals(current.connectionState()) || current.alerted() || current.manualPairingRequired()
                     || current.outageStartedAt() == null || now.isBefore(current.outageStartedAt().plus(gracePeriod))) return;
             enqueueAlert(current.generation(), now, current.reason(), current.statusCode(), false);
             jdbc.update("update watcher_connection_state set alerted=true where singleton_id=1 and alerted=false");
@@ -106,15 +107,15 @@ public class ConnectionService {
 
     private StateRow readStateForUpdate() {
         List<StateRow> rows = jdbc.query("""
-                select connected,outage_generation,outage_started_at,reason,status_code,manual_pairing_required,alerted
+                select connection_state,outage_generation,outage_started_at,reason,status_code,manual_pairing_required,alerted
                 from watcher_connection_state where singleton_id=1 for update
-                """, (rs, row) -> new StateRow(rs.getBoolean("connected"), rs.getLong("outage_generation"),
+                """, (rs, row) -> new StateRow(rs.getString("connection_state"), rs.getLong("outage_generation"),
                 rs.getTimestamp("outage_started_at") == null ? null : rs.getTimestamp("outage_started_at").toInstant(),
                 rs.getString("reason"), (Integer) rs.getObject("status_code"),
                 rs.getBoolean("manual_pairing_required"), rs.getBoolean("alerted")));
         return rows.getFirst();
     }
 
-    private record StateRow(boolean connected, long generation, Instant outageStartedAt, String reason,
+    private record StateRow(String connectionState, long generation, Instant outageStartedAt, String reason,
                             Integer statusCode, boolean manualPairingRequired, boolean alerted) { }
 }
