@@ -7,6 +7,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -31,9 +32,12 @@ class SimulationServiceTest {
         jdbc = new JdbcTemplate(source);
         Flyway.configure().dataSource(source).load().migrate();
         jdbc.update("delete from simulation_decisions");
+        jdbc.update("delete from chat_automation_authorizations");
+        jdbc.update("delete from decision_cooldowns");
         jdbc.update("delete from simulation_batch_messages");
         jdbc.update("delete from simulation_batches");
         jdbc.update("update archive_monitor_settings set mode='ALL' where singleton_id=1");
+        jdbc.update("update automation_settings set ai_classification_enabled=false,intelligent_alerts_enabled=false,auto_reply_enabled=false,kill_switch_enabled=true where singleton_id=1");
         debounce = new DebounceService(jdbc, new WatcherSimulationProperties());
         simulations = new SimulationService(jdbc);
     }
@@ -43,7 +47,7 @@ class SimulationServiceTest {
         SimulationDecision eligible = simulations.evaluate(batch);
         assertFalse(eligible.wouldAlert());
         assertFalse(eligible.wouldReply());
-        assertEquals("decision_engine_pending_task_3", eligible.decisionReason());
+        assertEquals("ai_classification_disabled", eligible.decisionReason());
         assertEquals(1, jdbc.queryForObject("select count(*) from simulation_decisions where batch_id=?", Integer.class, batch.id()));
         assertEquals(false, jdbc.queryForObject("select would_alert from simulation_decisions where batch_id=?", Boolean.class, batch.id()));
         assertEquals(false, jdbc.queryForObject("select would_reply from simulation_decisions where batch_id=?", Boolean.class, batch.id()));
@@ -99,9 +103,34 @@ class SimulationServiceTest {
         SimulationDecision repeated = simulations.evaluate(batch);
 
         assertEquals(first, repeated);
-        assertNull(repeated.blockedReason());
-        assertEquals("decision_engine_pending_task_3", repeated.decisionReason());
+        assertEquals("ai_classification_disabled", repeated.blockedReason());
+        assertEquals("ai_classification_disabled", repeated.decisionReason());
         assertEquals(1, jdbc.queryForObject("select count(*) from simulation_decisions where batch_id=?", Integer.class, batch.id()));
+    }
+
+    @Test void engineDecisionAndReasonArePersistedWithoutTreatingRawMessageAsIntent() {
+        String chat = "classified@s.whatsapp.net";
+        jdbc.update("update automation_settings set ai_classification_enabled=true, auto_reply_enabled=true where singleton_id=1");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,?,?,?)",
+                chat, "CONTACT_REQUEST", "contact_request", 1);
+        Batch batch = enqueueAndClaim(chat);
+
+        SimulationDecision decision = simulations.evaluate(batch);
+
+        assertFalse(decision.wouldReply());
+        assertEquals("classification_unavailable", decision.decisionReason());
+        assertFalse(decision.realActionAllowed());
+        assertEquals("classification_unavailable", decision.realBlockedReason());
+        assertEquals("classification_unavailable", jdbc.queryForObject(
+                "select decision_reason from simulation_decisions where batch_id=?", String.class, batch.id()));
+        assertEquals("BLOCKED", jdbc.queryForObject(
+                "select decision_state from simulation_decisions where batch_id=?", String.class, batch.id()));
+    }
+
+    @Test void authorizationCannotReferenceTemplateForDifferentSituation() {
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(
+                "insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,?,?,?)",
+                "mismatched-template@g.us", "GROUP_TRIGGER", "contact_request", 1));
     }
 
     private Batch enqueueAndClaim(String chat) {
