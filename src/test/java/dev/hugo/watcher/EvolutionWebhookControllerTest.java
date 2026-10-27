@@ -20,7 +20,8 @@ import java.net.http.HttpResponse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "watcher.runtime.scheduling-enabled=false")
 class EvolutionWebhookControllerTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
@@ -50,6 +51,7 @@ class EvolutionWebhookControllerTest {
     void clearTables() {
         jdbc.update("delete from processing_jobs");
         jdbc.update("delete from inbox_events");
+        jdbc.update("delete from quarantined_events");
     }
 
     @Test void rejectsUnauthorizedOriginWithoutCreatingInbox() throws Exception {
@@ -104,6 +106,18 @@ class EvolutionWebhookControllerTest {
         assertEquals(202, post(EVENT, TOKEN).statusCode());
         assertEquals(1, inboxCount());
         assertEquals(1, jdbc.queryForObject("select count(*) from processing_jobs", Integer.class));
+    }
+
+    @Test void durablyQuarantinesChatUpdateWithoutStableIdInsteadOfInventingSnapshot() throws Exception {
+        String update = """
+                {"event":"chats.update","instance":"watcher-test","data":{
+                  "remoteJid":"120363000000000000@g.us","archived":true}}
+                """;
+
+        assertEquals(202, post(update, TOKEN).statusCode());
+        assertEquals(1, jdbc.queryForObject("select count(*) from quarantined_events where event_kind='CHAT_STATE' and source_event_id is null and reason='unverified_or_incomplete_state'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from chat_snapshot", Integer.class));
+        assertEquals(0, inboxCount());
     }
 
     private HttpResponse<String> post(String body, String token) throws Exception {

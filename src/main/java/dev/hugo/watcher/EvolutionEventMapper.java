@@ -1,5 +1,6 @@
 package dev.hugo.watcher;
 
+import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -12,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Maps only the stable message-upsert envelope currently confirmed by Evolution's Baileys handler. */
+@Component
 public final class EvolutionEventMapper {
     private static final JsonMapper JSON = JsonMapper.builder().build();
 

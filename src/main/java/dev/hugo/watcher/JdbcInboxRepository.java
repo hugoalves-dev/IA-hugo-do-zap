@@ -6,6 +6,8 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Instant;
+
 @Repository
 public class JdbcInboxRepository implements InboxRepository {
     private final JdbcTemplate jdbc;
@@ -37,5 +39,10 @@ public class JdbcInboxRepository implements InboxRepository {
 
         jdbc.update("insert into processing_jobs(inbox_event_id, status) values (?, 'READY')", inboxId);
         return Acceptance.NEW;
+    }
+
+    @Override
+    public void quarantine(String eventKind, String sourceEventId, String reason) {
+        QuarantineWriter.write(jdbc, eventKind, sourceEventId, reason, Instant.now());
     }
 }

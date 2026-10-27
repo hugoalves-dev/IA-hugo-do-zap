@@ -58,6 +58,14 @@ public class EvolutionWebhookController {
             }
         }
         String externalId = externalId(payload);
+        if (eventType != null && eventType.startsWith("chats.")) {
+            try {
+                inbox.quarantine("CHAT_STATE", null, "unverified_or_incomplete_state");
+                return ResponseEntity.accepted().build();
+            } catch (DataAccessException ex) {
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+            }
+        }
         if (eventType == null || eventType.isBlank() || externalId == null || externalId.isBlank()) {
             return ResponseEntity.badRequest().build();
         }

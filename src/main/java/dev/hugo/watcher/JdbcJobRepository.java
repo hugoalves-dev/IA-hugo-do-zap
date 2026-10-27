@@ -6,6 +6,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -63,5 +64,15 @@ public class JdbcJobRepository implements JobRepository {
                    and lease_expires_at > now()
                 """, jobId, leaseToken);
         if (updated != 1) throw new IllegalStateException("Job lease is no longer current");
+    }
+
+    @Override
+    public boolean retry(UUID jobId, UUID leaseToken, Instant now, Instant availableAt) {
+        return jdbc.update("""
+                update processing_jobs
+                   set status = 'PENDING', available_at = ?, lease_token = null, lease_expires_at = null
+                 where job_uuid = ? and lease_token = ? and status = 'PROCESSING'
+                   and lease_expires_at > ?
+                """, Timestamp.from(availableAt), jobId, leaseToken, Timestamp.from(now)) == 1;
     }
 }
