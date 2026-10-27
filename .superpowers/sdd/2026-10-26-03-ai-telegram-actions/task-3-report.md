@@ -26,3 +26,12 @@ Scratch: `H:\Script\IA-hugo-do-zap-evolution-poc-task3-scratch`, criado copiando
 ## Limites
 
 A integração live não foi validada. O Bot API só será consultado quando o polling for habilitado em configuração; respostas utilizam o dispatcher outbox existente. Menus usam comandos privados de texto; confirmação pode ocorrer por `/confirm <token>` ou callback válido.
+
+## Revisão posterior — confirmação inválida e kill switch
+
+- P1 reproduzido no polling PostgreSQL real com updates fakeados: `/orcamento 10` gerava token; `/confirm <token>` causava rollback-only na transação externa, deixava offset parado em 1 e omitia auditoria de rejeição.
+- Correção: validação de entrada é tratada dentro do callback transacional. Comando inválido não marca a transação externa rollback-only; auditoria `REJECTED`, resposta outbox e avanço do offset comitam juntos. O teste confirma orçamento inalterado, token consumido, offset 2 e depois 3 após `/status`.
+- RED→GREEN: `TelegramUpdatePollingServiceTest.invalidConfirmedBudgetCommandIsAuditedAndDoesNotBlockLaterPollingUpdates` falhou com offset 1, passou com a correção.
+- P2: o dispatcher atual (`NotificationService.flush`) revalida `archived_messages` antes do Telegram e confere a geração atual de `whatsapp_connection_lost` (também aviso Telegram). Respostas `telegram_admin_reply` continuam no caminho de entrega Telegram mesmo com kill switch ligado; teste com transporte fake passou.
+- Não existe serviço de escrita Evolution/WhatsApp nem ação outbox `intelligent_alert` ou de envio WhatsApp neste commit. Portanto, não havia ação real enfileirada para revalidar. A tarefa 4 deve revalidar kill switch, opt-in, autorização por conversa/situação, template, cooldown e estado da outbox imediatamente antes de cada envio Evolution; testar revogação entre enqueue e envio. Kill switch não deve bloquear resposta administrativa Telegram.
+- Verificação focada: `mvn "-Dtest=TelegramUpdatePollingServiceTest,AdminCommandServiceTest,TelegramUpdateHandlerTest,CallbackTokenServiceTest,NotificationServiceTest,SimulationSchedulerTest" test` — 57 testes, 0 falhas/erros/skips, PostgreSQL 17.

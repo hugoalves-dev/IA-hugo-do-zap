@@ -41,19 +41,20 @@ public class AdminCommandService {
 
     public AdminResult execute(AdminCommand command) {
         if (command == null) return AdminResult.rejected("Comando inválido.");
-        try {
-            if (isMutation(command.name(), command.arguments()) && !command.confirmed() && !command.name().equals("emergencia"))
-                return requestConfirmation(command);
-            return transactions.execute(status -> {
+        if (isMutation(command.name(), command.arguments()) && !command.confirmed() && !command.name().equals("emergencia"))
+            return requestConfirmation(command);
+        return transactions.execute(status -> {
+            try {
                 String message = apply(command);
                 enqueueReply(message);
                 return AdminResult.accepted(message);
-            });
-        } catch (IllegalArgumentException | IllegalStateException ex) {
-            String message = safeError(command.name(), ex);
-            enqueueReply(message);
-            return AdminResult.rejected(message);
-        }
+            } catch (IllegalArgumentException ex) {
+                String message = safeError(command.name(), ex);
+                if (isMutation(command.name(), command.arguments())) audit(command, "REJECTED");
+                enqueueReply(message);
+                return AdminResult.rejected(message);
+            }
+        });
     }
 
     private AdminResult requestConfirmation(AdminCommand command) {

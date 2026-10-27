@@ -92,6 +92,19 @@ class NotificationServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
     }
 
+    @Test void emergencyKillSwitchDoesNotBlockQueuedTelegramAdminReply() {
+        Instant now = Instant.now();
+        jdbc.update("update automation_settings set kill_switch_enabled=true,intelligent_alerts_enabled=false,auto_reply_enabled=false where singleton_id=1");
+        outbox.enqueue("telegram_admin_reply:kill-switch", "telegram_admin_reply",
+                "{\"eventType\":\"telegram_admin_reply\",\"text\":\"Admin response\"}", "[]", now, now.plus(Duration.ofMinutes(5)));
+
+        notifications.flush(now);
+
+        assertEquals(1, requestCount.get());
+        assertEquals("Admin response", receivedBody.get());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='telegram_admin_reply'", String.class));
+    }
+
     @Test void defersWorkOnlyNotificationsOutsideTheLegacyWorkWindow() {
         seed("5511888888888@s.whatsapp.net", "Equipe JC", false, 1, "2026-10-26T14:00:00Z", "2026-10-26T15:00:00Z", "mensagem", NOW);
 
