@@ -5,7 +5,6 @@ import tools.jackson.core.JacksonException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +17,7 @@ public final class GeminiProvider extends AbstractHttpClassificationProvider {
     public GeminiProvider(URI endpoint, String model, String apiKey, HttpClient http,
                           ProviderAuthorization authorization, Duration timeout) {
         super("gemini", http, authorization, timeout);
-        this.endpoint = java.util.Objects.requireNonNull(endpoint, "endpoint");
+        this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint);
         this.model = requireText(model, "model");
         this.apiKey = requireText(apiKey, "apiKey");
     }
@@ -28,7 +27,7 @@ public final class GeminiProvider extends AbstractHttpClassificationProvider {
         if (input.messages().isEmpty()) return ClassificationResult.uncertain();
         for (int attempt = 0; attempt < 2; attempt++) {
             authorize(input);
-            HttpResponse<String> response = send(request(input));
+            ProviderResponse response = send(request(input));
             validateStatus(response.statusCode(), 0);
             try { return parseClassification(extractText(response.body())); }
             catch (ClassificationProviderException exception) {

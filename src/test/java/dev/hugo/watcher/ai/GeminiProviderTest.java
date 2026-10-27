@@ -92,6 +92,12 @@ class GeminiProviderTest {
         assertEquals(ClassificationProviderException.Kind.TECHNICAL_FAILURE, error.kind());
     }
 
+    @Test void rejectsInsecureRemoteEndpoint() {
+        assertThrows(IllegalArgumentException.class, () -> new GeminiProvider(
+                URI.create("http://api.example.com/v1beta/models"), "test-model", "fake-key",
+                HttpClient.newHttpClient(), allow(), Duration.ofSeconds(2)));
+    }
+
     private GeminiProvider provider(ProviderAuthorization authorization) {
         return provider(authorization, Duration.ofSeconds(2));
     }
@@ -100,7 +106,7 @@ class GeminiProviderTest {
         return new GeminiProvider(endpoint(), "test-model", "fake-key", HttpClient.newHttpClient(), authorization, timeout);
     }
 
-    private URI endpoint() { return URI.create("http://localhost:" + server.getAddress().getPort() + "/v1beta/models"); }
+    private URI endpoint() { return URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1beta/models"); }
     private static ProviderAuthorization allow() { return (name, input) -> true; }
 
     private static HttpServer server(com.sun.net.httpserver.HttpHandler handler) throws Exception {

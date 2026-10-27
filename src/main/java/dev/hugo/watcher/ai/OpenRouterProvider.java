@@ -5,7 +5,6 @@ import tools.jackson.core.JacksonException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +17,7 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
     public OpenRouterProvider(URI endpoint, String model, String apiKey, HttpClient http,
                               ProviderAuthorization authorization, Duration timeout) {
         super("openrouter", http, authorization, timeout);
-        this.endpoint = java.util.Objects.requireNonNull(endpoint, "endpoint");
+        this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint);
         this.model = requireText(model, "model");
         this.apiKey = requireText(apiKey, "apiKey");
     }
@@ -27,7 +26,7 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
         java.util.Objects.requireNonNull(input, "input");
         if (input.messages().isEmpty()) return ClassificationResult.uncertain();
         authorize(input);
-        HttpResponse<String> response = send(request(input));
+        ProviderResponse response = send(request(input));
         validateStatus(response.statusCode(), 404);
         return parseClassification(extractText(response.body()));
     }

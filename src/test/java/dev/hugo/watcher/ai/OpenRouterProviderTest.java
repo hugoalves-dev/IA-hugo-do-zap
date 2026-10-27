@@ -81,12 +81,27 @@ class OpenRouterProviderTest {
         assertEquals(0, requests.get());
     }
 
+    @Test void rejectsInsecureRemoteEndpoint() {
+        assertThrows(IllegalArgumentException.class, () -> new OpenRouterProvider(
+                URI.create("http://api.example.com/api/v1/chat/completions"), "test/model", "fake-key",
+                HttpClient.newHttpClient(), allow(), Duration.ofSeconds(2)));
+    }
+
+    @Test void oversizedResponseFailsClosedAtBodyLimit() throws Exception {
+        server = server(exchange -> reply(exchange, 200, "x".repeat(1024 * 1024)));
+
+        var error = assertThrows(ClassificationProviderException.class,
+                () -> provider(allow()).classify(new ClassificationInput(List.of("hello"))));
+
+        assertEquals("RESPONSE_TOO_LARGE", error.kind().name());
+    }
+
     private OpenRouterProvider provider(ProviderAuthorization authorization) {
         return new OpenRouterProvider(endpoint(), "test/model", "fake-key", HttpClient.newHttpClient(),
                 authorization, Duration.ofSeconds(2));
     }
 
-    private URI endpoint() { return URI.create("http://localhost:" + server.getAddress().getPort() + "/api/v1/chat/completions"); }
+    private URI endpoint() { return URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/api/v1/chat/completions"); }
     private static ProviderAuthorization allow() { return (name, input) -> true; }
 
     private static HttpServer server(com.sun.net.httpserver.HttpHandler handler) throws Exception {

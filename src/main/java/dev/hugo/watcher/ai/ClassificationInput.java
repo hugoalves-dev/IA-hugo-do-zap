@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** Minimal, identifier-free text passed to a classification provider. */
+/** Bounded and deterministically minimized text passed to a classification provider. */
 public record ClassificationInput(List<String> messages) {
     public static final int MAX_MESSAGES = 5;
     public static final int MAX_CHARS_PER_MESSAGE = 1_000;
@@ -17,6 +17,7 @@ public record ClassificationInput(List<String> messages) {
         messages = messages.stream().filter(java.util.Objects::nonNull)
                 .map(String::strip).filter(text -> !text.isEmpty())
                 .limit(MAX_MESSAGES)
+                .map(ClassificationInputMinimizer::minimize)
                 .map(text -> text.length() > MAX_CHARS_PER_MESSAGE ? text.substring(0, MAX_CHARS_PER_MESSAGE) : text)
                 .toList();
     }
