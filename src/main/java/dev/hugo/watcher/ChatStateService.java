@@ -17,11 +17,13 @@ public class ChatStateService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final IdentityService identities;
+    private final ArchiveModeService archiveModes;
 
-    public ChatStateService(JdbcTemplate jdbc, PlatformTransactionManager manager) {
+    public ChatStateService(JdbcTemplate jdbc, PlatformTransactionManager manager, ArchiveModeService archiveModes) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.identities = new IdentityService(jdbc, manager);
+        this.archiveModes = archiveModes;
     }
 
     public ApplyResult apply(ChatUpdate update) {
@@ -73,7 +75,7 @@ public class ChatStateService {
                 jdbc.update("update chat_snapshot set display_name=? where chat_jid=?",
                         resolvedName.equals(canonical) ? null : resolvedName, canonical);
             }
-            if (!update.archived().orElseThrow()) {
+            if (!archiveModes.getMode().accepts(update.archived().orElseThrow(), update.synchronizedSnapshot())) {
                 jdbc.update("delete from pending_notification where chat_jid = ?", canonical);
             }
             return ApplyResult.APPLIED;

@@ -27,6 +27,7 @@ class ChatStateServiceTest {
 
     private JdbcTemplate jdbc;
     private ChatStateService chats;
+    private ArchiveModeService archiveModes;
 
     @BeforeEach void migrateAndReset() {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
@@ -38,7 +39,10 @@ class ChatStateServiceTest {
         jdbc.update("delete from contact_identity");
         jdbc.update("delete from chat_snapshot");
         jdbc.update("delete from identity_aliases");
-        chats = new ChatStateService(jdbc, new DataSourceTransactionManager(dataSource));
+        var manager = new DataSourceTransactionManager(dataSource);
+        archiveModes = new ArchiveModeService(jdbc, manager);
+        archiveModes.setMode(ArchiveMode.ALL);
+        chats = new ChatStateService(jdbc, manager, archiveModes);
     }
 
     @Test void unknownArchiveStateIsQuarantinedAndCannotBootstrapAChat() {
@@ -101,6 +105,7 @@ class ChatStateServiceTest {
 
     @Test void unarchiveClearsPendingNotificationsAtomically() {
         String jid = "5511999999999@s.whatsapp.net";
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
         chats.apply(update(jid, true, "2026-10-26T10:00:00Z", "archive"));
         assertEquals("CHAT", jdbc.queryForObject("select display_name_source from contact_identity where canonical_jid=?", String.class, jid));
         jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{}'::jsonb, now())", jid);
@@ -108,6 +113,25 @@ class ChatStateServiceTest {
         chats.apply(update(jid, false, "2026-10-26T10:01:00Z", "unarchive"));
 
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
+    @Test void allModeRetainsPendingWhenChatBecomesUnarchived() {
+        String jid = "5511888888887@s.whatsapp.net";
+        chats.apply(update(jid, true, "2026-10-26T10:00:00Z", "archive-all"));
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{}'::jsonb, now())", jid);
+
+        chats.apply(update(jid, false, "2026-10-26T10:01:00Z", "unarchive-all"));
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
+    @Test void readSignalCannotClearPendingWhenArchiveStateIsUnknown() {
+        String jid = "5511888888886@s.whatsapp.net";
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,is_group,synchronized_snapshot) values (?,null,now(),false,false)", jid);
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{\"lastMessageAt\":\"2026-10-26T10:00:00Z\"}'::jsonb, now())", jid);
+
+        assertEquals(0, chats.clearRead(jid, Instant.parse("2026-10-26T10:01:00Z"), Optional.of(0), Optional.empty(), Optional.empty()));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
     }
 
     @Test void readEventClearsPendingQueueByChat() {

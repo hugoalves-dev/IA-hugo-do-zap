@@ -41,17 +41,19 @@ public class NotificationService {
     private final N8nClient n8n;
     private final WatcherProperties properties;
     private final Clock clock;
+    private final ArchiveModeService archiveModes;
     private final AtomicBoolean flushing = new AtomicBoolean();
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                NotificationOutboxRepository outbox, N8nClient n8n,
-                               WatcherProperties properties, Clock clock) {
+                               WatcherProperties properties, Clock clock, ArchiveModeService archiveModes) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.outbox = outbox;
         this.n8n = n8n;
         this.properties = properties;
         this.clock = clock;
+        this.archiveModes = archiveModes;
     }
 
     public void flush(Instant now) {
@@ -212,26 +214,27 @@ public class NotificationService {
         String snapshotJson = writeJson(snapshots);
         Map<String, Object> stablePayload = new LinkedHashMap<>(payload);
         stablePayload.remove("generatedAt");
-        outbox.enqueue(ARCHIVED_MESSAGES + ":" + sha256(snapshotJson + "\n" + writeJson(stablePayload)), ARCHIVED_MESSAGES,
+        outbox.enqueue(ARCHIVED_MESSAGES + ":" + sha256(archiveModes.getMode().name() + "\n" + snapshotJson
+                        + "\n" + writeJson(stablePayload) + "\n" + now), ARCHIVED_MESSAGES,
                 payloadJson, snapshotJson, now, sensitiveExpiry);
         LOG.log(System.Logger.Level.INFO, "Archived notification queued: chats={0}, messages={1}",
                 chats.size(), chats.stream().mapToInt(LegacyChat::messageCount).sum());
     }
 
     private List<PendingRow> readPending(Instant now) {
-        return jdbc.query("""
+        List<PendingRow> rows = jdbc.query("""
                 select p.chat_jid, p.generation::text as pending_generation, p.payload::text as payload, p.updated_at, p.expires_at,
-                       s.display_name as chat_name, s.is_group,
+                       s.archived, coalesce(s.synchronized_snapshot, false) as synchronized_snapshot,
+                       s.display_name as chat_name, coalesce(s.is_group, p.chat_jid like '%@g.us') as is_group,
                        coalesce(alias.canonical_identity, p.chat_jid) as canonical_jid,
                        identity.display_name as identity_name, identity.phone_jid,
                        identity.lid_jid, identity.username
                 from pending_notification p
-                join chat_snapshot s on s.chat_jid=p.chat_jid
+                left join chat_snapshot s on s.chat_jid=p.chat_jid
                 left join identity_aliases alias on alias.alias=p.chat_jid
                 left join contact_identity identity
                     on identity.canonical_jid=coalesce(alias.canonical_identity, p.chat_jid)
-                where s.archived is true and s.synchronized_snapshot is true
-                  and p.due_at <= ? and p.expires_at > ?
+                where p.due_at <= ? and p.expires_at > ?
                 order by p.due_at,p.chat_jid
                 """, (rs, rowNum) -> {
             String payloadText = rs.getString("payload");
@@ -253,8 +256,11 @@ public class NotificationService {
                     rs.getString("chat_name"), rs.getString("identity_name"), rs.getBoolean("is_group"),
                     phoneJid, lidJid, username, integer(payload.get("messageCount")),
                     first, last, preview, previewExpiry, rs.getTimestamp("updated_at").toInstant(),
-                    rs.getTimestamp("expires_at").toInstant(), rs.getString("pending_generation"));
+                rs.getTimestamp("expires_at").toInstant(), rs.getString("pending_generation"),
+                (Boolean) rs.getObject("archived"), rs.getBoolean("synchronized_snapshot"));
         }, Timestamp.from(now), Timestamp.from(now));
+        ArchiveMode mode = archiveModes.getMode();
+        return rows.stream().filter(row -> mode.accepts(row.archived(), row.synchronizedSnapshot())).toList();
     }
 
     private LegacyChat toLegacyChat(PendingRow row, String displayName, String policy, ZoneId zone, Instant now) {
@@ -393,7 +399,8 @@ public class NotificationService {
     private record PendingRow(String chatJid, String canonicalJid, String chatName, String identityName,
                               boolean group, String phoneJid, String lidJid, String username, int messageCount,
                               Instant firstMessageAt, Instant lastMessageAt, String preview, Instant previewExpiry,
-                              Instant updatedAt, Instant expiresAt, String generation) { }
+                              Instant updatedAt, Instant expiresAt, String generation, Boolean archived,
+                              boolean synchronizedSnapshot) { }
     private record ConnectionState(String connectionState, long generation) { }
     private record LegacyChat(int messageCount, Map<String, Object> payload) { }
 }

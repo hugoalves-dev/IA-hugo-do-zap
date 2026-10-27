@@ -133,10 +133,22 @@ public class NotificationOutboxRepository {
                 rs.getTimestamp("updated_at").toInstant(), rs.getString("pending_generation")), snapshotJson);
         for (PendingSnapshot snapshot : snapshots) {
             jdbc.update("""
-                    delete from pending_notification p using chat_snapshot c
-                    where p.chat_jid=? and c.chat_jid=p.chat_jid and c.archived is true
+                    delete from pending_notification p
+                    where p.chat_jid=?
                       and p.payload->>'messageCount'=? and p.payload->>'firstMessageAt'=?
                       and p.payload->>'lastMessageAt'=? and p.updated_at=? and p.generation=?::uuid
+                      and exists (
+                          select 1 from archive_monitor_settings settings
+                          where settings.singleton_id=1 and (
+                              settings.mode='ALL'
+                              or exists (
+                                  select 1 from chat_snapshot c
+                                  where c.chat_jid=p.chat_jid and c.synchronized_snapshot is true
+                                    and ((settings.mode='ARCHIVED_ONLY' and c.archived is true)
+                                      or (settings.mode='UNARCHIVED_ONLY' and c.archived is false))
+                              )
+                          )
+                      )
                     """, snapshot.chatJid(), Integer.toString(snapshot.messageCount()), snapshot.firstMessageAt(),
                     snapshot.lastMessageAt(), Timestamp.from(snapshot.updatedAt()), snapshot.generation());
         }

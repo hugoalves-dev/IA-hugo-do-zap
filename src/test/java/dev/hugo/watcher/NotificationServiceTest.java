@@ -41,6 +41,7 @@ class NotificationServiceTest {
     private WatcherProperties properties;
     private NotificationService notifications;
     private NotificationOutboxRepository outbox;
+    private ArchiveModeService archiveModes;
     private HttpServer server;
     private final AtomicReference<Integer> responseStatus = new AtomicReference<>(200);
     private final AtomicInteger requestCount = new AtomicInteger();
@@ -77,9 +78,12 @@ class NotificationServiceTest {
         properties.setN8nSecret("fixture-secret");
         clock = new MutableClock(NOW);
         manager = new DataSourceTransactionManager(dataSource);
+        archiveModes = new ArchiveModeService(jdbc, manager);
+        archiveModes.setMode(ArchiveMode.ALL);
         outbox = new NotificationOutboxRepository(jdbc, manager);
         var client = new N8nClient(properties, HttpClient.newHttpClient(), Duration.ofSeconds(2), List.of(Duration.ZERO, Duration.ZERO));
-        notifications = new NotificationService(jdbc, manager, outbox, client, properties, clock);
+        notifications = new NotificationService(jdbc, manager, outbox, client, properties, clock,
+                archiveModes);
     }
 
     @AfterEach void stopServer() { if (server != null) server.stop(0); }
@@ -224,6 +228,7 @@ class NotificationServiceTest {
     }
 
     @Test void filtersUnarchivedChatsAndKeepsConcurrentPendingSnapshotsOnRetry() throws Exception {
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
         String unarchived = "5511333333333@s.whatsapp.net";
         String concurrentlyUpdated = "5511222222222@s.whatsapp.net";
         responseStatus.set(503);
@@ -256,6 +261,7 @@ class NotificationServiceTest {
     }
 
     @Test void internalRetryFiltersUnarchivedChatAndAcknowledgesOnlyDeliveredSnapshot() throws Exception {
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
         String removed = "5511000000001@s.whatsapp.net";
         String eligible = "5511000000002@s.whatsapp.net";
         seed(removed, "Antigo", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);
@@ -272,6 +278,44 @@ class NotificationServiceTest {
         assertEquals(1, payload.get("totalChats").intValue());
         assertEquals(eligible, payload.get("chats").get(0).get("jid").stringValue());
         assertEquals(List.of(removed), jdbc.queryForList("select chat_jid from pending_notification", String.class));
+    }
+
+    @Test void unarchivedOnlyModeDeliversOnlySynchronizedUnarchivedChats() throws Exception {
+        String jid = "5511444444444@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", jid);
+        archiveModes.setMode(ArchiveMode.UNARCHIVED_ONLY);
+
+        notifications.flush(NOW);
+
+        assertNotNull(receivedBody.get());
+        assertEquals(jid, JSON.readTree(receivedBody.get()).get("chats").get(0).get("jid").stringValue());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void modeChangeSuppressesRetryAndAllModeCanReleasePendingForUnknownArchiveState() throws Exception {
+        String jid = "5511555555555@s.whatsapp.net";
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        seed(jid, "Contato", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+
+        jdbc.update("update chat_snapshot set archived=null,synchronized_snapshot=false where chat_jid=?", jid);
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(20));
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
+
+        assertEquals(3, requestCount.get(), "filtered retry must not issue another HTTP request");
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+
+        archiveModes.setMode(ArchiveMode.ALL);
+        notifications.flush(clock.instant());
+        assertEquals(4, requestCount.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
     }
 
     @Test void internalRetryStopsWhenWorkWindowEndsAndPreservesDeferredPending() {
@@ -336,7 +380,7 @@ class NotificationServiceTest {
         seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "old sensitive preview", NOW);
         requestHook.set(ignored -> {
             if (requestCount.get() == 1) {
-                new ChatStateService(jdbc, manager).clearRead(jid, NOW, java.util.Optional.of(0), java.util.Optional.empty(), java.util.Optional.empty());
+                new ChatStateService(jdbc, manager, new ArchiveModeService(jdbc, manager)).clearRead(jid, NOW, java.util.Optional.of(0), java.util.Optional.empty(), java.util.Optional.empty());
                 jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
                         jid, "{\"messageCount\":1,\"firstMessageAt\":\"2026-10-26T11:00:01Z\",\"lastMessageAt\":\"2026-10-26T11:00:01Z\",\"preview\":\"new preview\"}",
                         java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW.plusSeconds(86400)));

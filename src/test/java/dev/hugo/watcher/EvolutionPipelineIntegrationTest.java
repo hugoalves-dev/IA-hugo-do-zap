@@ -66,6 +66,7 @@ class EvolutionPipelineIntegrationTest {
         registry.add("watcher.evolution.webhook-token", () -> TOKEN);
         registry.add("watcher.evolution.instance", () -> "pipeline-test");
         registry.add("watcher.evolution.max-body-bytes", () -> "4096");
+        registry.add("watcher.archive-mode.api-token", () -> "archive-mode-test-token");
     }
 
     @Autowired JdbcTemplate jdbc;
@@ -79,9 +80,11 @@ class EvolutionPipelineIntegrationTest {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired IdentityService identities;
     @Autowired WatcherProperties watcherProperties;
+    @Autowired ArchiveModeService archiveModes;
     @LocalServerPort int port;
 
     @BeforeEach void resetLocalState() {
+        archiveModes.setMode(ArchiveMode.ALL);
         jdbc.execute("truncate table outbox_actions, pending_notification, processed_message, quarantined_events, processing_jobs, inbox_events, chat_snapshot, contact_identity, identity_aliases restart identity cascade");
         N8N.reset(200);
     }
@@ -122,7 +125,7 @@ class EvolutionPipelineIntegrationTest {
         assertTrue(N8N.lastBody().contains("Olá"));
     }
 
-    @Test void retriesDatabaseFailureAndQuarantinesMessageWhenArchiveSnapshotIsUnknown() throws Exception {
+    @Test void allModeAcceptsUnknownArchiveStateButFilteredModeQuarantinesIt() throws Exception {
         String jid = "5511888888888@s.whatsapp.net";
         assertEquals(202, post(event("unclassified", jid, "Tipo ausente").replace("\"type\":\"notify\",", "")).statusCode());
         jobs.processAvailable();
@@ -130,8 +133,13 @@ class EvolutionPipelineIntegrationTest {
 
         assertEquals(202, post(event("unknown-state", jid, "Sem snapshot")).statusCode());
         jobs.processAvailable();
+        assertEquals(0, jdbc.queryForObject("select count(*) from quarantined_events where reason='archive_state_unknown_or_unsynchronized'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        assertEquals(202, post(event("unknown-state-filtered", "5511666666666@s.whatsapp.net", "Filtrado")).statusCode());
+        jobs.processAvailable();
         assertEquals(1, jdbc.queryForObject("select count(*) from quarantined_events where reason='archive_state_unknown_or_unsynchronized'", Integer.class));
-        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
 
         String retryJid = "5511777777777@s.whatsapp.net";
         chatStates.apply(new ChatUpdate(retryJid, Optional.of(true), Instant.now().minusSeconds(60), true, true,
@@ -149,6 +157,19 @@ class EvolutionPipelineIntegrationTest {
         jdbc.update("update processing_jobs set available_at=now()-interval '1 second' where inbox_event_id=(select id from inbox_events where external_id='database-retry')");
         jobs.processAvailable();
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, retryJid));
+    }
+
+    @Test void archiveModeApiRequiresDedicatedBearerAndChangesPersistedMode() throws Exception {
+        var unauthorized = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/internal/archive-mode"))
+                .GET().build();
+        assertEquals(401, HttpClient.newHttpClient().send(unauthorized, HttpResponse.BodyHandlers.ofString()).statusCode());
+
+        var update = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/internal/archive-mode"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer archive-mode-test-token")
+                .PUT(HttpRequest.BodyPublishers.ofString("{\"mode\":\"UNARCHIVED_ONLY\"}")).build();
+        assertEquals(200, HttpClient.newHttpClient().send(update, HttpResponse.BodyHandlers.ofString()).statusCode());
+        assertEquals(ArchiveMode.UNARCHIVED_ONLY, archiveModes.getMode());
     }
 
     @Test void concurrentWorkersClaimOnlyOneJobAtATimeInsteadOfLeasingABatch() throws Exception {
@@ -327,7 +348,7 @@ class EvolutionPipelineIntegrationTest {
     }
 
     private MessageService pausedMessageService(CountDownLatch entered, CountDownLatch proceed) {
-        return new MessageService(jdbc, transactionManager, identities, watcherProperties) {
+        return new MessageService(jdbc, transactionManager, identities, watcherProperties, archiveModes) {
             @Override public Acceptance accept(IncomingMessage message) {
                 entered.countDown();
                 try {

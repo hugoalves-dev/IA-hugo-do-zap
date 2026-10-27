@@ -25,6 +25,7 @@ class MessageServiceTest {
     private ChatStateService chats;
     private MessageService messages;
     private IdentityService identities;
+    private ArchiveModeService archiveModes;
     private WatcherProperties properties;
 
     @BeforeEach void migrateAndReset() {
@@ -38,18 +39,42 @@ class MessageServiceTest {
         jdbc.update("delete from contact_identity");
         jdbc.update("delete from identity_aliases");
         var manager = new DataSourceTransactionManager(dataSource);
-        chats = new ChatStateService(jdbc, manager);
+        archiveModes = new ArchiveModeService(jdbc, manager);
+        archiveModes.setMode(ArchiveMode.ALL);
+        chats = new ChatStateService(jdbc, manager, archiveModes);
         properties = new WatcherProperties();
         identities = new IdentityService(jdbc, manager);
-        messages = new MessageService(jdbc, manager, identities, properties);
+        messages = new MessageService(jdbc, manager, identities, properties, archiveModes);
     }
 
-    @Test void unknownOrUnsynchronizedArchiveStateCannotCreatePendingNotification() {
+    @Test void allModeAcceptsUnknownArchiveStateAndDeduplicatesMessage() {
         var result = messages.accept(message("m-unknown", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi")));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, result);
+        assertEquals(MessageService.Acceptance.DUPLICATE, messages.accept(message("m-unknown", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi"))));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+    }
+
+    @Test void filteredModeRejectsUnknownOrUnsynchronizedArchiveState() {
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        var result = messages.accept(message("m-unknown-filtered", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi")));
 
         assertEquals(MessageService.Acceptance.QUARANTINED, result);
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
-        assertEquals(1, jdbc.queryForObject("select count(*) from quarantined_events where source_event_id='m-unknown'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from quarantined_events where source_event_id='m-unknown-filtered'", Integer.class));
+    }
+
+    @Test void unarchivedOnlyAcceptsOnlySynchronizedUnarchivedChats() {
+        archiveModes.setMode(ArchiveMode.UNARCHIVED_ONLY);
+        chats.apply(new ChatUpdate("5511999999998@s.whatsapp.net", Optional.of(false), Instant.parse("2026-10-26T09:00:00Z"),
+                true, true, Optional.of("snapshot-unarchived"), Optional.of("Contato"), false, Map.of()));
+        chats.apply(new ChatUpdate("5511999999997@s.whatsapp.net", Optional.of(true), Instant.parse("2026-10-26T09:00:00Z"),
+                true, true, Optional.of("snapshot-archived"), Optional.of("Contato"), false, Map.of()));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, messages.accept(message("m-unarchived", "5511999999998@s.whatsapp.net", Map.of("conversation", "Oi"))));
+        assertEquals(MessageService.Acceptance.IGNORED, messages.accept(message("m-archived", "5511999999997@s.whatsapp.net", Map.of("conversation", "Oi"))));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
     }
 
     @Test void rejectsMissingExternalMessageIdWithoutFabricatingOne() {

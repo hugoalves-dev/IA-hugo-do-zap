@@ -30,13 +30,15 @@ public class MessageService {
     private final TransactionTemplate transactions;
     private final IdentityService identities;
     private final WatcherProperties properties;
+    private final ArchiveModeService archiveModes;
 
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
-                          IdentityService identities, WatcherProperties properties) {
+                          IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.identities = identities;
         this.properties = properties;
+        this.archiveModes = archiveModes;
     }
 
     public Acceptance accept(IncomingMessage message) {
@@ -79,12 +81,17 @@ public class MessageService {
                 """, (rs, row) -> new ChatSnapshot((Boolean) rs.getObject("archived"),
                 rs.getBoolean("synchronized_snapshot"), rs.getString("display_name"), rs.getBoolean("is_group"),
                 rs.getTimestamp("last_read_at") == null ? null : rs.getTimestamp("last_read_at").toInstant()), canonicalJid);
-        if (snapshots.isEmpty() || snapshots.getFirst().archived() == null || !snapshots.getFirst().synchronizedSnapshot()) {
+        ArchiveMode archiveMode = archiveModes.getMode();
+        if (snapshots.isEmpty() && archiveMode == ArchiveMode.ALL) {
+            snapshots = List.of(new ChatSnapshot(null, false, null, group, null));
+        }
+        if ((snapshots.isEmpty() || snapshots.getFirst().archived() == null || !snapshots.getFirst().synchronizedSnapshot())
+                && archiveMode != ArchiveMode.ALL) {
             quarantine("MESSAGE", externalId, "archive_state_unknown_or_unsynchronized", now);
             return Acceptance.QUARANTINED;
         }
         ChatSnapshot chat = snapshots.getFirst();
-        if (!chat.archived()) return Acceptance.IGNORED;
+        if (!archiveMode.accepts(chat.archived(), chat.synchronizedSnapshot())) return Acceptance.IGNORED;
         if (chat.group() && isBlockedGroup(chat.displayName())) {
             jdbc.update("delete from pending_notification where chat_jid=?", canonicalJid);
             return Acceptance.IGNORED;
