@@ -52,4 +52,29 @@ class DatabaseMigrationTest {
             assertEquals(false, result.next());
         }
     }
+
+    @Test void upgradesV12WithoutChangingScopeOrTelegramSettingsAndSeedsLegacyProfiles() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_policy").defaultSchema("upgrade_policy")
+                .target("12").load().migrate();
+        jdbc.update("update upgrade_policy.archive_monitor_settings set mode='ARCHIVED_ONLY' where singleton_id=1");
+        var telegramNextAllowed = java.sql.Timestamp.from(java.time.Instant.parse("2026-10-27T15:00:00Z"));
+        jdbc.update("update upgrade_policy.telegram_delivery_rate_limit set next_allowed_at=? where singleton_id=1", telegramNextAllowed);
+
+        Flyway.configure().dataSource(source).schemas("upgrade_policy").defaultSchema("upgrade_policy")
+                .load().migrate();
+
+        assertEquals("ARCHIVED_ONLY", jdbc.queryForObject(
+                "select mode from upgrade_policy.archive_monitor_settings where singleton_id=1", String.class));
+        assertEquals(telegramNextAllowed, jdbc.queryForObject(
+                "select next_allowed_at from upgrade_policy.telegram_delivery_rate_limit where singleton_id=1", java.sql.Timestamp.class));
+        assertEquals(2, jdbc.queryForObject("select count(*) from upgrade_policy.policy_profiles", Integer.class));
+        assertEquals("WORK_WINDOW", jdbc.queryForObject(
+                "select fields->>'mode' from upgrade_policy.policy_profiles where profile_name='WORK_ONLY'", String.class));
+        assertEquals("ANYTIME", jdbc.queryForObject(
+                "select fields->>'mode' from upgrade_policy.policy_profiles where profile_name='ANYTIME'", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_policy.holiday_calendar", Integer.class));
+    }
 }
