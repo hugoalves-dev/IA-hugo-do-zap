@@ -2,10 +2,12 @@ package dev.hugo.watcher.simulation;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.time.Clock;
 
 @Component
+@ConditionalOnProperty(prefix = "watcher.simulation", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class SimulationScheduler {
     private final DebounceService debounce;
     private final SimulationService simulations;

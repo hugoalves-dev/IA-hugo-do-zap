@@ -1,7 +1,9 @@
 package dev.hugo.watcher;
 
-import org.springframework.jdbc.core.JdbcTemplate;
+import dev.hugo.watcher.simulation.DebounceService;
+import dev.hugo.watcher.simulation.WatcherSimulationProperties;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -19,7 +21,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
-import dev.hugo.watcher.simulation.DebounceService;
 
 @Service
 public class MessageService {
@@ -34,22 +35,30 @@ public class MessageService {
     private final WatcherProperties properties;
     private final ArchiveModeService archiveModes;
     private final DebounceService debounce;
+    private final WatcherSimulationProperties simulationProperties;
 
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                           IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes) {
-        this(jdbc, manager, identities, properties, archiveModes, null);
+        this(jdbc, manager, identities, properties, archiveModes, null, new WatcherSimulationProperties());
+    }
+
+    public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                          IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
+                          DebounceService debounce) {
+        this(jdbc, manager, identities, properties, archiveModes, debounce, new WatcherSimulationProperties());
     }
 
     @Autowired
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                           IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
-                          DebounceService debounce) {
+                          DebounceService debounce, WatcherSimulationProperties simulationProperties) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.identities = identities;
         this.properties = properties;
         this.archiveModes = archiveModes;
         this.debounce = debounce;
+        this.simulationProperties = simulationProperties;
     }
 
     public Acceptance accept(IncomingMessage message) {
@@ -152,7 +161,7 @@ public class MessageService {
                     expires_at=excluded.expires_at
                 """, canonicalJid, toJson(payload), Timestamp.from(lastAt), Timestamp.from(now),
                 Timestamp.from(expiresAt));
-        if (debounce != null && (!group || !participant.isBlank())) {
+        if (debounce != null && simulationProperties.isEnabled() && (!group || !participant.isBlank())) {
             IncomingMessage snapshot = new IncomingMessage(message.externalId(), canonicalJid,
                     group ? Optional.of(participant) : Optional.empty(), Optional.empty(), Optional.empty(),
                     message.fromMe(), message.upsertType(), message.history(), message.content(), receivedAt);

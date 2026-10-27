@@ -14,6 +14,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -27,6 +31,8 @@ class DebounceServiceTest {
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(source);
         Flyway.configure().dataSource(source).load().migrate();
+        jdbc.execute("drop trigger if exists pause_simulation_batch_insert on simulation_batches");
+        jdbc.execute("drop function if exists pause_simulation_batch_insert()");
         jdbc.update("delete from simulation_decisions");
         jdbc.update("delete from simulation_batch_messages");
         jdbc.update("delete from simulation_batches");
@@ -65,6 +71,59 @@ class DebounceServiceTest {
         service.enqueue(at("third", "chat@s.whatsapp.net", null, start.plusSeconds(3).toString()), start.plusSeconds(3));
         assertEquals(3, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
         assertEquals(1, service.claimReady(start.plusSeconds(2)).size());
+    }
+
+    @Test void concurrentEnqueueForSameChatAndParticipantJoinsOneOpenBatch() throws Exception {
+        pauseBatchInserts();
+        Instant now = Instant.parse("2026-10-27T10:00:00Z");
+        var service = new DebounceService(jdbc, limits);
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            var start = new CountDownLatch(1);
+            Future<Throwable> first = pool.submit(() -> enqueueAfter(start, service, at("parallel-1", "group@g.us", "alice", now.toString()), now));
+            Future<Throwable> second = pool.submit(() -> enqueueAfter(start, service, at("parallel-2", "group@g.us", "alice", now.toString()), now));
+            start.countDown();
+            assertNull(first.get());
+            assertNull(second.get());
+        }
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batches where status='OPEN'", Integer.class));
+        assertEquals(2, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+    }
+
+    @Test void concurrentDifferentChatsCannotExceedGlobalPendingCapacity() throws Exception {
+        limits.setMaxPendingBatches(1);
+        pauseBatchInserts();
+        Instant now = Instant.parse("2026-10-27T10:00:00Z");
+        var service = new DebounceService(jdbc, limits);
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            var start = new CountDownLatch(1);
+            Future<Throwable> first = pool.submit(() -> enqueueAfter(start, service, at("capacity-1", "one@s.whatsapp.net", null, now.toString()), now));
+            Future<Throwable> second = pool.submit(() -> enqueueAfter(start, service, at("capacity-2", "two@s.whatsapp.net", null, now.toString()), now));
+            start.countDown();
+            Throwable firstResult = first.get();
+            Throwable secondResult = second.get();
+            int successes = (firstResult == null ? 1 : 0) + (secondResult == null ? 1 : 0);
+            assertEquals(1, successes);
+            Throwable rejected = firstResult == null ? secondResult : firstResult;
+            assertInstanceOf(IllegalStateException.class, rejected);
+            assertEquals("simulation batch capacity reached", rejected.getMessage());
+        }
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batches where status in ('OPEN','READY','CLAIMED')", Integer.class));
+    }
+
+    private void pauseBatchInserts() {
+        jdbc.execute("""
+                create function pause_simulation_batch_insert() returns trigger language plpgsql as $$
+                begin perform pg_sleep(0.4); return new; end $$
+                """);
+        jdbc.execute("create trigger pause_simulation_batch_insert before insert on simulation_batches for each row execute function pause_simulation_batch_insert()");
+    }
+
+    private static Throwable enqueueAfter(CountDownLatch start, DebounceService service, IncomingMessage message, Instant now) {
+        try {
+            start.await();
+            service.enqueue(message, now);
+            return null;
+        } catch (Exception error) { return error; }
     }
 
     private static IncomingMessage at(String id, String chat, String participant, String at) {

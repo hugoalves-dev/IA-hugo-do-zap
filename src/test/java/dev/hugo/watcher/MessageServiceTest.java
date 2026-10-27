@@ -72,6 +72,18 @@ class MessageServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
     }
 
+    @Test void disabledSimulationDoesNotQueueAcceptedMessages() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var simulationProperties = new dev.hugo.watcher.simulation.WatcherSimulationProperties();
+        simulationProperties.setEnabled(false);
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc, simulationProperties, manager), simulationProperties);
+
+        assertEquals(MessageService.Acceptance.ACCEPTED,
+                integrated.accept(message("shadow-disabled", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi"))));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+    }
+
     @Test void filteredModeRejectsUnknownOrUnsynchronizedArchiveState() {
         archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
         var result = messages.accept(message("m-unknown-filtered", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi")));

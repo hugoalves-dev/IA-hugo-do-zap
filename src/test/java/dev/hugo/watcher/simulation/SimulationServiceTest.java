@@ -91,6 +91,19 @@ class SimulationServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from simulation_batches where batch_id=?", Integer.class, batch.id()));
     }
 
+    @Test void repeatedEvaluationReturnsThePersistedDecisionAfterScopeChanges() {
+        Batch batch = enqueueAndClaim("idempotent@s.whatsapp.net");
+        SimulationDecision first = simulations.evaluate(batch);
+        jdbc.update("update archive_monitor_settings set mode='ARCHIVED_ONLY' where singleton_id=1");
+
+        SimulationDecision repeated = simulations.evaluate(batch);
+
+        assertEquals(first, repeated);
+        assertNull(repeated.blockedReason());
+        assertEquals("decision_engine_pending_task_3", repeated.decisionReason());
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_decisions where batch_id=?", Integer.class, batch.id()));
+    }
+
     private Batch enqueueAndClaim(String chat) {
         Instant now = Instant.parse("2026-10-27T10:00:00Z");
         IncomingMessage message = new IncomingMessage(Optional.of(UUID.randomUUID().toString()), chat, Optional.empty(),

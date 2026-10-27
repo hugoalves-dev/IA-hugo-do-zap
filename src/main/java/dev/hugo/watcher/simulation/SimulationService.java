@@ -8,8 +8,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
-import java.time.Instant;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -60,8 +60,14 @@ public class SimulationService {
                 values (?,?,?,?,?,?,?,?) on conflict (batch_id) do nothing
                 """, batch.id(), decision.wouldAlert(), decision.wouldReply(), decision.templateId(), decision.decisionReason(),
                 decision.blockedReason(), Timestamp.from(now), Timestamp.from(now.plusSeconds(properties.getAuditRetentionDays() * 86_400L)));
+        List<SimulationDecision> persisted = jdbc.query("""
+                select would_alert,would_reply,template_id,decision_reason,blocked_reason
+                  from simulation_decisions where batch_id=?
+                """, (rs, row) -> new SimulationDecision(rs.getBoolean("would_alert"), rs.getBoolean("would_reply"),
+                rs.getString("template_id"), rs.getString("decision_reason"), rs.getString("blocked_reason")), batch.id());
+        if (persisted.isEmpty()) throw new IllegalStateException("simulation decision was not persisted");
         jdbc.update("update simulation_batches set status='COMPLETED', claimed_at=null where batch_id=? and status='CLAIMED'", batch.id());
-        return decision;
+        return persisted.getFirst();
     }
 
     private static String blockedReason(Scope scope) {

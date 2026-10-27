@@ -1,8 +1,9 @@
 package dev.hugo.watcher.simulation;
 
 import dev.hugo.watcher.IncomingMessage;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -45,6 +46,7 @@ public class DebounceService {
     private void enqueueTransaction(IncomingMessage message, Instant at) {
         String chat = message.chatJid();
         String participant = message.participantJid().orElse("");
+        lockBatch(chat, participant);
         String messageId = message.externalId().orElseThrow(() -> new IllegalArgumentException("external message ID required"));
         Timestamp now = Timestamp.from(at);
         Integer duplicate = jdbc.queryForObject("select count(*) from simulation_batch_messages where chat_jid=? and participant_jid=? and external_id=?", Integer.class,
@@ -55,27 +57,13 @@ public class DebounceService {
                 (rs, row) -> rs.getObject(1, UUID.class), chat, participant);
         UUID id;
         if (open.isEmpty()) {
-            Integer active = jdbc.queryForObject("select count(*) from simulation_batches where status in ('OPEN','READY','CLAIMED')", Integer.class);
-            if (active != null && active >= limits.getMaxPendingBatches()) throw new IllegalStateException("simulation batch capacity reached");
-            id = UUID.randomUUID();
-            jdbc.update("""
-                    insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at)
-                    values (?,?,?,'OPEN',?,?,?,?,?,?)
-                    """, id, chat, participant, now, now, Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())), now,
-                    Timestamp.from(at.plus(Duration.ofDays(limits.getSensitiveRetentionDays()))),
-                    Timestamp.from(at.plus(Duration.ofDays(limits.getAuditRetentionDays()))));
+            id = createBatch(chat, participant, now, Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())));
         } else {
             id = open.getFirst();
             Integer size = jdbc.queryForObject("select count(*) from simulation_batch_messages where batch_id=?", Integer.class, id);
             if (size != null && size >= limits.getMaxMessages()) {
                 jdbc.update("update simulation_batches set status='READY', due_at=? where batch_id=?", now, id);
-                id = UUID.randomUUID();
-                jdbc.update("""
-                        insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at)
-                        values (?,?,?,'OPEN',?,?,?,?,?,?)
-                        """, id, chat, participant, now, now, now, now,
-                        Timestamp.from(at.plus(Duration.ofDays(limits.getSensitiveRetentionDays()))),
-                        Timestamp.from(at.plus(Duration.ofDays(limits.getAuditRetentionDays()))));
+                id = createBatch(chat, participant, now, now);
             } else {
                 jdbc.update("""
                         update simulation_batches set last_message_at=?, due_at=least(first_message_at + (? * interval '1 second'), ?)
@@ -92,6 +80,34 @@ public class DebounceService {
         } catch (Exception ex) {
             throw new IllegalArgumentException("unable to snapshot incoming message", ex);
         }
+    }
+
+    private UUID createBatch(String chat, String participant, Timestamp now, Timestamp dueAt) {
+        jdbc.execute((ConnectionCallback<Void>) connection -> {
+            try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(947221, 1)")) { statement.execute(); }
+            return null;
+        });
+        Integer active = jdbc.queryForObject("select count(*) from simulation_batches where status in ('OPEN','READY','CLAIMED')", Integer.class);
+        if (active != null && active >= limits.getMaxPendingBatches()) throw new IllegalStateException("simulation batch capacity reached");
+        UUID id = UUID.randomUUID();
+        Instant at = now.toInstant();
+        jdbc.update("""
+                insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at)
+                values (?,?,?,'OPEN',?,?,?,?,?,?)
+                """, id, chat, participant, now, now, dueAt, now,
+                Timestamp.from(at.plus(Duration.ofDays(limits.getSensitiveRetentionDays()))),
+                Timestamp.from(at.plus(Duration.ofDays(limits.getAuditRetentionDays()))));
+        return id;
+    }
+
+    private void lockBatch(String chat, String participant) {
+        jdbc.execute((ConnectionCallback<Void>) connection -> {
+            try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))")) {
+                statement.setString(1, chat + "\n" + participant);
+                statement.execute();
+            }
+            return null;
+        });
     }
 
     public List<Batch> claimReady(Instant now) {

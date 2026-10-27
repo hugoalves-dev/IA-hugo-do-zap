@@ -23,3 +23,11 @@
 - RTK instructions were unavailable at `C:\Users\vitor.hugo\.codex-cli-private\RTK.md`.
 - `.idea/` and `target/` are pre-existing untracked workspace content; excluded from this task commit.
 - No full suite, VPS operation, push, or plan 3 work was performed.
+
+## Review follow-up
+
+- RED reproduced concurrent same-key enqueue as a partial unique-index `DuplicateKeyException`; two distinct concurrent chats also exceeded capacity `1`. Transaction-scoped advisory locks now serialize the chat/participant key and reserve global capacity before batch creation.
+- RED confirmed `watcher.simulation.enabled=false` still created the scheduler. The condition now removes the scheduler; the same flag also prevents new queue snapshots while preserving legacy message acceptance. Default remains enabled.
+- RED confirmed reevaluation after archive-mode change returned a result different from the persisted audit. Evaluation now reads back and returns the unique persisted decision.
+- Added deterministic PostgreSQL trigger barriers for concurrent enqueue/capacity tests, plus idempotency and scheduler/ingress disable tests.
+- GREEN: `mvn '-Dtest=DebounceServiceTest,SimulationServiceTest,SimulationSchedulerTest,MessageServiceTest,DatabaseMigrationTest,SpringFlywayStartupTest' test` passed: 32 tests, 0 failures, 0 errors, 0 skipped.
