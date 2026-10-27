@@ -25,10 +25,11 @@ public class SensitiveDataRetentionService {
         Timestamp cutoff = Timestamp.from(now);
         int pending = jdbc.update("delete from pending_notification where expires_at <= ?", cutoff);
         int scrubbedPreviews = scrubExpiredPreviews(now);
+        int outboxPayloads = jdbc.update("delete from outbox_actions where sensitive_expires_at <= ?", cutoff);
         int quarantined = jdbc.update("delete from quarantined_events where sensitive_expires_at <= ?", cutoff);
         int deduplication = jdbc.update("delete from processed_message where processed_at <= ?",
                 Timestamp.from(now.minusSeconds(7 * 86_400L)));
-        return pending + scrubbedPreviews + quarantined + deduplication;
+        return pending + scrubbedPreviews + outboxPayloads + quarantined + deduplication;
     }
 
     private int scrubExpiredPreviews(Instant now) {

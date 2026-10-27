@@ -1,0 +1,183 @@
+package dev.hugo.watcher;
+
+import com.sun.net.httpserver.HttpServer;
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.io.InputStream;
+import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+@Testcontainers(disabledWithoutDocker = true)
+class NotificationServiceTest {
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final Instant NOW = Instant.parse("2026-10-26T11:00:00Z");
+
+    @Container
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+
+    private JdbcTemplate jdbc;
+    private WatcherProperties properties;
+    private NotificationService notifications;
+    private NotificationOutboxRepository outbox;
+    private HttpServer server;
+    private final AtomicReference<Integer> responseStatus = new AtomicReference<>(200);
+    private final AtomicReference<java.util.function.Consumer<String>> requestHook = new AtomicReference<>(ignored -> { });
+    private final AtomicReference<String> receivedBody = new AtomicReference<>();
+
+    @BeforeEach void setup() throws Exception {
+        var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        jdbc = new JdbcTemplate(dataSource);
+        Flyway.configure().dataSource(dataSource).load().migrate();
+        jdbc.update("delete from outbox_actions");
+        jdbc.update("delete from pending_notification");
+        jdbc.update("delete from processed_message");
+        jdbc.update("delete from quarantined_events");
+        jdbc.update("delete from chat_snapshot");
+        jdbc.update("delete from contact_identity");
+        jdbc.update("delete from identity_aliases");
+
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/webhook", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            receivedBody.set(body);
+            requestHook.get().accept(body);
+            int status = responseStatus.get();
+            exchange.sendResponseHeaders(status, -1);
+            exchange.close();
+        });
+        server.start();
+
+        properties = new WatcherProperties();
+        properties.setN8nUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/webhook");
+        properties.setN8nSecret("fixture-secret");
+        var manager = new DataSourceTransactionManager(dataSource);
+        outbox = new NotificationOutboxRepository(jdbc, manager);
+        var client = new N8nClient(properties, HttpClient.newHttpClient(), Duration.ofSeconds(2), List.of(Duration.ZERO, Duration.ZERO));
+        notifications = new NotificationService(jdbc, manager, outbox, client, properties);
+    }
+
+    @AfterEach void stopServer() { if (server != null) server.stop(0); }
+
+    @Test void sendsTheLegacyPayloadShapeInTheConfiguredTimezoneAndAcknowledgesItsSnapshot() throws Exception {
+        seed("5511999999999@s.whatsapp.net", "Ana", false, 2, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "Oi, tudo bem?", NOW);
+        seed("120363000000000000@g.us", "Equipe", true, 3, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "[Image]", NOW);
+
+        notifications.flush(NOW);
+
+        try (InputStream fixture = getClass().getResourceAsStream("/fixtures/notifications/archived_messages.json")) {
+            assertNotNull(fixture, "legacy payload fixture must be available");
+            assertEquals(JSON.readTree(fixture), JSON.readTree(receivedBody.get()));
+        }
+        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class).contains("fixture-secret"));
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'", Integer.class));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void defersWorkOnlyNotificationsOutsideTheLegacyWorkWindow() {
+        seed("5511888888888@s.whatsapp.net", "Equipe JC", false, 1, "2026-10-26T14:00:00Z", "2026-10-26T15:00:00Z", "mensagem", NOW);
+
+        notifications.flush(Instant.parse("2026-10-26T16:00:00Z"));
+
+        assertNull(receivedBody.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions", Integer.class));
+    }
+
+    @Test void dropsNeverNotifyGroupsWithoutSendingTheirPendingContent() {
+        seed("120363000000000001@g.us", "233/234", true, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "sensitive", NOW);
+
+        notifications.flush(NOW);
+
+        assertNull(receivedBody.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions", Integer.class));
+    }
+
+    @Test void preservesANewerMessageThatArrivesWhileTheOutboxActionIsBeingAcknowledged() {
+        String jid = "5511777777777@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "primeira", NOW);
+        requestHook.set(ignored -> jdbc.update("""
+                update pending_notification set payload=jsonb_set(jsonb_set(payload, '{messageCount}', '2'::jsonb),
+                    '{lastMessageAt}', to_jsonb('2026-10-26T10:01:00Z'::text)), updated_at=? where chat_jid=?
+                """, java.sql.Timestamp.from(NOW.plusSeconds(1)), jid));
+
+        notifications.flush(NOW);
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+        assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, jid));
+    }
+
+    @Test void leavesTheOutboxAndPendingSnapshotForRetryWhenN8nReturnsFailure() {
+        responseStatus.set(503);
+        seed("5511666666666@s.whatsapp.net", "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+
+        notifications.flush(NOW);
+
+        assertNotNull(receivedBody.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='PENDING'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where status='PENDING'", String.class).contains("fixture-secret"));
+    }
+
+    @Test void purgesOutboxPayloadAtItsSensitiveRetentionDeadline() {
+        outbox.enqueue("expired-preview", "archived_messages", "{\"preview\":\"synthetic\"}", "[]",
+                NOW.minusSeconds(7 * 86_400L), NOW);
+
+        new SensitiveDataRetentionService(jdbc).purge(NOW);
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_key='expired-preview'", Integer.class));
+    }
+
+    private void seed(String jid, String name, boolean group, int count, String first, String last, String preview, Instant now) {
+        Instant updated = now.minusSeconds(3600);
+        Instant expires = updated.plusSeconds(7 * 86400L);
+        Instant previewExpires = expires;
+        jdbc.update("""
+                insert into chat_snapshot(chat_jid, archived, snapshot_at, display_name, is_group, synchronized_snapshot)
+                values (?, true, ?, ?, ?, true)
+                """, jid, java.sql.Timestamp.from(updated), name, group);
+        if (!group) {
+            String phoneJid = jid.endsWith("@s.whatsapp.net") ? jid : null;
+            String lidJid = "Ana".equals(name) ? "1001@lid" : null;
+            String username = "Ana".equals(name) ? "ana" : null;
+            jdbc.update("""
+                    insert into contact_identity(canonical_jid, phone_jid, lid_jid, username, display_name, display_name_source, updated_at)
+                    values (?, ?, ?, ?, ?, 'CONTACT_NAME', ?)
+                    """, jid, phoneJid, lidJid, username, name, java.sql.Timestamp.from(updated));
+            jdbc.update("insert into identity_aliases(alias, canonical_identity) values (?, ?)", jid, jid);
+            if (lidJid != null) jdbc.update("insert into identity_aliases(alias, canonical_identity) values (?, ?)", lidJid, jid);
+        }
+        String payload = JSON.writeValueAsString(Map.of(
+                "messageCount", count,
+                "firstMessageAt", first,
+                "lastMessageAt", last,
+                "preview", preview,
+                "previewExpiresAt", previewExpires.toString(),
+                "isGroup", group,
+                "notificationPolicy", name.contains("JC") ? "WORK_ONLY" : "ANYTIME"));
+        jdbc.update("""
+                insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
+                values (?, ?::jsonb, ?, ?, ?)
+                """, jid, payload, java.sql.Timestamp.from(Instant.parse(last)), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
+    }
+}

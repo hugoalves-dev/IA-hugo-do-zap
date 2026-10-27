@@ -30,7 +30,9 @@ public class WatcherProperties {
     private Set<@NotNull @Min(1) @Max(7) Integer> notificationDays = Set.of(1, 2, 3, 4, 5);
     @NotEmpty
     @Valid
-    private List<@NotNull TimeWindow> notificationWindows = List.of(new TimeWindow(LocalTime.of(8, 0), LocalTime.of(18, 0)));
+    private List<@NotNull TimeWindow> notificationWindows = List.of(
+            new TimeWindow(LocalTime.of(8, 0), LocalTime.of(12, 0)),
+            new TimeWindow(LocalTime.of(13, 30), LocalTime.of(17, 30)));
     @NotEmpty
     @Size(max = 500)
     private List<@NotBlank String> groupJids = List.of();
@@ -40,7 +42,7 @@ public class WatcherProperties {
     private List<@NotBlank String> neverNotifyGroupNames = List.of("233/234");
     @Min(1)
     @Max(1000)
-    private int maxBatchSize = 100;
+    private int maxBatchSize = 50;
     @Min(1)
     @Max(7)
     private int retentionDays = 7;
