@@ -40,4 +40,44 @@ class TelegramMessageFormatterTest {
         assertTrue(text.length() <= TelegramMessageFormatter.MAX_MESSAGE_LENGTH);
         assertFalse(text.contains("bot-token-secret"));
     }
+
+    @Test void truncationKeepsBothHalvesWhenBoundaryEndsOnLowSurrogate() {
+        String prefix = formatter.format(archivedWithName("x"));
+        int nameStart = prefix.indexOf("x — 1 mensagem");
+        int highIndex = TelegramMessageFormatter.MAX_MESSAGE_LENGTH - 3;
+        String name = "a".repeat(highIndex - nameStart) + "😀" + "z".repeat(100);
+
+        String text = formatter.format(archivedWithName(name));
+
+        assertTrue(text.contains("😀"));
+        assertWellFormedUtf16(text);
+    }
+
+    @Test void truncationDropsWholePairWhenBoundaryWouldEndOnHighSurrogate() {
+        String prefix = formatter.format(archivedWithName("x"));
+        int nameStart = prefix.indexOf("x — 1 mensagem");
+        int highIndex = TelegramMessageFormatter.MAX_MESSAGE_LENGTH - 2;
+        String name = "a".repeat(highIndex - nameStart) + "😀" + "z".repeat(100);
+
+        String text = formatter.format(archivedWithName(name));
+
+        assertFalse(text.contains("😀"));
+        assertWellFormedUtf16(text);
+    }
+
+    private OutboxAction archivedWithName(String name) {
+        String safeName = name.replace("\\", "\\\\").replace("\"", "\\\"");
+        return new OutboxAction(4, "unicode", "archived_messages",
+                "{\"eventType\":\"archived_messages\",\"totalChats\":1,\"totalMessages\":1,\"chats\":[{\"displayName\":\"" + safeName + "\",\"messageCount\":1}]}",
+                "[]", 1, null, null, null);
+    }
+
+    private static void assertWellFormedUtf16(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char current = text.charAt(i);
+            if (Character.isHighSurrogate(current)) {
+                assertTrue(i + 1 < text.length() && Character.isLowSurrogate(text.charAt(++i)));
+            } else assertFalse(Character.isLowSurrogate(current));
+        }
+    }
 }

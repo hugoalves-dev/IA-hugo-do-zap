@@ -37,6 +37,7 @@ class NotificationServiceTest {
     private NotificationOutboxRepository outbox;
     private ArchiveModeService archiveModes;
     private final AtomicReference<Integer> responseStatus = new AtomicReference<>(200);
+    private final AtomicReference<Duration> retryAfter = new AtomicReference<>();
     private final AtomicInteger requestCount = new AtomicInteger();
     private final AtomicReference<java.util.function.Consumer<String>> requestHook = new AtomicReference<>(ignored -> { });
     private final AtomicReference<String> receivedBody = new AtomicReference<>();
@@ -53,6 +54,7 @@ class NotificationServiceTest {
         jdbc.update("delete from chat_snapshot");
         jdbc.update("delete from contact_identity");
         jdbc.update("delete from identity_aliases");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null where singleton_id=1");
 
         properties = new WatcherProperties();
         properties.setTelegramBotToken("synthetic-test-token");
@@ -61,12 +63,14 @@ class NotificationServiceTest {
         manager = new DataSourceTransactionManager(dataSource);
         archiveModes = new ArchiveModeService(jdbc, manager);
         archiveModes.setMode(ArchiveMode.ALL);
-        outbox = new NotificationOutboxRepository(jdbc, manager);
+        outbox = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
         TelegramTransport fakeTelegram = text -> {
             requestCount.incrementAndGet();
             receivedBody.set(text);
             requestHook.get().accept(text);
-            return responseStatus.get() == 200;
+            return responseStatus.get() == 200
+                    ? TelegramDeliveryResult.success()
+                    : TelegramDeliveryResult.failure(retryAfter.get());
         };
         notifications = new NotificationService(jdbc, manager, outbox, fakeTelegram,
                 new TelegramMessageFormatter(), properties, clock, archiveModes);
@@ -149,6 +153,51 @@ class NotificationServiceTest {
         assertEquals(NOW.plusSeconds(15), clock.instant(), "fake transport advances the injected clock once");
         assertEquals(clock.instant().plusSeconds(10), availableAt,
                 "durable retry backoff starts after the failed transport attempt");
+    }
+
+    @Test void TelegramRetryAfterBlocksEveryOutboxMessageUntilServerDelayExpires() {
+        outbox = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        notifications = new NotificationService(jdbc, manager, outbox, fakeTransport(),
+                new TelegramMessageFormatter(), properties, clock, archiveModes);
+        outbox.enqueue("first", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
+        outbox.enqueue("second", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
+        responseStatus.set(429);
+        retryAfter.set(Duration.ofSeconds(30));
+
+        notifications.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "a 429 must stop this flush from sending the next queued message");
+        assertEquals(java.sql.Timestamp.from(NOW.plusSeconds(30).plusMillis(250)),
+                jdbc.queryForObject("select available_at from outbox_actions where action_key='first'", java.sql.Timestamp.class));
+        clock.advance(Duration.ofSeconds(30));
+        notifications.flush(clock.instant());
+        assertEquals(1, requestCount.get(), "no queued action may resend before retry_after expires");
+        clock.advance(Duration.ofMillis(250));
+        responseStatus.set(200);
+        notifications.flush(clock.instant());
+        assertEquals(2, requestCount.get());
+    }
+
+    @Test void PostgreSqlRateLimitCoordinatesIndependentOutboxRepositoryInstances() {
+        var firstWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        var secondWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        firstWorker.enqueue("worker-a", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
+        firstWorker.enqueue("worker-b", "other", "{}", "[]", NOW, NOW.plusSeconds(86400));
+
+        assertEquals("worker-a", firstWorker.claimNext(NOW).actionKey());
+        assertNull(secondWorker.claimNext(NOW.plusMillis(999)));
+        assertEquals("worker-b", secondWorker.claimNext(NOW.plusSeconds(1)).actionKey());
+    }
+
+    private TelegramTransport fakeTransport() {
+        return text -> {
+            requestCount.incrementAndGet();
+            receivedBody.set(text);
+            requestHook.get().accept(text);
+            return responseStatus.get() == 200
+                    ? TelegramDeliveryResult.success()
+                    : TelegramDeliveryResult.failure(retryAfter.get());
+        };
     }
 
     @Test void connectionAlertRetryStopsAndIsCancelledWhenReconnectOccursDuringHttpFailure() {

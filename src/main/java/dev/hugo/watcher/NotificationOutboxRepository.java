@@ -1,11 +1,13 @@
 package dev.hugo.watcher;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -14,13 +16,23 @@ import java.util.UUID;
 public class NotificationOutboxRepository {
     private static final long MAX_BACKOFF_SECONDS = 15 * 60L;
     private static final long LEASE_SECONDS = 120L;
+    private static final Duration DEFAULT_TELEGRAM_SEND_INTERVAL = Duration.ofMillis(1100);
+    private static final Duration RETRY_AFTER_MARGIN = Duration.ofMillis(250);
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
+    private final Duration telegramSendInterval;
 
+    @Autowired
     public NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager) {
+        this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL);
+    }
+
+    NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager, Duration telegramSendInterval) {
+        if (telegramSendInterval.isNegative()) throw new IllegalArgumentException("telegram send interval cannot be negative");
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
+        this.telegramSendInterval = telegramSendInterval;
     }
 
     public void enqueue(String actionKey, String actionType, String payload, String pendingSnapshot,
@@ -56,6 +68,13 @@ public class NotificationOutboxRepository {
 
     public OutboxAction claimNext(Instant now) {
         return transactions.execute(status -> {
+            List<Timestamp> rateLimits = jdbc.query("""
+                    select next_allowed_at from telegram_delivery_rate_limit where singleton_id=1 for update
+                    """, (rs, row) -> rs.getTimestamp("next_allowed_at"));
+            if (rateLimits.isEmpty()) throw new IllegalStateException("Telegram rate-limit state is missing");
+            Timestamp nextAllowedAt = rateLimits.getFirst();
+            if (nextAllowedAt != null && nextAllowedAt.toInstant().isAfter(now)) return null;
+
             List<OutboxAction> candidates = jdbc.query("""
                     select id,action_key,action_type,payload::text,pending_snapshot::text,attempts,created_at,sensitive_expires_at
                     from outbox_actions
@@ -79,6 +98,10 @@ public class NotificationOutboxRepository {
                     where id=?
                     """, token, Timestamp.from(now.plusSeconds(LEASE_SECONDS)), Timestamp.from(now), candidate.id());
             if (updated != 1) return null;
+            if (!telegramSendInterval.isZero()) {
+                jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=? where singleton_id=1",
+                        Timestamp.from(now.plus(telegramSendInterval)));
+            }
             return new OutboxAction(candidate.id(), candidate.actionKey(), candidate.actionType(), candidate.payload(),
                     candidate.pendingSnapshot(), candidate.attempts() + 1, candidate.createdAt(), candidate.sensitiveExpiresAt(), token.toString());
         });
@@ -126,13 +149,33 @@ public class NotificationOutboxRepository {
     }
 
     public void retry(OutboxAction action, Instant now, String errorType) {
+        retry(action, now, errorType, null);
+    }
+
+    public void retry(OutboxAction action, Instant now, String errorType, Duration retryAfter) {
         int exponent = Math.min(30, Math.max(0, action.attempts() - 1));
         long backoff = Math.min(MAX_BACKOFF_SECONDS, 10L << exponent);
+        boolean serverRequestedRetry = retryAfter != null && !retryAfter.isNegative() && !retryAfter.isZero();
+        Instant retryAt = serverRequestedRetry
+                ? now.plus(retryAfter).plus(RETRY_AFTER_MARGIN)
+                : now.plusSeconds(backoff);
+        transactions.executeWithoutResult(status -> {
+            if (serverRequestedRetry) advanceTelegramRateLimit(retryAt);
+            jdbc.update("""
+                    update outbox_actions set status='PENDING',lease_token=null,lease_expires_at=null,
+                        available_at=?,last_error=?,updated_at=?
+                    where id=? and status='PROCESSING' and lease_token=?::uuid
+                    """, Timestamp.from(retryAt), sanitizeError(errorType), Timestamp.from(now), action.id(), action.leaseToken());
+        });
+    }
+
+    private void advanceTelegramRateLimit(Instant retryAt) {
+        Timestamp until = Timestamp.from(retryAt);
         jdbc.update("""
-                update outbox_actions set status='PENDING',lease_token=null,lease_expires_at=null,
-                    available_at=?,last_error=?,updated_at=?
-                where id=? and status='PROCESSING' and lease_token=?::uuid
-                """, Timestamp.from(now.plusSeconds(backoff)), sanitizeError(errorType), Timestamp.from(now), action.id(), action.leaseToken());
+                update telegram_delivery_rate_limit
+                set next_allowed_at=case when next_allowed_at is null or next_allowed_at < ? then ? else next_allowed_at end
+                where singleton_id=1
+                """, until, until);
     }
 
     private void clearIfUnchanged(String snapshotJson) {

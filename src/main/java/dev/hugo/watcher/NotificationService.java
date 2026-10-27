@@ -69,17 +69,18 @@ public class NotificationService {
                 if (action == null) return;
                 try {
                     if (isConnectionAlert(action)) {
-                        boolean delivered = isCurrentConnectionAlert(action)
-                                && telegram.send(telegramFormatter.format(action));
-                        if (delivered) outbox.acknowledge(action, clock.instant());
+                        TelegramDeliveryResult result = isCurrentConnectionAlert(action)
+                                ? telegram.send(telegramFormatter.format(action)) : TelegramDeliveryResult.failure();
+                        if (result.delivered()) outbox.acknowledge(action, clock.instant());
                         else if (!isCurrentConnectionAlert(action)) outbox.cancelClaimedConnectionAlert(action, clock.instant());
-                        else outbox.retry(action, clock.instant(), "DeliveryFailure");
+                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.retryAfter());
                     } else {
                         OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());
-                        boolean delivered = latest != null && telegram.send(telegramFormatter.format(latest));
-                        if (delivered) outbox.acknowledge(latest, clock.instant());
+                        TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
+                                : telegram.send(telegramFormatter.format(latest));
+                        if (result.delivered()) outbox.acknowledge(latest, clock.instant());
                         else if (latest == null) outbox.suppress(action, clock.instant());
-                        else outbox.retry(action, clock.instant(), "DeliveryFailure");
+                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.retryAfter());
                     }
                 } catch (DataAccessException ex) {
                     // Unknown policy/state is retryable, never proof that an alert is obsolete.

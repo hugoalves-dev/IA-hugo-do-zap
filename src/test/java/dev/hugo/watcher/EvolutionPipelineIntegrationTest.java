@@ -111,6 +111,7 @@ class EvolutionPipelineIntegrationTest {
 
         TELEGRAM.setAccepted(true);
         jdbc.update("update outbox_actions set available_at=now()-interval '1 second'");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=now()-interval '1 second' where singleton_id=1");
         notifications.flush(Instant.now());
 
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions", String.class));
@@ -382,10 +383,10 @@ class EvolutionPipelineIntegrationTest {
         private final AtomicReference<String> lastMessage = new AtomicReference<>("");
         private volatile boolean accepted = true;
 
-        @Override public boolean send(String text) {
+        @Override public TelegramDeliveryResult send(String text) {
             sends.incrementAndGet();
             lastMessage.set(text);
-            return accepted;
+            return accepted ? TelegramDeliveryResult.success() : TelegramDeliveryResult.failure();
         }
         private void setAccepted(boolean accepted) { this.accepted = accepted; }
         private String lastMessage() { return lastMessage.get(); }

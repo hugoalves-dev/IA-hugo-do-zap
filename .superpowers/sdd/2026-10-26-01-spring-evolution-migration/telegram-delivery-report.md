@@ -16,12 +16,20 @@ Os testes injetam `TelegramTransport` falso e não chamam a rede Telegram. Nenhu
 - `src/main/java/dev/hugo/watcher/TelegramBotApiTransport.java`, `TelegramTransport.java`, `TelegramMessageFormatter.java`: adapter, seam de teste e mensagens limitadas a 3.500 caracteres.
 - `NotificationService.java`, `WatcherProperties.java`: entrega direta, retry do outbox e configuração Telegram; removida configuração n8n.
 - `compose.yaml`, `.env.example`, `README.md`: variáveis de token/chat privado, instruções e semântica de reentrega.
-- Testes focados: transporte falso em integração/PostgreSQL, resumos e alertas, propriedades; teste antigo de webhook removido. A expectativa do teste Flyway foi corrigida de v10 para v11, que é a última migração já presente.
+- Testes focados: transporte falso em integração/PostgreSQL, resumos e alertas, propriedades; teste antigo de webhook removido. A migração v12 adiciona o estado compartilhado do rate limit Telegram.
 
 ## Verificação
 
 - `mvn "-Dtest=TelegramMessageFormatterTest,WatcherPropertiesTest,NotificationServiceTest,EvolutionPipelineIntegrationTest,ConnectionServiceTest,EvolutionWebhookControllerTest,SpringFlywayStartupTest" test` — 57 testes, 0 falhas, 0 erros, 0 ignorados. Inclui PostgreSQL 17/Testcontainers e fake Telegram.
 - `docker compose --env-file .env.example config --quiet` — sucesso; nenhum container iniciado.
 - `git diff --check` — sem erros de whitespace.
+
+## Revisão P2: limite e retry_after
+
+- A API wrapper expõe `BaseResponse.parameters().retryAfter()` para respostas Telegram 429. O adapter agora traduz esse valor em duração e o outbox agenda `available_at` para `retry_after + 250 ms`, persistindo ao mesmo tempo um cooldown global no PostgreSQL. Esse cooldown impede que qualquer outra linha da fila seja enviada antes da janela do Telegram.
+- O limitador PostgreSQL serializa claims com uma linha singleton compartilhada por todos os workers e processos; o intervalo padrão é 1.100 ms, e o construtor de teste permite controlar o intervalo. Assim, um flush com muitas ações não cria burst de chamadas à Telegram.
+- Testes falsos cobrem a extração de `retry_after`, atraso persistido, ausência de envio antes do deadline e coordenação do intervalo entre instâncias do repositório. Os testes não chamam a API Telegram.
+- A alegação de quebra de surrogate no limite baixo não se confirma: `substring(0, end)` exclui o índice `end`, mas inclui o low surrogate em `end - 1`, junto com o high em `end - 2`. Quando `end - 1` é high, o código reduz `end` e evita incluir um par incompleto. Dois testes Unicode posicionam um emoji exatamente nas duas fronteiras e verificam UTF-16 bem formado; passaram sem alteração no truncamento de produção.
+- Verificação focada desta revisão: `TelegramBotApiTransportTest`, `TelegramMessageFormatterTest`, `NotificationServiceTest` e `SpringFlywayStartupTest` — 36 testes; `EvolutionPipelineIntegrationTest` e `DatabaseMigrationTest` — 10 testes. Ambos os comandos passaram.
 
 O branch não foi enviado nem publicado. A revisão e o push ficam para o responsável pelo plano.
