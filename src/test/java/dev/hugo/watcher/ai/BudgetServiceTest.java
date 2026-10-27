@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -64,6 +66,7 @@ class BudgetServiceTest {
     @Test void failedAmbiguousCallKeepsReservationUntilExplicitReconciliation() {
         setLimits(10L, 10L);
         Reservation reservation = budgets.reserve(new EstimatedCost(7), now);
+        budgets.markDispatched(reservation.id());
         assertThrows(RuntimeException.class, () -> invokePaidCallThenReconcileFailure(reservation));
         assertThrows(BudgetExceededException.class, () -> budgets.reserve(new EstimatedCost(4), now));
         budgets.settle(reservation.id(), new ActualCost(6));
@@ -84,6 +87,7 @@ class BudgetServiceTest {
     @Test void settleAndReleaseAreIdempotentAndDoNotEraseActualCost() {
         setLimits(10L, 10L);
         Reservation settled = budgets.reserve(new EstimatedCost(4), now);
+        budgets.markDispatched(settled.id());
         budgets.settle(settled.id(), new ActualCost(5));
         budgets.settle(settled.id(), new ActualCost(5));
         budgets.release(settled.id());
@@ -95,6 +99,94 @@ class BudgetServiceTest {
         budgets.release(released.id());
         assertEquals("RELEASED", status(released.id()));
         assertEquals(0L, reserved(released.id()));
+    }
+
+    @Test void settlementSerializesWithReservationsAndFreshActualSpendBlocksNextCall() throws Exception {
+        setLimits(10L, 10L);
+        Reservation inFlight = budgets.reserve(new EstimatedCost(4), now);
+        budgets.markDispatched(inFlight.id());
+        jdbc.execute("""
+                create function pause_budget_settlement() returns trigger language plpgsql as $$
+                begin
+                    if new.status='SETTLED' then perform pg_advisory_xact_lock(61234, 1); end if;
+                    return new;
+                end $$
+                """);
+        jdbc.execute("create trigger pause_budget_settlement before update on ai_budget_reservations "
+                + "for each row execute function pause_budget_settlement()");
+
+        try (var gate = postgres.createConnection("")) {
+            gate.createStatement().execute("select pg_advisory_lock(61234, 1)");
+            try (var pool = Executors.newFixedThreadPool(2)) {
+                var settlement = pool.submit(() -> budgets.settle(inFlight.id(), new ActualCost(10)));
+                try {
+                    awaitBlockedSettlement();
+                    CountDownLatch reserveStarted = new CountDownLatch(1);
+                    var nextReservation = pool.submit(() -> {
+                        reserveStarted.countDown();
+                        try { budgets.reserve(new EstimatedCost(1), now); return true; }
+                        catch (BudgetExceededException blocked) { return false; }
+                    });
+                    assertTrue(reserveStarted.await(2, TimeUnit.SECONDS));
+                    assertThrows(TimeoutException.class, () -> nextReservation.get(250, TimeUnit.MILLISECONDS));
+                    gate.createStatement().execute("select pg_advisory_unlock(61234, 1)");
+                    settlement.get(5, TimeUnit.SECONDS);
+                    assertFalse(nextReservation.get(5, TimeUnit.SECONDS));
+                    assertEquals(1, jdbc.queryForObject("select count(*) from ai_budget_reservations", Integer.class));
+                    assertEquals(10L, reserved(inFlight.id()));
+                } finally {
+                    gate.createStatement().execute("select pg_advisory_unlock(61234, 1)");
+                }
+            }
+        }
+    }
+
+    @Test void uncertainReservationCannotBeReleasedAndCanLaterSettleAtZero() {
+        setLimits(10L, 10L);
+        Reservation reservation = budgets.reserve(new EstimatedCost(7), now);
+        budgets.markDispatched(reservation.id());
+        budgets.markUncertain(reservation.id());
+
+        assertThrows(IllegalStateException.class, () -> budgets.release(reservation.id()));
+        assertEquals("UNCERTAIN", status(reservation.id()));
+        assertEquals(7L, reserved(reservation.id()));
+        budgets.settle(reservation.id(), new ActualCost(0));
+        assertEquals("SETTLED", status(reservation.id()));
+        assertEquals(0L, reserved(reservation.id()));
+    }
+
+    @Test void lateSettlementAfterReleaseRestoresActualSpend() {
+        setLimits(10L, 10L);
+        Reservation reservation = budgets.reserve(new EstimatedCost(5), now);
+        budgets.release(reservation.id());
+
+        budgets.settle(reservation.id(), new ActualCost(3));
+
+        assertEquals("SETTLED", status(reservation.id()));
+        assertEquals(3L, reserved(reservation.id()));
+    }
+
+    @Test void actualCostAboveEstimateCanExceedCapAndBlocksSubsequentCalls() {
+        setLimits(10L, 10L);
+        Reservation reservation = budgets.reserve(new EstimatedCost(6), now);
+        budgets.markDispatched(reservation.id());
+        budgets.settle(reservation.id(), new ActualCost(12));
+
+        assertEquals(12L, reserved(reservation.id()));
+        assertThrows(BudgetExceededException.class, () -> budgets.reserve(new EstimatedCost(1), now));
+    }
+
+    private void awaitBlockedSettlement() throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            Integer waiting = jdbc.queryForObject("""
+                    select count(*) from pg_stat_activity
+                     where wait_event_type='Lock' and query like 'update ai_budget_reservations%'
+                    """, Integer.class);
+            if (waiting != null && waiting > 0) return;
+            Thread.sleep(20);
+        }
+        fail("settlement did not reach the test barrier");
     }
 
     private boolean reserveAfter(CountDownLatch start) throws Exception {

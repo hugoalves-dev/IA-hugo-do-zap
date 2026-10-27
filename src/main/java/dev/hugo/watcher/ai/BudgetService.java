@@ -2,6 +2,7 @@ package dev.hugo.watcher.ai;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -44,6 +45,7 @@ public final class BudgetService {
     }
 
     private Reservation reserveTransaction(EstimatedCost estimate, LocalDate day, LocalDate month, Instant at) {
+        lockBudgetLedger();
         List<Limits> limits = jdbc.query("""
                 select daily_limit_micros,monthly_limit_micros from ai_budget_limits
                  where singleton_id=1 for update
@@ -83,6 +85,9 @@ public final class BudgetService {
         transition(id, "SETTLED", actualCost.micros());
     }
 
+    /** Persist the point where a provider request may have left the process. */
+    public void markDispatched(UUID id) { transition(id, "DISPATCHED", null); }
+
     /** Keep the full estimate counted when provider outcome or billing is ambiguous. */
     public void markUncertain(UUID id) { transition(id, "UNCERTAIN", null); }
 
@@ -91,6 +96,7 @@ public final class BudgetService {
     private void transition(UUID id, String target, Long amount) {
         Objects.requireNonNull(id, "id");
         transactions.executeWithoutResult(status -> {
+            lockBudgetLedger();
             List<Existing> rows = jdbc.query("""
                     select status,reserved_micros,actual_micros from ai_budget_reservations
                      where reservation_id=? for update
@@ -102,7 +108,21 @@ public final class BudgetService {
                     throw new IllegalStateException("reservation already settled with different cost");
                 return;
             }
-            if (existing.status().equals("SETTLED") || existing.status().equals("RELEASED")) return;
+            if (target.equals("SETTLED")) {
+                if (existing.status().equals("SETTLED")) return;
+            } else if (existing.status().equals("SETTLED")) {
+                return;
+            } else if (target.equals("DISPATCHED")) {
+                if (!existing.status().equals("RESERVED"))
+                    throw new IllegalStateException("only a reserved call can be dispatched");
+            } else if (target.equals("UNCERTAIN")) {
+                if (!existing.status().equals("DISPATCHED"))
+                    throw new IllegalStateException("only a dispatched call can become uncertain");
+            } else if (target.equals("RELEASED")) {
+                if (existing.status().equals("RELEASED")) return;
+                if (!existing.status().equals("RESERVED"))
+                    throw new IllegalStateException("dispatched or uncertain reservation cannot be released");
+            }
             long reserved = target.equals("SETTLED") ? amount : target.equals("RELEASED") ? 0 : existing.reservedMicros();
             jdbc.update("""
                     update ai_budget_reservations set status=?,reserved_micros=?,actual_micros=?,updated_at=now()
@@ -110,6 +130,17 @@ public final class BudgetService {
                     """, target, reserved, target.equals("SETTLED") ? amount : null, id);
         });
         metrics.counter("ai.budget.reservation.transitions", "outcome", target.toLowerCase(java.util.Locale.ROOT)).increment();
+    }
+
+    /** One transaction-scoped lock serializes reservations and all accounting corrections, even without a limits row. */
+    private void lockBudgetLedger() {
+        jdbc.execute((ConnectionCallback<Void>) connection -> {
+            try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(947221, 20)")) {
+                statement.execute();
+            }
+            return null;
+        });
+        jdbc.query("select singleton_id from ai_budget_limits where singleton_id=1 for update", rs -> { });
     }
 
     private record Limits(Long dailyMicros, Long monthlyMicros) { }

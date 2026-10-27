@@ -25,3 +25,12 @@ Date: 2026-10-27
 
 - A conservative estimate and provider-reported actual cost require a caller-side pricing policy. Provider account quotas and actual billing are external and cannot be guaranteed by this ledger.
 - No production caller is enabled because data authorization and per-attempt budget settlement are not available yet.
+
+## Review follow-up
+
+- RED: PostgreSQL tests reproduced all review findings: a reservation passed while a larger settlement was uncommitted; `UNCERTAIN` could be released; and settlement after release was ignored. The dispatch-state API test first failed compilation because `markDispatched` did not exist.
+- GREEN: `mvn -Dtest=BudgetServiceTest,AiRetentionTest test` passed in scratch with PostgreSQL 17: 10 tests, 0 failures, 0 errors, 0 skipped.
+- Reservations and accounting transitions now share the same transaction-scoped advisory lock and lock the configured singleton row. The concurrent test holds settlement at a PostgreSQL trigger barrier and verifies another reservation waits, then blocks on the committed actual spend.
+- `DISPATCHED` is persisted before a request may leave the process. Only `RESERVED` can be released; dispatch/uncertain rows must settle, including zero only after evidence. Late settlement after a released reservation restores spend.
+- The actual-cost test confirms a provider charge above its estimate can exceed the configured cap after the fact. The ledger records it and blocks later calls; it does not claim a hard provider-billing cap.
+- Documentation now describes stale reservation reconciliation, no automatic release, the ledger's separate no-payload retention, and no automatic deletion policy. No provider names, credentials, or assumptions were added.
