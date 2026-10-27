@@ -34,6 +34,7 @@ class MessageServiceTest {
         jdbc.update("delete from processed_message");
         jdbc.update("delete from quarantined_events");
         jdbc.update("delete from chat_snapshot");
+        jdbc.update("delete from contact_identity");
         jdbc.update("delete from identity_aliases");
         var manager = new DataSourceTransactionManager(dataSource);
         chats = new ChatStateService(jdbc, manager);
@@ -53,7 +54,7 @@ class MessageServiceTest {
         archive("5511999999999@s.whatsapp.net", "Contato");
 
         var result = messages.accept(new IncomingMessage(Optional.empty(), "5511999999999@s.whatsapp.net", Optional.empty(),
-                Optional.empty(), false, "notify", false, Map.of("conversation", "Oi"), Instant.parse("2026-10-26T10:00:00Z")));
+                Optional.empty(), Optional.empty(), false, "notify", false, Map.of("conversation", "Oi"), Instant.parse("2026-10-26T10:00:00Z")));
 
         assertEquals(MessageService.Acceptance.QUARANTINED, result);
         assertNull(jdbc.queryForObject("select source_event_id from quarantined_events limit 1", String.class));
@@ -82,10 +83,10 @@ class MessageServiceTest {
     @Test void explicitIdentityAliasesShareMessageDeduplication() {
         archive("1001@lid", "Cliente");
         var first = new IncomingMessage(Optional.of("same-message"), "1001@lid", Optional.empty(),
-                Optional.of("5511999999999@s.whatsapp.net"), false, "notify", false,
+                Optional.of("5511999999999@s.whatsapp.net"), Optional.empty(), false, "notify", false,
                 Map.of("conversation", "Olá"), Instant.parse("2026-10-26T10:00:00Z"));
         var duplicate = new IncomingMessage(Optional.of("same-message"), "5511999999999@s.whatsapp.net", Optional.empty(),
-                Optional.empty(), false, "notify", false,
+                Optional.empty(), Optional.empty(), false, "notify", false,
                 Map.of("conversation", "Olá"), Instant.parse("2026-10-26T10:00:01Z"));
 
         assertEquals(MessageService.Acceptance.ACCEPTED, messages.accept(first));
@@ -115,6 +116,37 @@ class MessageServiceTest {
         assertEquals("WORK_ONLY", jdbc.queryForObject("select payload->>'notificationPolicy' from pending_notification", String.class));
     }
 
+    @Test void groupChatAlternateCannotBeMistakenForParticipantAlternate() {
+        String group = "120363000000000000@g.us";
+        String participant = "1001@lid";
+        String unrelatedChatAlias = "5511888888888@s.whatsapp.net";
+        archive(group, "Equipe", true);
+        var message = new IncomingMessage(Optional.of("group-message"), group, Optional.of(participant),
+                Optional.of(unrelatedChatAlias), Optional.empty(), false, "notify", false,
+                Map.of("conversation", "Oi"), Instant.parse("2026-10-26T10:00:00Z"));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, messages.accept(message));
+        assertEquals(1, jdbc.queryForObject("select count(*) from identity_aliases where alias=?", Integer.class, participant));
+        assertEquals(0, jdbc.queryForObject("select count(*) from identity_aliases where alias=?", Integer.class, unrelatedChatAlias));
+    }
+
+    @Test void participantAliasesShareGroupMessageDeduplication() {
+        String group = "120363000000000000@g.us";
+        String lid = "1001@lid";
+        String phone = "5511999999999@s.whatsapp.net";
+        archive(group, "Equipe", true);
+        var first = new IncomingMessage(Optional.of("same-group-message"), group, Optional.of(lid),
+                Optional.empty(), Optional.of(phone), false, "notify", false,
+                Map.of("conversation", "Oi"), Instant.parse("2026-10-26T10:00:00Z"));
+        var duplicate = new IncomingMessage(Optional.of("same-group-message"), group, Optional.of(phone),
+                Optional.empty(), Optional.empty(), false, "notify", false,
+                Map.of("conversation", "Oi"), Instant.parse("2026-10-26T10:00:01Z"));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, messages.accept(first));
+        assertEquals(MessageService.Acceptance.DUPLICATE, messages.accept(duplicate));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+    }
+
     @Test void retainsNormalizedTextPreviewAndCapsItAtLegacyLimit() {
         archive("5511999999999@s.whatsapp.net", "Contato");
         String longText = " a  ".repeat(100);
@@ -134,7 +166,7 @@ class MessageServiceTest {
     private static IncomingMessage message(String id, String jid, Map<String, Object> content) { return message(id, jid, content, false, false); }
     private static IncomingMessage message(String id, String jid, Map<String, Object> content, boolean fromMe) { return message(id, jid, content, fromMe, false); }
     private static IncomingMessage message(String id, String jid, Map<String, Object> content, boolean fromMe, boolean history) {
-        return new IncomingMessage(Optional.of(id), jid, Optional.empty(), Optional.empty(), fromMe,
+        return new IncomingMessage(Optional.of(id), jid, Optional.empty(), Optional.empty(), Optional.empty(), fromMe,
                 "notify", history, content, Instant.parse("2026-10-26T10:00:00Z"));
     }
 }

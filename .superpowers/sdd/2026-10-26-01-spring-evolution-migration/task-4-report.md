@@ -19,3 +19,20 @@
 - Não há evidência de uma fonte real de archive da Evolution. `ChatUpdate` exige que o chamador declare archive explícito e origem verificada, mas nenhum mapper/controller foi ligado a uma fonte Evolution de archive; não se deve inferir archive de `messages.upsert`.
 - O CodeGraph inicialmente encontrou os símbolos TypeScript do checkout legado e não resolveu os símbolos Java da worktree mesmo após indexação parcial. A análise foi completada com buscas e leitura direta dos arquivos locais relevantes.
 - A suíte completa não foi executada; a verificação ficou no comando focado requerido pela tarefa. Nenhuma operação em VPS ou produção foi feita.
+
+## Correções da revisão — 2026-10-27
+
+- **Bootstrap concorrente:** estado recebe lock consultivo por identidade canônica antes da leitura; a canonicalização é revalidada sob lock. O `ON CONFLICT` também exige `snapshot_at` estritamente mais novo, para que uma corrida com escritores externos não reverta o estado.
+- **Merge de aliases:** união explicitamente comprovada migra snapshots para a identidade canônica, seleciona o snapshot verificável mais recente, preserva o maior watermark de leitura e combina pendências (contagem, primeira/última mensagem, preview mais recente e expiração). Se o snapshot mais recente está desarquivado, as pendências são descartadas como no legado. Nomes/aliases também migram.
+- **Contenção de lock:** observação individual de identidade usa `INSERT ... ON CONFLICT` sem lock de tabela. Um par de alias já unido retorna pela leitura protegida e não repete o merge. `SHARE ROW EXCLUSIVE` é usado somente para unir conjuntos de aliases distintos, operação rara que precisa reescrever o conjunto atomicamente; permite leitores, mas serializa escritores durante o merge. As transações de mensagem sem novo merge não ficam sob esse lock global.
+- **Aliases distintos:** `IncomingMessage` separa `alternateChatJid` de `alternateParticipantJid`; mensagens de grupo só usam o alternativo do participante para identidade/deduplicação.
+- **Eventos de leitura:** limpeza exige timestamp, snapshot conhecido e sincronizado. O watermark `last_read_at` avança monotonicamente; a pendência só é apagada quando sua última mensagem não é posterior ao READ/unread-zero recebido.
+- **Nomes:** migração V5 e `IdentityService.observeContactName` preservam a precedência `CONTACT_NAME > NOTIFY > VERIFIED > CHAT/LEGACY > USERNAME > PHONE`, rejeitam nomes técnicos e fazem `ChatStateService.apply` observar nomes de chat sem rebaixar uma origem melhor.
+
+### TDD/verificação da revisão
+
+- **RED comportamental:** o teste concorrente com atraso real no PostgreSQL falhou antes da proteção: esperava `archived=true` após o update antigo terminar por último e observou `false`.
+- Os testes de merge, separação de aliases, READ ordenado e nomes foram escritos antes das mudanças correspondentes. A primeira execução conjunta ficou vermelha em `testCompile` porque a nova assinatura de `clearRead`, os campos separados de `IncomingMessage` e a API de identidade/nome ainda não existiam. Uma execução subsequente identificou somente vazamento de `contact_identity` entre fixtures; o reset foi corrigido.
+- **GREEN final:** `mvn -Dtest=ChatStateServiceTest,MessageServiceTest,IdentityServiceTest,NotificationPolicyTest,EvolutionEventMapperTest,WatcherPropertiesTest,DatabaseMigrationTest test` — **34 testes, 0 falhas, 0 erros**, com PostgreSQL 17 Testcontainers. `api.version=1.44`, Docker Desktop via named pipe e socket override foram aplicados; sem `mvn clean`.
+- Persistem apenas avisos externos de depreciação `sun.misc.Unsafe` (Guice/Maven) e do lifecycle interno do Testcontainers. Nenhum teste ou migração falhou.
+- A suíte completa não foi executada. O arquivo `NotificationPolicy.java` e seu teste, planos untracked e `target/` preexistentes continuam fora do stage/commit.

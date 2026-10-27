@@ -14,6 +14,9 @@ import java.time.Instant;
 import java.sql.Timestamp;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -32,7 +35,9 @@ class ChatStateServiceTest {
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from processed_message");
         jdbc.update("delete from quarantined_events");
+        jdbc.update("delete from contact_identity");
         jdbc.update("delete from chat_snapshot");
+        jdbc.update("delete from identity_aliases");
         chats = new ChatStateService(jdbc, new DataSourceTransactionManager(dataSource));
     }
 
@@ -57,9 +62,47 @@ class ChatStateServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from quarantined_events where source_event_id='older'", Integer.class));
     }
 
+    @Test void concurrentBootstrapCannotCommitAnOlderSnapshotAfterANewerOne() throws Exception {
+        String jid = "5511888888888@s.whatsapp.net";
+        jdbc.execute("drop trigger if exists delay_older_snapshot on chat_snapshot");
+        jdbc.execute("drop function if exists delay_older_snapshot()");
+        jdbc.execute("""
+                create function delay_older_snapshot() returns trigger language plpgsql as $$
+                begin
+                  if new.chat_jid = '5511888888888@s.whatsapp.net' and new.archived = false then
+                    perform pg_sleep(0.8);
+                  end if;
+                  return new;
+                end; $$
+                """);
+        jdbc.execute("create trigger delay_older_snapshot before insert on chat_snapshot for each row execute function delay_older_snapshot()");
+
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var olderStarted = new CountDownLatch(1);
+            var older = pool.submit(() -> {
+                olderStarted.countDown();
+                return chats.apply(update(jid, false, "2026-10-26T10:00:00Z", "old-bootstrap"));
+            });
+            assertTrue(olderStarted.await(2, TimeUnit.SECONDS));
+            waitForOlderInsertToSleep();
+            var newer = pool.submit(() -> chats.apply(update(jid, true, "2026-10-26T10:01:00Z", "new-bootstrap")));
+
+            older.get(5, TimeUnit.SECONDS);
+            newer.get(5, TimeUnit.SECONDS);
+        } finally {
+            jdbc.execute("drop trigger if exists delay_older_snapshot on chat_snapshot");
+            jdbc.execute("drop function if exists delay_older_snapshot()");
+        }
+
+        assertEquals(Boolean.TRUE, jdbc.queryForObject("select archived from chat_snapshot where chat_jid=?", Boolean.class, jid));
+        assertEquals(Instant.parse("2026-10-26T10:01:00Z"), jdbc.queryForObject(
+                "select snapshot_at from chat_snapshot where chat_jid=?", Timestamp.class, jid).toInstant());
+    }
+
     @Test void unarchiveClearsPendingNotificationsAtomically() {
         String jid = "5511999999999@s.whatsapp.net";
         chats.apply(update(jid, true, "2026-10-26T10:00:00Z", "archive"));
+        assertEquals("CHAT", jdbc.queryForObject("select display_name_source from contact_identity where canonical_jid=?", String.class, jid));
         jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{}'::jsonb, now())", jid);
 
         chats.apply(update(jid, false, "2026-10-26T10:01:00Z", "unarchive"));
@@ -70,14 +113,28 @@ class ChatStateServiceTest {
     @Test void readEventClearsPendingQueueByChat() {
         String jid = "5511999999999@s.whatsapp.net";
         chats.apply(update(jid, true, "2026-10-26T10:00:00Z", "archive"));
-        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{}'::jsonb, now())", jid);
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{\"lastMessageAt\":\"2026-10-26T10:00:00Z\"}'::jsonb, now())", jid);
 
-        assertEquals(1, chats.clearRead(jid, Optional.of(0), Optional.empty(), Optional.empty()));
+        assertEquals(1, chats.clearRead(jid, Instant.parse("2026-10-26T10:01:00Z"), Optional.of(0), Optional.empty(), Optional.empty()));
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
 
-        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{}'::jsonb, now())", jid);
-        assertEquals(1, chats.clearRead(jid, Optional.empty(), Optional.of(false), Optional.of(4)));
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{\"lastMessageAt\":\"2026-10-26T10:01:00Z\"}'::jsonb, now())", jid);
+        assertEquals(1, chats.clearRead(jid, Instant.parse("2026-10-26T10:02:00Z"), Optional.empty(), Optional.of(false), Optional.of(4)));
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
+    @Test void staleReadEventCannotClearMessagesReceivedAfterItsTimestamp() {
+        String jid = "5511999999999@s.whatsapp.net";
+        chats.apply(update(jid, true, "2026-10-26T10:00:00Z", "archive"));
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{\"lastMessageAt\":\"2026-10-26T10:05:00Z\"}'::jsonb, now())", jid);
+
+        assertEquals(0, chats.clearRead(jid, Instant.parse("2026-10-26T10:04:00Z"), Optional.of(0), Optional.empty(), Optional.empty()));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+        assertEquals(1, chats.clearRead(jid, Instant.parse("2026-10-26T10:06:00Z"), Optional.of(0), Optional.empty(), Optional.empty()));
+
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at) values (?, '{\"lastMessageAt\":\"2026-10-26T10:07:00Z\"}'::jsonb, now())", jid);
+        assertEquals(0, chats.clearRead(jid, Instant.parse("2026-10-26T10:04:30Z"), Optional.of(0), Optional.empty(), Optional.empty()));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
     }
 
     @Test void expiredSensitivePreviewsAndQuarantineRecordsArePurged() {
@@ -100,5 +157,19 @@ class ChatStateServiceTest {
     private static ChatUpdate update(String jid, boolean archived, String timestamp, String id) {
         return new ChatUpdate(jid, Optional.of(archived), Instant.parse(timestamp), true, true,
                 Optional.of(id), Optional.of("Contato"), false, Map.of("id", id));
+    }
+
+    private void waitForOlderInsertToSleep() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (System.nanoTime() < deadline) {
+            Integer sleeping = jdbc.queryForObject("""
+                    select count(*) from pg_stat_activity
+                    where datname=current_database() and wait_event='PgSleep'
+                      and query ilike '%insert into chat_snapshot%'
+                    """, Integer.class);
+            if (sleeping != null && sleeping > 0) return;
+            Thread.sleep(10);
+        }
+        fail("older bootstrap never reached the database delay trigger");
     }
 }

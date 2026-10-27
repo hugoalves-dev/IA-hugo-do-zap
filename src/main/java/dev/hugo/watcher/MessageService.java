@@ -66,10 +66,9 @@ public class MessageService {
         String canonicalJid;
         if (group) {
             canonicalJid = jid;
-            observeParticipant(message);
         } else {
-            var identity = identities.observe(new IdentityObservation(jid, message.alternateJid().map(Set::of).orElse(Set.of()),
-                    message.alternateJid().filter(alias -> !alias.equals(jid)).isPresent()
+            var identity = identities.observe(new IdentityObservation(jid, message.alternateChatJid().map(Set::of).orElse(Set.of()),
+                    message.alternateChatJid().filter(alias -> !alias.equals(jid)).isPresent()
                             ? IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR : IdentityEvidence.NONE));
             canonicalJid = identity.canonicalJid();
         }
@@ -94,8 +93,8 @@ public class MessageService {
         if (group && message.participantJid().filter(value -> !value.isBlank()).isPresent()) {
             String participantJid = message.participantJid().orElseThrow();
             participant = identities.observe(new IdentityObservation(participantJid,
-                    message.alternateJid().filter(alias -> !alias.equals(participantJid)).map(Set::of).orElse(Set.of()),
-                    message.alternateJid().filter(alias -> !alias.equals(participantJid)).isPresent()
+                    message.alternateParticipantJid().filter(alias -> !alias.equals(participantJid)).map(Set::of).orElse(Set.of()),
+                    message.alternateParticipantJid().filter(alias -> !alias.equals(participantJid)).isPresent()
                             ? IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR : IdentityEvidence.NONE)).canonicalJid();
         }
         String dedupKey = sha256(canonicalJid + "\n" + externalId + "\n" + participant);
@@ -152,14 +151,6 @@ public class MessageService {
         if (normalized.isEmpty() || normalized.matches(".*[@+0-9].*")) return NotificationPolicy.Kind.ANYTIME;
         return Pattern.compile(properties.getAllowedNameRegex(), Pattern.CASE_INSENSITIVE)
                 .matcher(normalized).find() ? NotificationPolicy.Kind.WORK_ONLY : NotificationPolicy.Kind.ANYTIME;
-    }
-
-    private void observeParticipant(IncomingMessage message) {
-        message.participantJid().filter(value -> !value.isBlank()).ifPresent(participant ->
-                identities.observe(new IdentityObservation(participant,
-                        message.alternateJid().filter(alias -> !alias.equals(participant)).map(Set::of).orElse(Set.of()),
-                        message.alternateJid().filter(alias -> !alias.equals(participant)).isPresent()
-                                ? IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR : IdentityEvidence.NONE)));
     }
 
     private void quarantine(String kind, String externalId, String reason, Instant now) {
