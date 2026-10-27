@@ -66,6 +66,14 @@ public class LegacyImportService {
             int plannedPendings = 0;
             int unchanged = 0;
             int expired = 0;
+            Map<String, String> sourceCanonical = new LinkedHashMap<>();
+            for (SourceIdentity identity : source.identities()) for (String alias : identity.aliases()) {
+                String prior = sourceCanonical.putIfAbsent(alias, identity.canonicalJid());
+                if (prior != null && !prior.equals(identity.canonicalJid())) {
+                    conflicts.add(conflict("identity", alias, "source_alias_collision"));
+                    blockedAliases.add(alias);
+                }
+            }
 
             for (SourceIdentity identity : source.identities()) {
                 String invalid = invalidIdentity(identity);
@@ -97,6 +105,7 @@ public class LegacyImportService {
                 }
             }
 
+            Map<String, List<PendingValue>> grouped = new LinkedHashMap<>();
             for (SourcePending item : source.pending()) {
                 String invalid = invalidPending(item);
                 if (invalid != null) {
@@ -109,15 +118,30 @@ public class LegacyImportService {
                     expired++;
                     continue;
                 }
-                PendingValue value = pendingValue(item, expiresAt);
+                String sourceKey = sourceCanonical.getOrDefault(item.jid(), item.jid());
+                List<String> targetCanonical = jdbc.query("select canonical_identity from identity_aliases where alias=?",
+                        (rs, row) -> rs.getString(1), item.jid());
+                if (!targetCanonical.isEmpty() && sourceCanonical.containsKey(item.jid())
+                        && !targetCanonical.getFirst().equals(sourceKey)) {
+                    conflicts.add(conflict("pending", item.jid(), "source_target_identity_mismatch"));
+                    continue;
+                }
+                String canonical = targetCanonical.isEmpty() ? sourceKey : targetCanonical.getFirst();
+                grouped.computeIfAbsent(canonical, ignored -> new ArrayList<>()).add(pendingValue(item, expiresAt));
+            }
+            for (Map.Entry<String, List<PendingValue>> group : grouped.entrySet()) {
+                String jid = group.getKey();
+                PendingValue value;
+                try { value = mergePending(group.getValue()); }
+                catch (RuntimeException ex) { conflicts.add(conflict("pending", jid, "pending_merge_conflict")); continue; }
                 List<ExistingPending> existing = jdbc.query("""
                         select payload::text as payload,due_at,updated_at,expires_at
                         from pending_notification where chat_jid=?
                         """, (rs, row) -> new ExistingPending(rs.getString("payload"), rs.getTimestamp("due_at").toInstant(),
-                        rs.getTimestamp("updated_at").toInstant(), rs.getTimestamp("expires_at").toInstant()), item.jid());
+                        rs.getTimestamp("updated_at").toInstant(), rs.getTimestamp("expires_at").toInstant()), jid);
                 if (!existing.isEmpty()) {
                     if (samePending(existing.getFirst(), value)) unchanged++;
-                    else conflicts.add(conflict("pending", item.jid(), "target_pending_differs"));
+                    else conflicts.add(conflict("pending", jid, "target_pending_differs"));
                     continue;
                 }
                 plannedPendings++;
@@ -126,12 +150,12 @@ public class LegacyImportService {
                             insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at)
                             values (?,?::jsonb,?,?,?)
                             on conflict (chat_jid) do nothing
-                            """, item.jid(), writeJson(value.payload()), Timestamp.from(value.dueAt()),
+                            """, jid, writeJson(value.payload()), Timestamp.from(value.dueAt()),
                             Timestamp.from(value.updatedAt()), Timestamp.from(value.expiresAt()));
                     if (jdbc.queryForObject("select count(*) from pending_notification where chat_jid=? and payload=?::jsonb and due_at=? and updated_at=? and expires_at=?",
-                            Integer.class, item.jid(), writeJson(value.payload()), Timestamp.from(value.dueAt()), Timestamp.from(value.updatedAt()),
+                            Integer.class, jid, writeJson(value.payload()), Timestamp.from(value.dueAt()), Timestamp.from(value.updatedAt()),
                             Timestamp.from(value.expiresAt())) != 1) {
-                        conflicts.add(conflict("pending", item.jid(), "target_pending_changed_during_import"));
+                        conflicts.add(conflict("pending", jid, "target_pending_changed_during_import"));
                     } else pending++;
                 }
             }
@@ -279,6 +303,27 @@ public class LegacyImportService {
         payload.put("isGroup", item.isGroup() == 1);
         payload.put("notificationPolicy", item.notificationPolicy());
         return new PendingValue(payload, last, last, expiresAt);
+    }
+
+    private static PendingValue mergePending(List<PendingValue> values) {
+        PendingValue newest = values.getFirst();
+        Instant first = null, last = null, due = null, updated = null, expiry = null;
+        int count = 0;
+        for (PendingValue value : values) {
+            Map<String, Object> p = value.payload();
+            if (!Objects.equals(p.get("isGroup"), newest.payload().get("isGroup"))) throw new IllegalArgumentException();
+            if (!Objects.equals(p.get("notificationPolicy"), newest.payload().get("notificationPolicy"))) throw new IllegalArgumentException();
+            count = Math.addExact(count, (Integer) p.get("messageCount"));
+            Instant f = parseInstant((String) p.get("firstMessageAt")), l = parseInstant((String) p.get("lastMessageAt"));
+            if (first == null || f.isBefore(first)) first = f;
+            if (last == null || l.isAfter(last)) { last = l; newest = value; }
+            if (due == null || value.dueAt().isBefore(due)) due = value.dueAt();
+            if (updated == null || value.updatedAt().isAfter(updated)) updated = value.updatedAt();
+            if (expiry == null || value.expiresAt().isAfter(expiry)) expiry = value.expiresAt();
+        }
+        Map<String,Object> payload = new LinkedHashMap<>(newest.payload());
+        payload.put("messageCount", count); payload.put("firstMessageAt", first.toString()); payload.put("lastMessageAt", last.toString());
+        return new PendingValue(payload, due, updated, expiry);
     }
 
     private static String invalidIdentity(SourceIdentity identity) {

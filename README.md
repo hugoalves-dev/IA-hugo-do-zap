@@ -35,8 +35,6 @@ Monte somente a cópia em modo somente leitura e execute primeiro `DRY_RUN`:
 ```sh
 docker compose --env-file .env run --rm --no-deps \
   -v "$(pwd)/migration-copy:/migration:ro" watcher \
-  --spring.main.web-application-type=none \
-  --watcher.runtime.scheduling-enabled=false \
   --watcher.legacy-import.snapshot=/migration/watcher.db \
   --watcher.legacy-import.mode=DRY_RUN
 ```
@@ -46,8 +44,6 @@ Após revisar contagens e resolver qualquer conflito, use `APPLY` com o mesmo sn
 ```sh
 docker compose --env-file .env run --rm --no-deps \
   -v "$(pwd)/migration-copy:/migration:ro" watcher \
-  --spring.main.web-application-type=none \
-  --watcher.runtime.scheduling-enabled=false \
   --watcher.legacy-import.snapshot=/migration/watcher.db \
   --watcher.legacy-import.mode=APPLY
 ```

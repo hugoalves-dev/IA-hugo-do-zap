@@ -26,6 +26,27 @@ class LegacyImportServiceTest {
 
     @TempDir Path tempDir;
 
+    @Test void pendingAliasesMergeIntoCanonicalKeyWithoutLosingCountsOrNewestPreview() throws Exception {
+        JdbcTemplate jdbc = freshTarget();
+        Path snapshot = tempDir.resolve("aliases.db");
+        try (var c = DriverManager.getConnection("jdbc:sqlite:" + snapshot.toAbsolutePath()); var s = c.createStatement()) {
+            s.execute("create table contact_identity(canonical_jid text primary key,lid_jid text unique,phone_jid text unique,username text,display_name text,display_name_source text,updated_at text not null)");
+            s.execute("create table chat_state(jid text primary key,is_group integer not null,notification_policy text not null)");
+            s.execute("create table pending_notification(jid text primary key,message_count integer not null,first_message_at text not null,last_message_at text not null,last_message_preview text)");
+            String old = "2026-10-26T10:00:00Z", newer = "2026-10-26T10:03:00Z";
+            s.execute("insert into contact_identity values('canon@lid','canon@lid','phone@s.whatsapp.net',null,null,'legacy','2026-10-26T10:04:00Z')");
+            s.execute("insert into chat_state values('canon@lid',0,'ANYTIME'),('phone@s.whatsapp.net',0,'ANYTIME')");
+            s.execute("insert into pending_notification values('phone@s.whatsapp.net',2,'"+old+"','2026-10-26T10:01:00Z','antiga'),('canon@lid',3,'2026-10-26T10:02:00Z','"+newer+"','nova')");
+        }
+        ImportReport result = importer(jdbc).importSnapshot(snapshot, ImportMode.APPLY);
+        assertTrue(result.conflicts().isEmpty());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals("5", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid='canon@lid'", String.class));
+        assertEquals("nova", jdbc.queryForObject("select payload->>'preview' from pending_notification where chat_jid='canon@lid'", String.class));
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,is_group,synchronized_snapshot) values('canon@lid',true,false,true)");
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification p join chat_snapshot s on s.chat_jid=p.chat_jid", Integer.class));
+    }
+
     @Test void importingTwiceIsIdempotentAndLeavesTheSnapshotByteForByteUnchanged() throws Exception {
         JdbcTemplate jdbc = freshTarget();
         Path snapshot = createSnapshot("legacy-pn@s.whatsapp.net", "legacy-lid@lid", true);
