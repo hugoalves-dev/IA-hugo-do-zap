@@ -136,6 +136,38 @@ class DecisionEngineTest {
         assertEquals("template_disclosure_required", decision.blockedReason());
     }
 
+    @Test void simulationCooldownDoesNotDenyIndependentlyEligibleRealAction() {
+        var settings = new DecisionPolicy(true, true, true, false,
+                Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
+                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
+                Duration.ofMinutes(5), Duration.ofMinutes(60), NOW.minusSeconds(60), null);
+        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+        assertFalse(decision.wouldReply());
+        assertFalse(decision.wouldAlert());
+        assertEquals("simulation_cooldown", decision.blockedReason());
+        assertTrue(decision.realActionAllowed());
+        assertNull(decision.realBlockedReason());
+    }
+
+    @Test void incompleteAvailabilityBlocksEvenWhenAiIsOff() {
+        EffectivePolicy effective = new EffectivePolicy(Map.of(), null, DecisionPolicy.disabled(),
+                new dev.hugo.watcher.policy.Availability(dev.hugo.watcher.policy.AvailabilityState.UNAVAILABLE,
+                        dev.hugo.watcher.policy.AvailabilitySource.NO_POLICY,"incomplete"));
+        assertEquals("availability_policy_incomplete", engine.decide(batch(false), Classification.unavailable(), effective, NOW).blockedReason());
+    }
+
+    @Test void unavailableOwnerAllowsOnlyPersonallyReferencedCriticalAlert() {
+        var unavailable = new dev.hugo.watcher.policy.Availability(dev.hugo.watcher.policy.AvailabilityState.UNAVAILABLE,
+                dev.hugo.watcher.policy.AvailabilitySource.TEMPORARY_OVERRIDE,"busy");
+        var ordinary = new EffectivePolicy(Map.of(), null, policy(true).decisionPolicy(), unavailable);
+        assertFalse(engine.decide(batch(false), Classification.contactRequest(), ordinary, NOW).wouldAlert());
+        var critical = new EffectivePolicy(Map.of(), null,
+                policy(true,Set.of(Situation.CRITICAL_URGENCY),true,true).decisionPolicy(), unavailable);
+        assertFalse(engine.decide(batch(false), Classification.criticalUrgency(false), critical, NOW).wouldAlert());
+        assertTrue(engine.decide(batch(false), Classification.criticalUrgency(true), critical, NOW).wouldAlert());
+    }
+
     private static Batch batch(boolean group) {
         return new Batch(java.util.UUID.randomUUID(), group ? "group@g.us" : "contact@s.whatsapp.net",
                 group ? "participant@s.whatsapp.net" : "", java.util.List.of());

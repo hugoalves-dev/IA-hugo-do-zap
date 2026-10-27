@@ -4,8 +4,13 @@ import java.util.Map;
 
 public record EffectivePolicy(Map<PolicyField, ResolvedPolicyField> fields,
                               TemporaryAvailabilityOverride temporaryAvailability,
-                              DecisionPolicy decisionPolicy) {
+                              DecisionPolicy decisionPolicy, Availability availability) {
     public EffectivePolicy { fields = Map.copyOf(fields); }
+
+    public EffectivePolicy(Map<PolicyField, ResolvedPolicyField> fields,
+                           TemporaryAvailabilityOverride temporaryAvailability, DecisionPolicy decisionPolicy) {
+        this(fields, temporaryAvailability, decisionPolicy, null);
+    }
 
     public EffectivePolicy(Map<PolicyField, ResolvedPolicyField> fields,
                            TemporaryAvailabilityOverride temporaryAvailability) {

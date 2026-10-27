@@ -16,6 +16,8 @@ public final class DecisionEngine {
         Objects.requireNonNull(classification, "classification");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(now, "now");
+        if (policy.availability() != null && policy.availability().source() == dev.hugo.watcher.policy.AvailabilitySource.NO_POLICY)
+            return blocked("availability_policy_incomplete", "availability_policy_incomplete");
         DecisionPolicy settings = policy.decisionPolicy();
         if (settings == null || !settings.aiClassificationEnabled())
             return blocked("ai_classification_disabled", "ai_classification_disabled");
@@ -25,14 +27,10 @@ public final class DecisionEngine {
         boolean critical = classification.situations().contains(Situation.CRITICAL_URGENCY);
         if (critical && !classification.explicitPersonalReference())
             return blocked("critical_reference_required", "critical_reference_required");
-        if (classification.requestDetected()
-                && cooldownActive(settings.lastSimulationActionAt(), settings.simulationCooldown(), now)) {
-            String realBlocked = settings.killSwitchEnabled() ? "kill_switch_enabled"
-                    : cooldownActive(settings.lastRealActionAt(), settings.realCooldown(), now) ? "real_cooldown" : "simulation_cooldown";
-            return new Decision(false, false, null, "simulation_cooldown", "simulation_cooldown", false, realBlocked);
-        }
-
-        boolean alert = settings.intelligentAlertsEnabled()
+        boolean alert = (policy.availability() == null
+                || policy.availability().state() == dev.hugo.watcher.policy.AvailabilityState.AVAILABLE
+                || critical && classification.explicitPersonalReference())
+                && settings.intelligentAlertsEnabled()
                 && classification.requestDetected()
                 && classification.situations().stream().anyMatch(settings.authorizedSituations()::contains);
         ResponseTemplate selected = null;
@@ -53,10 +51,6 @@ public final class DecisionEngine {
             } else if (!selected.isPreapprovedAndDisclosed()) {
                 blocked = "template_disclosure_required";
                 reason = "reply_template_not_disclosed";
-                selected = null;
-            } else if (cooldownActive(settings.lastSimulationActionAt(), settings.simulationCooldown(), now)) {
-                blocked = "simulation_cooldown";
-                reason = "reply_cooldown";
                 selected = null;
             } else {
                 reply = true;
@@ -80,6 +74,13 @@ public final class DecisionEngine {
         } else if (cooldownActive(settings.lastRealActionAt(), settings.realCooldown(), now)) {
             realAllowed = false;
             realBlocked = "real_cooldown";
+        }
+        if ((alert || reply) && cooldownActive(settings.lastSimulationActionAt(), settings.simulationCooldown(), now)) {
+            alert = false;
+            reply = false;
+            selected = null;
+            reason = "simulation_cooldown";
+            blocked = "simulation_cooldown";
         }
         return new Decision(alert, reply, selected == null ? null : selected.reference(), reason, blocked, realAllowed, realBlocked);
     }

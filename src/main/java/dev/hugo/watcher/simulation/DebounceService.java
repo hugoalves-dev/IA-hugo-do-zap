@@ -44,8 +44,9 @@ public class DebounceService {
     }
 
     private void enqueueTransaction(IncomingMessage message, Instant at) {
-        String chat = message.chatJid();
-        String participant = message.participantJid().orElse("");
+        lockIdentityMerge();
+        String chat = canonical(message.chatJid());
+        String participant = message.participantJid().map(this::canonical).orElse("");
         lockBatch(chat, participant);
         String messageId = message.externalId().orElseThrow(() -> new IllegalArgumentException("external message ID required"));
         Timestamp now = Timestamp.from(at);
@@ -111,10 +112,52 @@ public class DebounceService {
     }
 
     public List<Batch> claimReady(Instant now) {
+        drainInbox(now);
         return Objects.requireNonNull(transactions.execute(status -> claimTransaction(now)));
     }
 
+    private void drainInbox(Instant now) {
+        if (!limits.isEnabled()) return;
+        // One transaction per capture. A failed enqueue retains the durable snapshot for retry.
+        for (int i = 0; i < 100; i++) {
+            try {
+                Boolean drained = transactions.execute(status -> {
+                    lockIdentityMerge();
+                    List<Capture> rows = jdbc.query("""
+                            select id,shadow_payload::text from processed_message
+                             where shadow_payload is not null and shadow_expires_at>?
+                             order by id for update skip locked limit 1
+                            """, (rs, row) -> new Capture(rs.getLong(1), rs.getString(2)), Timestamp.from(now));
+                    if (rows.isEmpty()) return false;
+                    Capture capture = rows.getFirst();
+                    IncomingMessage message = JSON.readValue(capture.payload(), IncomingMessage.class);
+                    enqueueTransaction(message, now);
+                    jdbc.update("update processed_message set shadow_payload=null,shadow_expires_at=null where id=?", capture.id());
+                    return true;
+                });
+                if (!Boolean.TRUE.equals(drained)) break;
+            } catch (RuntimeException failure) {
+                // No JIDs, payloads or database error text in logs.
+                org.slf4j.LoggerFactory.getLogger(DebounceService.class)
+                        .warn("Shadow capture deferred; durable snapshot retained for retry");
+                break;
+            }
+        }
+    }
+
+    private void lockIdentityMerge() {
+        jdbc.query("select pg_advisory_xact_lock(947221, 2)", rs -> { });
+    }
+
+    private String canonical(String jid) {
+        List<String> rows = jdbc.query("select canonical_identity from identity_aliases where alias=?", (rs, row) -> rs.getString(1), jid);
+        return rows.isEmpty() ? jid : rows.getFirst();
+    }
+
+    private record Capture(long id, String payload) { }
+
     private List<Batch> claimTransaction(Instant now) {
+        lockIdentityMerge();
         Timestamp cutoff = Timestamp.from(now);
         jdbc.update("update simulation_batches set status='READY' where status='OPEN' and due_at<=?", cutoff);
         jdbc.update("update simulation_batches set status='READY', claimed_at=null where status='CLAIMED' and claimed_at<=?",

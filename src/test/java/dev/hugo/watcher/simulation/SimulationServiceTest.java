@@ -31,6 +31,9 @@ class SimulationServiceTest {
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(source);
         Flyway.configure().dataSource(source).load().migrate();
+        jdbc.update("delete from holiday_calendar");
+        jdbc.update("delete from availability_overrides");
+        jdbc.update("delete from chat_policy_overrides");
         jdbc.update("delete from simulation_decisions");
         jdbc.update("delete from chat_automation_authorizations");
         jdbc.update("delete from decision_cooldowns");
@@ -69,9 +72,13 @@ class SimulationServiceTest {
 
         Batch failing = enqueueAndClaim("persist-fail@s.whatsapp.net");
         UUID id = failing.id();
-        jdbc.execute("drop table simulation_decisions");
-        assertThrows(RuntimeException.class, () -> simulations.evaluate(failing));
-        assertEquals("CLAIMED", jdbc.queryForObject("select status from simulation_batches where batch_id=?", String.class, id));
+        jdbc.execute("alter table simulation_decisions rename to unavailable_simulation_decisions");
+        try {
+            assertThrows(RuntimeException.class, () -> simulations.evaluate(failing));
+            assertEquals("CLAIMED", jdbc.queryForObject("select status from simulation_batches where batch_id=?", String.class, id));
+        } finally {
+            jdbc.execute("alter table unavailable_simulation_decisions rename to simulation_decisions");
+        }
     }
 
     @Test void sensitiveBatchExpiresBeforeItsLongerLivedAudit() {
@@ -138,6 +145,44 @@ class SimulationServiceTest {
                 insert into response_templates(template_id,version,situation,body,identifies_automation,enabled)
                 values ('undisclosed',1,'CONTACT_REQUEST','Oi',true,true)
                 """));
+    }
+
+    @Test void persistedPoliciesAndAvailabilityAreAuditedEvenWithoutAi() {
+        String chat = "policy@s.whatsapp.net";
+        jdbc.update("insert into chat_policy_overrides(chat_jid,profile_name,fields) values (?,'WORK_ONLY',jsonb_build_object('includeOptionalHolidays',true)) on conflict(chat_jid) do update set fields=excluded.fields", chat);
+        jdbc.update("insert into availability_overrides(singleton_id,state,starts_at,expires_at) values (1,'UNAVAILABLE',now()-interval '1 hour',now()+interval '1 hour') on conflict(singleton_id) do update set starts_at=excluded.starts_at,expires_at=excluded.expires_at,state=excluded.state");
+        Batch batch = enqueueAndClaim(chat);
+        simulations.evaluate(batch);
+        assertEquals("UNAVAILABLE", jdbc.queryForObject("select availability_state from simulation_decisions where batch_id=?", String.class, batch.id()));
+        assertEquals("TEMPORARY_OVERRIDE", jdbc.queryForObject("select availability_source from simulation_decisions where batch_id=?", String.class, batch.id()));
+        assertEquals("PROFILE", jdbc.queryForObject("select policy_snapshot->'MODE'->>'source' from simulation_decisions where batch_id=?", String.class, batch.id()));
+        assertEquals("CHAT_OVERRIDE", jdbc.queryForObject("select policy_snapshot->'INCLUDE_OPTIONAL_HOLIDAYS'->>'source' from simulation_decisions where batch_id=?", String.class, batch.id()));
+    }
+
+    @Test void aliasPolicyConflictIsAuditedFailClosedWithoutChoosingOne() {
+        String canonical = "policy-canonical@lid";
+        String alias = "5511000000000@s.whatsapp.net";
+        jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?),(?,?) on conflict(alias) do update set canonical_identity=excluded.canonical_identity",canonical,canonical,alias,canonical);
+        jdbc.update("insert into chat_policy_overrides(chat_jid,profile_name) values (?,'ANYTIME'),(?,'WORK_ONLY')", canonical,alias);
+        Batch batch = enqueueAndClaim(canonical);
+        SimulationDecision decision = simulations.evaluate(batch);
+        assertEquals("availability_policy_incomplete",decision.blockedReason());
+        assertEquals("NO_POLICY",jdbc.queryForObject("select availability_source from simulation_decisions where batch_id=?",String.class,batch.id()));
+    }
+
+    @Test void persistedHolidayNeedsAttestationBeforeChangingAuditedAvailability() {
+        Instant now = Instant.parse("2026-10-27T14:00:00Z");
+        simulations = new SimulationService(jdbc,new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()),
+                java.time.Clock.fixed(now,java.time.ZoneOffset.UTC),new WatcherSimulationProperties(),new DecisionEngine());
+        jdbc.update("insert into holiday_calendar(local_date,jurisdiction,name,calendar_year,validation_status,optional) values ('2026-10-27','LINS','TEST FIXTURE - NOT REAL HOLIDAY',2026,'UNKNOWN',false)");
+        Batch unknown = enqueueAndClaim("unknown-holiday@s.whatsapp.net");
+        simulations.evaluate(unknown);
+        assertEquals("ANYTIME",jdbc.queryForObject("select availability_source from simulation_decisions where batch_id=?",String.class,unknown.id()));
+        jdbc.update("update holiday_calendar set validation_status='VALIDATED',source='test fixture only',validated_by='test fixture',validated_at=now()");
+        Batch attested = enqueueAndClaim("attested-holiday@s.whatsapp.net");
+        simulations.evaluate(attested);
+        assertEquals("VALIDATED_HOLIDAY",jdbc.queryForObject("select availability_source from simulation_decisions where batch_id=?",String.class,attested.id()));
+        assertEquals("UNAVAILABLE",jdbc.queryForObject("select availability_state from simulation_decisions where batch_id=?",String.class,attested.id()));
     }
 
     private Batch enqueueAndClaim(String chat) {

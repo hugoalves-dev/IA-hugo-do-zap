@@ -69,6 +69,8 @@ class MessageServiceTest {
 
         assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(message));
         assertEquals(MessageService.Acceptance.DUPLICATE, integrated.accept(message));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
+        new DebounceService(jdbc, new WatcherSimulationProperties(), manager).claimReady(Instant.now());
         assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
     }
 
@@ -82,6 +84,70 @@ class MessageServiceTest {
         assertEquals(MessageService.Acceptance.ACCEPTED,
                 integrated.accept(message("shadow-disabled", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi"))));
         assertEquals(0, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+    }
+
+    @Test void saturationDoesNotRollbackLegacyAndSnapshotRecoversAfterRestart() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var limits = new WatcherSimulationProperties();
+        limits.setMaxPendingBatches(1);
+        var debounce = new DebounceService(jdbc, limits, manager);
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes, debounce, limits);
+        assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(message("shadow-one", "one@s.whatsapp.net", Map.of("conversation", "one"))));
+        debounce.claimReady(Instant.now());
+        assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(message("shadow-two", "two@s.whatsapp.net", Map.of("conversation", "two"))));
+        debounce.claimReady(Instant.now());
+        assertEquals(2, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
+        jdbc.update("update simulation_batches set status='COMPLETED'");
+        new DebounceService(jdbc, limits, manager).claimReady(Instant.now());
+        assertEquals(0, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
+        assertEquals(2, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+    }
+
+    @Test void shadowDatabaseFailureKeepsLegacyAndDurableRetry() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var limits = new WatcherSimulationProperties();
+        var debounce = new DebounceService(jdbc, limits, manager);
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes, debounce, limits);
+        jdbc.execute("alter table simulation_batch_messages rename to temporarily_unavailable_messages");
+        try {
+            assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(message("shadow-db", "db@s.whatsapp.net", Map.of("conversation", "hello"))));
+            debounce.claimReady(Instant.now());
+            assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+            assertEquals(1, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
+        } finally {
+            jdbc.execute("alter table temporarily_unavailable_messages rename to simulation_batch_messages");
+        }
+        debounce.claimReady(Instant.now());
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+    }
+
+    @Test void concurrentShadowWorkersDrainCapturedMessageOnce() throws Exception {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var limits = new WatcherSimulationProperties();
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes, new DebounceService(jdbc,limits), limits);
+        integrated.accept(message("concurrent-capture", "concurrent@s.whatsapp.net", Map.of("conversation","hello")));
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var start = new java.util.concurrent.CountDownLatch(1);
+            var one = executor.submit(() -> { start.await(); return new DebounceService(jdbc,limits).claimReady(Instant.now()); });
+            var two = executor.submit(() -> { start.await(); return new DebounceService(jdbc,limits).claimReady(Instant.now()); });
+            start.countDown();
+            one.get(10,java.util.concurrent.TimeUnit.SECONDS);
+            two.get(10,java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
+    }
+
+    @Test void alreadyReadMessageNeverLeavesShadowCapture() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc,new WatcherSimulationProperties()));
+        String chat = "read@s.whatsapp.net";
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,synchronized_snapshot,last_read_at) values (?,false,true,now())", chat);
+        assertEquals(MessageService.Acceptance.IGNORED,integrated.accept(messageAt("read-capture",chat,"2026-10-26T10:00:00Z")));
+        assertEquals(0,jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null",Integer.class));
     }
 
     @Test void filteredModeRejectsUnknownOrUnsynchronizedArchiveState() {

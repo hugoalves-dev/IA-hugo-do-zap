@@ -128,10 +128,13 @@ public class MessageService {
         String dedupKey = sha256(canonicalJid + "\n" + externalId + "\n" + participant);
         String upstreamMessageKey = sha256(externalId);
         if (jdbc.update("""
-                insert into processed_message(message_id, processed_at, canonical_chat_jid, upstream_message_key, canonical_participant_jid)
-                values (?, ?, ?, ?, ?)
+                insert into processed_message(message_id, processed_at, canonical_chat_jid, upstream_message_key, canonical_participant_jid, shadow_payload, shadow_expires_at)
+                values (?, ?, ?, ?, ?, ?::jsonb, ?)
                 on conflict do nothing
-                """, dedupKey, Timestamp.from(now), canonicalJid, upstreamMessageKey, participant) == 0) return Acceptance.DUPLICATE;
+                """, dedupKey, Timestamp.from(now), canonicalJid, upstreamMessageKey, participant,
+                chat.lastReadAt() != null && !receivedAt.isAfter(chat.lastReadAt()) ? null
+                        : shadowSnapshot(message, canonicalJid, participant, receivedAt),
+                Timestamp.from(now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L))) == 0) return Acceptance.DUPLICATE;
         if (chat.lastReadAt() != null && !receivedAt.isAfter(chat.lastReadAt())) return Acceptance.IGNORED;
 
         String preview = extractPreview(message.content());
@@ -161,13 +164,15 @@ public class MessageService {
                     expires_at=excluded.expires_at
                 """, canonicalJid, toJson(payload), Timestamp.from(lastAt), Timestamp.from(now),
                 Timestamp.from(expiresAt));
-        if (debounce != null && simulationProperties.isEnabled() && (!group || !participant.isBlank())) {
-            IncomingMessage snapshot = new IncomingMessage(message.externalId(), canonicalJid,
-                    group ? Optional.of(participant) : Optional.empty(), Optional.empty(), Optional.empty(),
-                    message.fromMe(), message.upsertType(), message.history(), message.content(), receivedAt);
-            debounce.enqueue(snapshot, now);
-        }
         return Acceptance.ACCEPTED;
+    }
+
+    private String shadowSnapshot(IncomingMessage message, String chat, String participant, Instant receivedAt) {
+        if (debounce == null || !simulationProperties.isEnabled() || isGroup(chat) && participant.isBlank()) return null;
+        IncomingMessage snapshot = new IncomingMessage(message.externalId(), chat,
+                isGroup(chat) ? Optional.of(participant) : Optional.empty(), Optional.empty(), Optional.empty(),
+                message.fromMe(), message.upsertType(), message.history(), message.content(), receivedAt);
+        return JSON.writeValueAsString(snapshot);
     }
 
     private Pending readPending(String jid) {

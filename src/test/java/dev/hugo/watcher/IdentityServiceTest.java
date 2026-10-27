@@ -28,6 +28,11 @@ class IdentityServiceTest {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(dataSource);
         Flyway.configure().dataSource(dataSource).load().migrate();
+        jdbc.update("delete from simulation_decisions");
+        jdbc.update("delete from simulation_batch_messages");
+        jdbc.update("delete from simulation_batches");
+        jdbc.update("delete from chat_automation_authorizations");
+        jdbc.update("delete from decision_cooldowns");
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from processed_message");
         jdbc.update("delete from quarantined_events");
@@ -35,6 +40,25 @@ class IdentityServiceTest {
         jdbc.update("delete from contact_identity");
         jdbc.update("delete from identity_aliases");
         identities = new IdentityService(jdbc, new DataSourceTransactionManager(dataSource));
+    }
+
+    @Test void explicitMergePreservesAuthorizationsAndMostRecentCooldownAndRekeysBatches() {
+        String lid = "1001@lid";
+        String phone = "5511999999999@s.whatsapp.net";
+        identities.observe(new IdentityObservation(lid, Set.of(), IdentityEvidence.NONE));
+        identities.observe(new IdentityObservation(phone, Set.of(), IdentityEvidence.NONE));
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)", phone);
+        jdbc.update("insert into decision_cooldowns(chat_jid,last_simulation_action_at,last_real_action_at) values (?,now()-interval '2 minutes',now()),(?,now(),now()-interval '2 minutes')", phone, lid);
+        var debounce = new dev.hugo.watcher.simulation.DebounceService(jdbc, new dev.hugo.watcher.simulation.WatcherSimulationProperties());
+        Instant now = Instant.now();
+        for (String chat : java.util.List.of(lid,phone)) {
+            debounce.enqueue(new IncomingMessage(java.util.Optional.of("same"),chat,java.util.Optional.empty(),java.util.Optional.empty(),java.util.Optional.empty(),false,"notify",false,java.util.Map.of("conversation","hello"),now),now);
+        }
+        identities.observe(new IdentityObservation(lid, Set.of(phone), IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR));
+        assertEquals(1, jdbc.queryForObject("select count(*) from chat_automation_authorizations where chat_jid=?", Integer.class, lid));
+        assertEquals(1, jdbc.queryForObject("select count(*) from decision_cooldowns where chat_jid=? and last_real_action_at>now()-interval '1 minute' and last_simulation_action_at>now()-interval '1 minute'", Integer.class,lid));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_batches where chat_jid=?", Integer.class, phone));
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_batch_messages where chat_jid=?", Integer.class,lid));
     }
 
     @Test void doesNotJoinLidAndPhoneWithoutExplicitEvidence() {
@@ -115,6 +139,11 @@ class IdentityServiceTest {
                 "select last_read_at from chat_snapshot where chat_jid=?", Timestamp.class, merged.canonicalJid()).toInstant());
 
         jdbc.update("delete from chat_snapshot");
+        jdbc.update("delete from simulation_decisions");
+        jdbc.update("delete from simulation_batch_messages");
+        jdbc.update("delete from simulation_batches");
+        jdbc.update("delete from chat_automation_authorizations");
+        jdbc.update("delete from decision_cooldowns");
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from identity_aliases");
         String unknownPhone = "5511888888888@s.whatsapp.net";
