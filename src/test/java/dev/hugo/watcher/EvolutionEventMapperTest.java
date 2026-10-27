@@ -85,4 +85,17 @@ class EvolutionEventMapperTest {
                 mapper.map(first, "webhook").getFirst().aliasEvidence());
         assertTrue(mapper.map(second, "webhook").getFirst().aliases().isEmpty());
     }
+
+    @Test void directChatUsesRemoteJidAndItsAlternateEvenWhenParticipantIsPresent() throws Exception {
+        var direct = json.readTree("""
+                {"event":"messages.upsert","instance":"synthetic","data":{
+                  "key":{"id":"dm-1","remoteJid":"1001@lid","remoteJidAlt":"5511999999999@s.whatsapp.net","participant":"1002@lid"}}}
+                """);
+
+        var event = mapper.map(direct, "webhook").getFirst();
+
+        assertEquals(Optional.of("1001@lid"), event.senderJid());
+        assertEquals(java.util.Set.of("5511999999999@s.whatsapp.net"), event.aliases());
+        assertEquals(Optional.of(IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR), event.aliasEvidence());
+    }
 }

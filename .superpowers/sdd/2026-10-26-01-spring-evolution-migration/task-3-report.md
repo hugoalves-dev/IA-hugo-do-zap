@@ -4,7 +4,7 @@
 
 - `EvolutionEventMapper.map(JsonNode, String distribution)` accepts only `messages.upsert` envelopes with an instance and a nonblank `data.key.id`. Unsupported event kinds and entries without that stable message ID return no events (rejected; no unverified snapshot is created).
 - The event carries source/distribution, message timestamp when it is an integral epoch-seconds value, conversation JID, sender JID, aliases, alias evidence, and tri-state `archived`.
-- Group sender identity comes from `key.participant`; the group JID is kept as the conversation JID. Group events without participant do not use the group JID as a person.
+- Direct-chat sender identity comes from `key.remoteJid`, and its alternate is `key.remoteJidAlt`; `key.participant` does not override the direct sender even if present. For groups, sender identity comes from `key.participant` and its alternate is `key.participantAlt`; the group JID is kept as the conversation JID. Group events without participant do not use the group JID as a person.
 - The mapper does not derive a phone number from a LID. It extracts `remoteJidAlt` only alongside a direct-chat `remoteJid`, or `participantAlt` alongside a group `participant`, when both same-key fields are nonblank. It tags that explicit pair `EXPLICIT_ALTERNATE_JID_PAIR`. `IdentityService` joins aliases only when this evidence is passed; otherwise it stores only the observed JID. The official source declares the optional alternate fields, but the worktree has no pinned release proving that the target webhook forwards them or that the values are valid for a real account. Joins use the existing `identity_aliases` table in a transaction.
 - `archived` is empty when absent or null; explicit `true` and `false` remain distinct. The Boolean payloads are synthetic and do not prove Evolution emits that field for message events. The consumer in task 4 owns the fail-closed policy: `Optional.empty()` is UNKNOWN and must block archive-dependent processing until a fresh, verified snapshot/bootstrap is available. A Boolean in an unvalidated payload alone does not establish current state.
 - Synthetic fixture and provenance notes are in `src/test/resources/fixtures/evolution/README.md`. No Flyway change was needed; the existing alias schema is sufficient.
@@ -30,6 +30,12 @@ mvn '-Dtest=EvolutionEventMapperTest,IdentityServiceTest,EvolutionWebhookControl
 ```
 
 Result: **15 tests, 0 failures, 0 errors, 0 skipped**. This includes 4 mapper tests, 3 PostgreSQL/Testcontainers identity tests, and 8 existing webhook HTTP compatibility tests. The full suite was not run. The output contains existing Java 25 Mockito dynamic-agent warnings from the webhook tests and a Testcontainers JUnit extension warning; they did not fail the run.
+
+### Direct-chat participant regression follow-up
+
+RED command: `mvn '-Dtest=EvolutionEventMapperTest' test`. The new DM fixture included `remoteJid=1001@lid`, `remoteJidAlt=5511999999999@s.whatsapp.net`, and a conflicting `participant=1002@lid`. It failed as intended: expected sender `1001@lid`, got `1002@lid`.
+
+The mapper now chooses `(remoteJid, remoteJidAlt)` for direct chats and `(participant, participantAlt)` only for groups. GREEN command: `mvn '-Dtest=EvolutionEventMapperTest' test` → **5 tests, 0 failures, 0 errors, 0 skipped**.
 
 CodeGraph was queried before edits but returned symbols from the old `H:\Script\IA-hugo-do-zap` checkout. Per the required fallback, I used targeted `rg` and direct reads in this worktree instead of relying on that graph result.
 

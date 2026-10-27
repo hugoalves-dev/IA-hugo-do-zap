@@ -51,7 +51,7 @@ public final class EvolutionEventMapper {
         boolean group = remoteJid != null && remoteJid.endsWith("@g.us");
         Optional<String> sender = group
                 ? nonBlank(participant)
-                : nonBlank(participant).or(() -> nonBlank(remoteJid));
+                : nonBlank(remoteJid);
         String alternateJid = text(key.get(group ? "participantAlt" : "remoteJidAlt"));
         Set<String> aliases = sender.isPresent() && alternateJid != null && !alternateJid.isBlank()
                 && !sender.get().equals(alternateJid) ? Set.of(alternateJid) : Set.of();
