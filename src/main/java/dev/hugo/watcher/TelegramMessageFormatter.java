@@ -15,6 +15,7 @@ public class TelegramMessageFormatter {
         try {
             JsonNode payload = JSON.readTree(action.payload());
             return switch (payload.path("eventType").asString("")) {
+                case "telegram_admin_reply" -> limit(clean(payload.path("text").asString("")), MAX_MESSAGE_LENGTH);
                 case NotificationService.ARCHIVED_MESSAGES -> archived(payload);
                 case ConnectionService.ACTION_TYPE -> connection(payload);
                 default -> "📬 O watcher registrou uma nova atualização do WhatsApp.";

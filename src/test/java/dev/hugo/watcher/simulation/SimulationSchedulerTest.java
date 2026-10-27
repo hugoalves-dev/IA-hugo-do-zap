@@ -5,12 +5,17 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Clock;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 class SimulationSchedulerTest {
     private final ApplicationContextRunner contexts = new ApplicationContextRunner()
@@ -25,11 +30,20 @@ class SimulationSchedulerTest {
         contexts.run(context -> assertTrue(context.getBeansOfType(SimulationScheduler.class).size() > 0));
     }
 
+    @Test void runtimeAdminSwitchStopsProcessingReadyBatches() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class))).thenReturn(false);
+        DebounceService debounce = mock(DebounceService.class);
+        new SimulationScheduler(debounce, mock(SimulationService.class), Clock.systemUTC(), jdbc).processReady();
+        verifyNoInteractions(debounce);
+    }
+
     @Configuration(proxyBeanMethods = false)
     @Import(SimulationScheduler.class)
     static class SchedulerTestConfiguration {
         @Bean DebounceService debounceService() { return mock(DebounceService.class); }
         @Bean SimulationService simulationService() { return mock(SimulationService.class); }
         @Bean Clock clock() { return Clock.systemUTC(); }
+        @Bean JdbcTemplate jdbcTemplate() { return mock(JdbcTemplate.class); }
     }
 }
