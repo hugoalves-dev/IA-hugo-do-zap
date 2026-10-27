@@ -74,10 +74,11 @@ public class MessageService {
         }
 
         List<ChatSnapshot> snapshots = jdbc.query("""
-                select archived, synchronized_snapshot, display_name, is_group
+                select archived, synchronized_snapshot, display_name, is_group, last_read_at
                 from chat_snapshot where chat_jid=? for update
                 """, (rs, row) -> new ChatSnapshot((Boolean) rs.getObject("archived"),
-                rs.getBoolean("synchronized_snapshot"), rs.getString("display_name"), rs.getBoolean("is_group")), canonicalJid);
+                rs.getBoolean("synchronized_snapshot"), rs.getString("display_name"), rs.getBoolean("is_group"),
+                rs.getTimestamp("last_read_at") == null ? null : rs.getTimestamp("last_read_at").toInstant()), canonicalJid);
         if (snapshots.isEmpty() || snapshots.getFirst().archived() == null || !snapshots.getFirst().synchronizedSnapshot()) {
             quarantine("MESSAGE", externalId, "archive_state_unknown_or_unsynchronized", now);
             return Acceptance.QUARANTINED;
@@ -100,6 +101,7 @@ public class MessageService {
         String dedupKey = sha256(canonicalJid + "\n" + externalId + "\n" + participant);
         if (jdbc.update("insert into processed_message(message_id, processed_at) values (?, ?) on conflict (message_id) do nothing",
                 dedupKey, Timestamp.from(Instant.now())) == 0) return Acceptance.DUPLICATE;
+        if (chat.lastReadAt() != null && !receivedAt.isAfter(chat.lastReadAt())) return Acceptance.IGNORED;
 
         String preview = extractPreview(message.content());
         NotificationPolicy.Kind policy = classifyPolicy(chat.displayName());
@@ -241,6 +243,7 @@ public class MessageService {
         catch (JacksonException ex) { throw new IllegalArgumentException("Could not encode notification preview", ex); }
     }
 
-    private record ChatSnapshot(Boolean archived, boolean synchronizedSnapshot, String displayName, boolean group) { }
+    private record ChatSnapshot(Boolean archived, boolean synchronizedSnapshot, String displayName, boolean group,
+                                Instant lastReadAt) { }
     private record Pending(int count, Instant firstAt, Instant lastAt, String preview) { }
 }

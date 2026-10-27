@@ -108,6 +108,20 @@ class MessageServiceTest {
                 "5511999999999@s.whatsapp.net"));
     }
 
+    @Test void delayedMessageAtOrBeforeReadWatermarkDoesNotRecreatePendingNotification() {
+        String jid = "5511999999999@s.whatsapp.net";
+        archive(jid, "Contato");
+        Instant readAt = Instant.parse("2026-10-26T10:05:00Z");
+        assertEquals(0, chats.clearRead(jid, readAt, Optional.of(0), Optional.empty(), Optional.empty()));
+
+        assertEquals(MessageService.Acceptance.IGNORED,
+                messages.accept(messageAt("delayed-before-read", jid, "2026-10-26T10:04:59Z")));
+        assertEquals(MessageService.Acceptance.IGNORED,
+                messages.accept(messageAt("at-read-watermark", jid, "2026-10-26T10:05:00Z")));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(2, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+    }
+
     @Test void usesTheConfiguredWorkOnlyNameRegex() {
         properties.setAllowedNameRegex("(?:JOB|WORK)");
         archive("5511999999999@s.whatsapp.net", "JOB Contact");
@@ -168,5 +182,9 @@ class MessageServiceTest {
     private static IncomingMessage message(String id, String jid, Map<String, Object> content, boolean fromMe, boolean history) {
         return new IncomingMessage(Optional.of(id), jid, Optional.empty(), Optional.empty(), Optional.empty(), fromMe,
                 "notify", history, content, Instant.parse("2026-10-26T10:00:00Z"));
+    }
+    private static IncomingMessage messageAt(String id, String jid, String at) {
+        return new IncomingMessage(Optional.of(id), jid, Optional.empty(), Optional.empty(), Optional.empty(), false,
+                "notify", false, Map.of("conversation", "atrasada"), Instant.parse(at));
     }
 }

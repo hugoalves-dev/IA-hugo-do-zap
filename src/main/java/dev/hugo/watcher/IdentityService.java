@@ -256,14 +256,38 @@ public class IdentityService {
 
         if (!pending.isEmpty()) {
             jdbc.update("delete from pending_notification where chat_jid in (" + placeholders + ")", keys.toArray());
-            if (snapshots.stream().max(Comparator.comparing(ChatSnapshotRow::snapshotAt)).map(ChatSnapshotRow::archived)
-                    .filter(Boolean.FALSE::equals).isEmpty()) {
-                PendingMerge merged = combinePending(pending);
-                jdbc.update("""
-                        insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at)
-                        values (?,?::jsonb,?,?,?)
-                        """, canonical, writeJson(merged.payload()), Timestamp.from(merged.dueAt()),
-                        Timestamp.from(merged.updatedAt()), Timestamp.from(merged.expiresAt()));
+            ChatSnapshotRow latest = snapshots.stream().max(Comparator.comparing(ChatSnapshotRow::snapshotAt)
+                    .thenComparing(row -> row.chatJid().equals(canonical) ? 1 : 0)).orElse(null);
+            if (latest == null || latest.archived() == null || !latest.synchronizedSnapshot()) {
+                pending.forEach(row -> QuarantineWriter.write(jdbc, "PENDING_NOTIFICATION", null,
+                        "alias_merge_state_unknown", Instant.now()));
+            } else if (Boolean.TRUE.equals(latest.archived())) {
+                Instant lastReadAt = snapshots.stream().map(ChatSnapshotRow::lastReadAt).filter(Objects::nonNull)
+                        .max(Instant::compareTo).orElse(null);
+                List<PendingRow> unread = new ArrayList<>();
+                for (PendingRow row : pending) {
+                    Map<String, Object> payload = readJson(row.payload());
+                    Instant firstMessageAt = strictTimestamp(payload.get("firstMessageAt"));
+                    Instant lastMessageAt = strictTimestamp(payload.get("lastMessageAt"));
+                    if (firstMessageAt == null || lastMessageAt == null || firstMessageAt.isAfter(lastMessageAt)) {
+                        QuarantineWriter.write(jdbc, "PENDING_NOTIFICATION", null,
+                                "alias_merge_invalid_pending_timestamp", Instant.now());
+                    } else if (lastReadAt != null && !firstMessageAt.isAfter(lastReadAt)) {
+                        // Aggregate rows do not retain per-message timestamps; discard a row if READ overlaps it.
+                        QuarantineWriter.write(jdbc, "PENDING_NOTIFICATION", null,
+                                "alias_merge_read_covered", Instant.now());
+                    } else {
+                        unread.add(row);
+                    }
+                }
+                if (!unread.isEmpty()) {
+                    PendingMerge merged = combinePending(unread);
+                    jdbc.update("""
+                            insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at)
+                            values (?,?::jsonb,?,?,?)
+                            """, canonical, writeJson(merged.payload()), Timestamp.from(merged.dueAt()),
+                            Timestamp.from(merged.updatedAt()), Timestamp.from(merged.expiresAt()));
+                }
             }
         }
     }
@@ -389,6 +413,12 @@ public class IdentityService {
             catch (RuntimeException ignored) { return fallback; }
         }
         return fallback;
+    }
+
+    private static Instant strictTimestamp(Object value) {
+        if (!(value instanceof String string)) return null;
+        try { return Instant.parse(string); }
+        catch (RuntimeException ignored) { return null; }
     }
 
     private static Map<String, Object> readJson(String value) {

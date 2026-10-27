@@ -95,6 +95,36 @@ class IdentityServiceTest {
                 merged.canonicalJid()));
     }
 
+    @Test void aliasMergeDropsReadCoveredPendingAndDoesNotCreateDeliverableQueueWithoutKnownSnapshot() {
+        String phone = "5511999999999@s.whatsapp.net";
+        String lid = "1001@lid";
+        Instant t = Instant.parse("2026-10-26T10:00:00Z");
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot,last_read_at) values (?,true,?,'phone',false,true,?)",
+                phone, Timestamp.from(t), Timestamp.from(Instant.parse("2026-10-26T10:03:00Z")));
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values (?,true,?,'lid',false,true)",
+                lid, Timestamp.from(t.plusSeconds(1)));
+        insertPending(phone, 2, "2026-10-26T10:00:00Z", "2026-10-26T10:02:00Z", "lida");
+        insertPending(lid, 1, "2026-10-26T10:04:00Z", "2026-10-26T10:04:00Z", "nova");
+
+        var merged = identities.observe(new IdentityObservation(lid, Set.of(phone), IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR));
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select (payload->>'messageCount')::integer from pending_notification where chat_jid=?", Integer.class, merged.canonicalJid()));
+        assertEquals("nova", jdbc.queryForObject("select payload->>'preview' from pending_notification where chat_jid=?", String.class, merged.canonicalJid()));
+        assertEquals(Instant.parse("2026-10-26T10:03:00Z"), jdbc.queryForObject(
+                "select last_read_at from chat_snapshot where chat_jid=?", Timestamp.class, merged.canonicalJid()).toInstant());
+
+        jdbc.update("delete from chat_snapshot");
+        jdbc.update("delete from pending_notification");
+        jdbc.update("delete from identity_aliases");
+        String unknownPhone = "5511888888888@s.whatsapp.net";
+        insertPending(unknownPhone, 1, "2026-10-26T10:05:00Z", "2026-10-26T10:05:00Z", "sem estado");
+        identities.observe(new IdentityObservation("2001@lid", Set.of(unknownPhone), IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from quarantined_events where event_kind='PENDING_NOTIFICATION' and source_event_id is null and reason='alias_merge_state_unknown'", Integer.class));
+        assertTrue(jdbc.queryForObject("select sensitive_expires_at <= received_at + interval '7 days' from quarantined_events where reason='alias_merge_state_unknown'", Boolean.class));
+    }
+
     @Test void contactDisplayNamesFollowLegacySourcePrecedenceAndRejectTechnicalNames() {
         String jid = "5511999999999@s.whatsapp.net";
         identities.observeContactName(jid, "Nome do chat", ContactNameSource.CHAT);
