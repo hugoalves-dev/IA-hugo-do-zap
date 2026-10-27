@@ -94,6 +94,25 @@ public class NotificationOutboxRepository {
                 """, Timestamp.from(now), Timestamp.from(now), action.id(), action.leaseToken()) == 1;
     }
 
+    /** Cancels unclaimed connection alerts on reconnect, leaving every other action untouched. */
+    public int cancelPendingConnectionAlerts(Instant now) {
+        return jdbc.update("""
+                update outbox_actions set status='CANCELLED',payload='{}'::jsonb,pending_snapshot='[]'::jsonb,
+                    sensitive_expires_at=?,lease_token=null,lease_expires_at=null,last_error='ConnectionRecovered',updated_at=?
+                where action_type='whatsapp_connection_lost' and status='PENDING'
+                """, Timestamp.from(now), Timestamp.from(now));
+    }
+
+    /** Cancels only the currently leased connection alert; a stale worker cannot change a newer claim. */
+    public boolean cancelClaimedConnectionAlert(OutboxAction action, Instant now) {
+        if (action == null || !"whatsapp_connection_lost".equals(action.actionType()) || action.leaseToken() == null) return false;
+        return jdbc.update("""
+                update outbox_actions set status='CANCELLED',payload='{}'::jsonb,pending_snapshot='[]'::jsonb,
+                    sensitive_expires_at=?,lease_token=null,lease_expires_at=null,last_error='ConnectionRecovered',updated_at=?
+                where id=? and action_type='whatsapp_connection_lost' and status='PROCESSING' and lease_token=?::uuid
+                """, Timestamp.from(now), Timestamp.from(now), action.id(), action.leaseToken()) == 1;
+    }
+
     public void retry(OutboxAction action, Instant now, String errorType) {
         int exponent = Math.min(30, Math.max(0, action.attempts() - 1));
         long backoff = Math.min(MAX_BACKOFF_SECONDS, 10L << exponent);

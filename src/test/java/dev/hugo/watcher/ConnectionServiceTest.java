@@ -83,4 +83,32 @@ class ConnectionServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='whatsapp_connection_lost'", Integer.class));
         assertEquals("true", jdbc.queryForObject("select payload->>'manualPairingRequired' from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
     }
+
+    @Test void reconnectCancelsOnlyPendingConnectionAlerts() {
+        var outbox = new NotificationOutboxRepository(jdbc, manager);
+        Instant created = Instant.parse("2026-10-26T10:00:00Z");
+        outbox.enqueue("whatsapp_connection_lost:3", "whatsapp_connection_lost", "{\"eventType\":\"whatsapp_connection_lost\"}",
+                "[]", created, created.plusSeconds(7 * 86_400L));
+        outbox.enqueue("unrelated:1", "archived_messages", "{\"eventType\":\"archived_messages\"}",
+                "[]", created, created.plusSeconds(7 * 86_400L));
+
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, created.plusSeconds(1), "open", 200));
+
+        assertEquals("CANCELLED", jdbc.queryForObject("select status from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+    }
+
+    @Test void reconnectDoesNotChangeAnActionWithAnActiveLease() {
+        var outbox = new NotificationOutboxRepository(jdbc, manager);
+        Instant created = Instant.parse("2026-10-26T10:00:00Z");
+        outbox.enqueue("whatsapp_connection_lost:4", "whatsapp_connection_lost", "{\"eventType\":\"whatsapp_connection_lost\"}",
+                "[]", created, created.plusSeconds(7 * 86_400L));
+        OutboxAction claimed = outbox.claimNext(created);
+
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, created.plusSeconds(1), "open", 200));
+
+        assertEquals("PROCESSING", jdbc.queryForObject("select status from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+        assertEquals(claimed.leaseToken(), jdbc.queryForObject("select lease_token::text from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+    }
 }

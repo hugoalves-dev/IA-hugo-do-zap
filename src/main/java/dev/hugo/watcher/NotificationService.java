@@ -1,6 +1,7 @@
 package dev.hugo.watcher;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -65,7 +66,16 @@ public class NotificationService {
                     outbox.suppress(action, now);
                     continue;
                 }
-                if (n8n.send(delivery)) outbox.acknowledge(delivery, clock.instant());
+                if (isConnectionAlert(delivery)) {
+                    if (!isCurrentConnectionAlert(delivery)) {
+                        outbox.cancelClaimedConnectionAlert(delivery, clock.instant());
+                        continue;
+                    }
+                    boolean delivered = n8n.send(delivery, () -> isCurrentConnectionAlert(delivery));
+                    if (delivered) outbox.acknowledge(delivery, clock.instant());
+                    else if (!isCurrentConnectionAlert(delivery)) outbox.cancelClaimedConnectionAlert(delivery, clock.instant());
+                    else outbox.retry(delivery, clock.instant(), "DeliveryFailure");
+                } else if (n8n.send(delivery)) outbox.acknowledge(delivery, clock.instant());
                 else outbox.retry(delivery, clock.instant(), "DeliveryFailure");
             }
         } catch (RuntimeException ex) {
@@ -121,6 +131,26 @@ public class NotificationService {
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.WARNING, "Archived notification suppressed: invalid queued payload");
             return null;
+        }
+    }
+
+    private boolean isConnectionAlert(OutboxAction action) {
+        return action != null && ConnectionService.ACTION_TYPE.equals(action.actionType());
+    }
+
+    /** A connection alert is deliverable only for the still-active outage generation. */
+    private boolean isCurrentConnectionAlert(OutboxAction action) {
+        String prefix = ConnectionService.ACTION_TYPE + ":";
+        if (!isConnectionAlert(action) || !action.actionKey().startsWith(prefix)) return false;
+        try {
+            long expectedGeneration = Long.parseLong(action.actionKey().substring(prefix.length()));
+            List<ConnectionState> current = jdbc.query("""
+                    select connection_state,outage_generation from watcher_connection_state where singleton_id=1
+                    """, (rs, row) -> new ConnectionState(rs.getString("connection_state"), rs.getLong("outage_generation")));
+            return !current.isEmpty() && "DISCONNECTED".equals(current.getFirst().connectionState())
+                    && current.getFirst().generation() == expectedGeneration;
+        } catch (DataAccessException | NumberFormatException ex) {
+            return false;
         }
     }
 
@@ -355,5 +385,6 @@ public class NotificationService {
                               boolean group, String phoneJid, String lidJid, String username, int messageCount,
                               Instant firstMessageAt, Instant lastMessageAt, String preview, Instant previewExpiry,
                               Instant updatedAt, Instant expiresAt) { }
+    private record ConnectionState(String connectionState, long generation) { }
     private record LegacyChat(int messageCount, Map<String, Object> payload) { }
 }

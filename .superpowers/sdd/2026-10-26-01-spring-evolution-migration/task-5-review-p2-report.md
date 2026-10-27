@@ -26,4 +26,6 @@ Resultado: **29 testes, 0 falhas, 0 erros, 0 ignorados**. PostgreSQL 17/Testcont
 
 O estado é reconsultado imediatamente antes do HTTP, mas a transação não é mantida durante a chamada externa. Se arquivamento, nome ou política mudar depois da consulta enquanto o request está em andamento, não há como cancelar uma entrega que já começou. O ACK compara os snapshots novamente e mantém pending concorrente. A integração não oferece transação atômica entre PostgreSQL e o webhook remoto; esse limite também está registrado no relatório P1.
 
+Na revisão subsequente, alertas de conexão pendentes passaram a ser cancelados ao reconectar e cada tentativa HTTP de alerta de conexão passou a revalidar o estado/generation. Um request já em andamento não pode ser desfeito: se ele responder 2xx depois do evento de reconexão, o destino pode ter processado o alerta. Se responder falha, as tentativas HTTP restantes são interrompidas e a ação claimada é cancelada pelo lease token; o ACK/cancelamento não pode remover a lease de outro worker.
+
 O conjunto focado acima foi executado; a suíte completa não foi executada.

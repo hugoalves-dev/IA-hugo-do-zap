@@ -37,6 +37,7 @@ class NotificationServiceTest {
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
     private JdbcTemplate jdbc;
+    private DataSourceTransactionManager manager;
     private WatcherProperties properties;
     private NotificationService notifications;
     private NotificationOutboxRepository outbox;
@@ -75,7 +76,7 @@ class NotificationServiceTest {
         properties.setN8nUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/webhook");
         properties.setN8nSecret("fixture-secret");
         clock = new MutableClock(NOW);
-        var manager = new DataSourceTransactionManager(dataSource);
+        manager = new DataSourceTransactionManager(dataSource);
         outbox = new NotificationOutboxRepository(jdbc, manager);
         var client = new N8nClient(properties, HttpClient.newHttpClient(), Duration.ofSeconds(2), List.of(Duration.ZERO, Duration.ZERO));
         notifications = new NotificationService(jdbc, manager, outbox, client, properties, clock);
@@ -159,6 +160,30 @@ class NotificationServiceTest {
         assertEquals(NOW.plusSeconds(45), clock.instant(), "fake HTTP advances the injected clock for all attempts");
         assertEquals(clock.instant().plusSeconds(10), availableAt,
                 "backoff must begin after the final failed HTTP attempt, not at flush start");
+    }
+
+    @Test void connectionAlertRetryStopsAndIsCancelledWhenReconnectOccursDuringHttpFailure() {
+        var connections = new ConnectionService(jdbc, manager, outbox, properties, Duration.ofSeconds(60));
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, NOW, "connection_lost", 408));
+        outbox.enqueue("whatsapp_connection_lost:1", "whatsapp_connection_lost",
+                "{\"eventType\":\"whatsapp_connection_lost\",\"manualPairingRequired\":false}",
+                "[]", NOW, NOW.plusSeconds(7 * 86_400L));
+        responseStatus.set(503);
+        requestHook.set(ignored -> connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, clock.instant(), "open", 200)));
+
+        notifications.flush(NOW);
+
+        assertEquals("CONNECTED", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
+        assertEquals(1, requestCount.get(), "the connection alert's internal HTTP retry must stop after reconnect");
+        assertEquals("CANCELLED", jdbc.queryForObject("select status from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+
+        responseStatus.set(200);
+        requestHook.set(ignored -> { });
+        clock.advance(Duration.ofSeconds(20));
+        notifications.flush(clock.instant());
+
+        assertEquals(1, requestCount.get(), "a cancelled alert must not be delivered by a later outbox retry");
     }
 
     @Test void revalidatesAQueuedGroupAgainstItsCurrentBlockedNameBeforeRetrying() {

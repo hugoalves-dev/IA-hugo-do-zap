@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 @Component
 public class N8nClient {
@@ -38,8 +39,13 @@ public class N8nClient {
         this.retryDelays = List.copyOf(retryDelays);
     }
 
-    /** Returns true only for a 2xx response; false leaves the durable action available for another flush. */
+    /** Returns true only for a 2xx response; false reports a failed attempt or a rejected state guard. */
     public boolean send(OutboxAction action) {
+        return send(action, () -> true);
+    }
+
+    /** Sends while a caller-provided current-state guard remains true before each HTTP attempt. */
+    public boolean send(OutboxAction action, BooleanSupplier mayContinue) {
         int attempts = retryDelays.size() + 1;
         String payload;
         try { payload = withCurrentSecret(action.payload()); }
@@ -48,6 +54,7 @@ public class N8nClient {
             return false;
         }
         for (int attempt = 1; attempt <= attempts; attempt++) {
+            if (!mayContinue.getAsBoolean()) return false;
             try {
                 HttpRequest request = HttpRequest.newBuilder(URI.create(properties.getN8nUrl()))
                         .timeout(timeout)

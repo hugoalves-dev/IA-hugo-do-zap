@@ -17,7 +17,7 @@ import java.util.Map;
 
 @Service
 public class ConnectionService {
-    private static final String ACTION_TYPE = "whatsapp_connection_lost";
+    static final String ACTION_TYPE = "whatsapp_connection_lost";
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final DateTimeFormatter UTC_ISO = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'")
             .withZone(java.time.ZoneOffset.UTC);
@@ -54,6 +54,7 @@ public class ConnectionService {
                         update watcher_connection_state set connection_state='CONNECTED',outage_started_at=null,reason=null,
                             status_code=null,manual_pairing_required=false,alerted=false where singleton_id=1
                         """);
+                outbox.cancelPendingConnectionAlerts(at);
                 return;
             }
             boolean pairing = event.state() == ConnectionEvent.State.DEVICE_REMOVED
