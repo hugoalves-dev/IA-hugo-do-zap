@@ -57,13 +57,67 @@ public class NotificationService {
             for (int sent = 0; sent < 20; sent++) {
                 OutboxAction action = outbox.claimNext(now);
                 if (action == null) return;
-                if (n8n.send(action)) outbox.acknowledge(action, Instant.now());
-                else outbox.retry(action, Instant.now(), "DeliveryFailure");
+                OutboxAction delivery = revalidateBeforeDelivery(action, now);
+                if (delivery == null) {
+                    outbox.suppress(action, now);
+                    continue;
+                }
+                if (n8n.send(delivery)) outbox.acknowledge(delivery, now);
+                else outbox.retry(delivery, now, "DeliveryFailure");
             }
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.ERROR, "Notification flush failed: error={0}", ex.getClass().getSimpleName());
         } finally {
             flushing.set(false);
+        }
+    }
+
+    /** Rechecks current archive, sync, group, name, and work-window policy immediately before HTTP delivery. */
+    private OutboxAction revalidateBeforeDelivery(OutboxAction action, Instant now) {
+        if (!ARCHIVED_MESSAGES.equals(action.actionType())) return action;
+        try {
+            Map<String, Object> payload = readObject(action.payload());
+            List<Map<String, Object>> chats = readObjectList(payload.get("chats"));
+            List<Map<String, Object>> snapshots = readObjectList(action.pendingSnapshot());
+            if (chats.size() != snapshots.size()) return null;
+
+            ZoneId zone = ZoneId.of(properties.getTimezone());
+            boolean inWindow = inWorkWindow(now, zone);
+            Map<String, PendingRow> current = new LinkedHashMap<>();
+            for (PendingRow row : readPending(now)) current.put(row.chatJid(), row);
+
+            List<Map<String, Object>> allowedChats = new ArrayList<>();
+            List<Map<String, Object>> allowedSnapshots = new ArrayList<>();
+            int totalMessages = 0;
+            for (int i = 0; i < snapshots.size(); i++) {
+                Map<String, Object> snapshot = snapshots.get(i);
+                String chatJid = snapshot.get("chat_jid") instanceof String value ? value : null;
+                PendingRow row = chatJid == null ? null : current.get(chatJid);
+                if (row == null) continue;
+                String displayName = resolveDisplayName(row);
+                if (row.group() && isBlockedGroup(displayName)) continue;
+                String policy = isWorkOnly(displayName) ? "WORK_ONLY" : "ANYTIME";
+                if ("WORK_ONLY".equals(policy) && !inWindow) continue;
+
+                Map<String, Object> chat = new LinkedHashMap<>(chats.get(i));
+                chat.put("displayName", displayName);
+                chat.put("isGroup", row.group());
+                chat.put("policy", policy);
+                allowedChats.add(chat);
+                allowedSnapshots.add(snapshot);
+                totalMessages += integer(chat.get("messageCount"));
+            }
+            if (allowedChats.isEmpty()) return null;
+
+            payload.put("chats", allowedChats);
+            payload.put("totalChats", allowedChats.size());
+            payload.put("totalMessages", totalMessages);
+            return new OutboxAction(action.id(), action.actionKey(), action.actionType(), writeJson(payload),
+                    writeJson(allowedSnapshots), action.attempts(), action.createdAt(),
+                    action.sensitiveExpiresAt(), action.leaseToken());
+        } catch (RuntimeException ex) {
+            LOG.log(System.Logger.Level.WARNING, "Archived notification suppressed: invalid queued payload");
+            return null;
         }
     }
 
@@ -262,6 +316,16 @@ public class NotificationService {
     private static Map<String, Object> readObject(String value) {
         try { return JSON.readValue(value, Map.class); }
         catch (RuntimeException ex) { return Map.of(); }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> readObjectList(Object value) {
+        if (!(value instanceof String text)) {
+            if (value instanceof List<?> list) return (List<Map<String, Object>>) list;
+            return List.of();
+        }
+        try { return JSON.readValue(text, List.class); }
+        catch (RuntimeException ex) { return List.of(); }
     }
 
     private static String localIso(Instant instant, ZoneId zone) {

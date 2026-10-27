@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -39,6 +40,7 @@ class NotificationServiceTest {
     private NotificationOutboxRepository outbox;
     private HttpServer server;
     private final AtomicReference<Integer> responseStatus = new AtomicReference<>(200);
+    private final AtomicInteger requestCount = new AtomicInteger();
     private final AtomicReference<java.util.function.Consumer<String>> requestHook = new AtomicReference<>(ignored -> { });
     private final AtomicReference<String> receivedBody = new AtomicReference<>();
 
@@ -56,6 +58,7 @@ class NotificationServiceTest {
 
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/webhook", exchange -> {
+            requestCount.incrementAndGet();
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             receivedBody.set(body);
             requestHook.get().accept(body);
@@ -137,6 +140,62 @@ class NotificationServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='PENDING'", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where status='PENDING'", String.class).contains("fixture-secret"));
+    }
+
+    @Test void revalidatesAQueuedGroupAgainstItsCurrentBlockedNameBeforeRetrying() {
+        String jid = "5511555555555@s.whatsapp.net";
+        responseStatus.set(503);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "sensivel", NOW);
+        notifications.flush(NOW);
+        assertEquals(3, requestCount.get(), "first delivery exhausts the three configured HTTP attempts");
+
+        jdbc.update("update chat_snapshot set display_name='233/234',is_group=true where chat_jid=?", jid);
+        jdbc.update("update contact_identity set display_name='233/234' where canonical_jid=?", jid);
+        responseStatus.set(200);
+
+        notifications.flush(NOW.plusSeconds(11));
+
+        assertEquals(3, requestCount.get(), "a now-blocked group must not reach the fake webhook");
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid),
+                "suppression must not clear a pending snapshot that was not sent");
+    }
+
+    @Test void revalidatesWorkOnlyWindowAtRetryDeliveryTime() {
+        responseStatus.set(503);
+        seed("5511444444444@s.whatsapp.net", "Equipe JC", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);
+        notifications.flush(NOW);
+        assertEquals(3, requestCount.get());
+        responseStatus.set(200);
+
+        notifications.flush(Instant.parse("2026-10-26T16:00:00Z"));
+
+        assertEquals(3, requestCount.get(), "a WORK_ONLY retry outside the work window must not be sent");
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void filtersUnarchivedChatsAndKeepsConcurrentPendingSnapshotsOnRetry() throws Exception {
+        String unarchived = "5511333333333@s.whatsapp.net";
+        String concurrentlyUpdated = "5511222222222@s.whatsapp.net";
+        responseStatus.set(503);
+        seed(unarchived, "Contato antigo", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "não enviar", NOW);
+        seed(concurrentlyUpdated, "Contato atual", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem antiga", NOW);
+        notifications.flush(NOW);
+
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", unarchived);
+        jdbc.update("update pending_notification set payload=jsonb_set(payload, '{messageCount}', '2'::jsonb), updated_at=? where chat_jid=?",
+                java.sql.Timestamp.from(NOW.plusSeconds(1)), concurrentlyUpdated);
+        responseStatus.set(200);
+        notifications.flush(NOW.plusSeconds(20));
+
+        var payload = JSON.readTree(receivedBody.get());
+        assertEquals(1, payload.get("totalChats").intValue());
+        assertEquals("5511222222222@s.whatsapp.net", payload.get("chats").get(0).get("jid").stringValue());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, unarchived));
+        assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, concurrentlyUpdated));
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
     }
 
     @Test void purgesOutboxPayloadAtItsSensitiveRetentionDeadline() {

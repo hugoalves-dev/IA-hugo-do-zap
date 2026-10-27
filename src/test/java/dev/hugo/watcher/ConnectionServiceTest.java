@@ -47,8 +47,7 @@ class ConnectionServiceTest {
 
     @Test void deviceRemovedQueuesOneImmediatePairingAlertPerOutage() {
         Instant openedAt = Instant.parse("2026-10-26T10:00:00Z");
-        connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, openedAt, "open", null));
-        var removed = new ConnectionEvent(ConnectionEvent.State.DEVICE_REMOVED, openedAt.plusSeconds(1), "device_removed", 401);
+        var removed = new ConnectionEvent(ConnectionEvent.State.DEVICE_REMOVED, openedAt, "device_removed", 401);
 
         connections.onState(removed);
         connections.onState(removed);

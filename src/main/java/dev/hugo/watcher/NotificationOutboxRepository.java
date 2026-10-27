@@ -85,6 +85,15 @@ public class NotificationOutboxRepository {
         }));
     }
 
+    /** Marks an action complete without deleting pending rows when current policy suppresses delivery. */
+    public boolean suppress(OutboxAction action, Instant now) {
+        return jdbc.update("""
+                update outbox_actions set status='ACKNOWLEDGED',payload='{}'::jsonb,pending_snapshot='[]'::jsonb,
+                    sensitive_expires_at=?,lease_token=null,lease_expires_at=null,last_error=null,updated_at=?
+                where id=? and status='PROCESSING' and lease_token=?::uuid
+                """, Timestamp.from(now), Timestamp.from(now), action.id(), action.leaseToken()) == 1;
+    }
+
     public void retry(OutboxAction action, Instant now, String errorType) {
         int exponent = Math.min(30, Math.max(0, action.attempts() - 1));
         long backoff = Math.min(MAX_BACKOFF_SECONDS, 10L << exponent);

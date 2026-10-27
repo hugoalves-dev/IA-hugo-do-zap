@@ -21,6 +21,7 @@ class EvolutionWebhookControllerHttpTest {
 
     private EvolutionWebhookProperties properties;
     private InboxRepository inbox;
+    private ConnectionService connections;
     private MockMvc http;
 
     @BeforeEach
@@ -30,7 +31,8 @@ class EvolutionWebhookControllerHttpTest {
         properties.setInstance("watcher-http-test");
         properties.setMaxBodyBytes(1024);
         inbox = mock(InboxRepository.class);
-        http = MockMvcBuilders.standaloneSetup(new EvolutionWebhookController(inbox, properties))
+        connections = mock(ConnectionService.class);
+        http = MockMvcBuilders.standaloneSetup(new EvolutionWebhookController(inbox, properties, connections))
                 .addFilters(new WebhookBodyLimitFilter(properties))
                 .build();
     }
@@ -76,6 +78,44 @@ class EvolutionWebhookControllerHttpTest {
     @Test void respondsAcceptedWhenInboxRepositoryAcceptsEvent() throws Exception {
         when(inbox.accept(any(EvolutionEvent.class))).thenReturn(Acceptance.NEW);
         assertEquals(202, send(EVENT).andReturn().getResponse().getStatus());
+    }
+
+    @Test void routesOfficialConnectionUpdateLoggedOutEventToManualPairingAlertEvenAsFirstEvent() throws Exception {
+        String event = """
+                {"event":"connection.update","instance":"watcher-http-test",
+                 "data":{"instance":"watcher-http-test","state":"close","statusReason":401}}
+                """;
+
+        assertEquals(200, send(event).andReturn().getResponse().getStatus());
+
+        verify(connections).onState(argThat(connectionEvent -> connectionEvent.state() == ConnectionEvent.State.MANUAL_PAIRING_REQUIRED
+                && connectionEvent.statusCode() == 401 && "logged_out".equals(connectionEvent.reason())));
+        verifyNoInteractions(inbox);
+    }
+
+    @Test void routesOfficialOpenConnectionUpdateToConnectedState() throws Exception {
+        String event = """
+                {"event":"connection.update","instance":"watcher-http-test",
+                 "data":{"instance":"watcher-http-test","state":"open","statusReason":200}}
+                """;
+
+        assertEquals(200, send(event).andReturn().getResponse().getStatus());
+
+        verify(connections).onState(argThat(connectionEvent -> connectionEvent.state() == ConnectionEvent.State.CONNECTED
+                && connectionEvent.statusCode() == 200));
+        verifyNoInteractions(inbox);
+    }
+
+    @Test void returnsRetryableServiceUnavailableWhenConnectionStateCannotBePersisted() throws Exception {
+        String event = """
+                {"event":"connection.update","instance":"watcher-http-test",
+                 "data":{"instance":"watcher-http-test","state":"close","statusReason":408}}
+                """;
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("database unavailable"))
+                .when(connections).onState(any(ConnectionEvent.class));
+
+        assertEquals(503, send(event).andReturn().getResponse().getStatus());
+        verifyNoInteractions(inbox);
     }
 
     @Test void leavesUnmappedRoutesUnavailable() throws Exception {

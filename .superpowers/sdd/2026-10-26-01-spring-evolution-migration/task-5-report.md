@@ -8,7 +8,7 @@ Base: `1221670a8b1bb37205dced0d9c8cfa3d01f26f96`.
 - `NotificationService.flush(Instant)` cria o payload legado `archived_messages`, limita o lote a 50 por padrão, aplica fuso e janela legada (08:00–12:00 e 13:30–17:30), adia `WORK_ONLY` e descarta grupos bloqueados.
 - `N8nClient.send(OutboxAction)` usa POST JSON, timeout de 10 s e três tentativas com pausas de 1 s e 3 s. O segredo atual entra no corpo HTTP, mas não é persistido na outbox nem escrito em log. Falhas preservam a ação e aplicam backoff entre flushes. O ACK remove payload e snapshot; ações não confirmadas expiram em até sete dias.
 - `ConnectionService.onState(ConnectionEvent)` persiste uma geração de indisponibilidade, espera 60 s para queda recuperável e enfileira `device_removed` imediatamente uma vez por indisponibilidade. `NotificationScheduler` evita sobreposição local e processa a outbox.
-- A conexão usa um evento normalizado. Não foi ligada a um evento Evolution específico, pois a fonte real arquivada não foi verificada.
+- `EvolutionWebhookController` também encaminha o evento autenticado `connection.update`: `open` marca a conexão ativa, e `close + statusReason=401` gera alerta imediato de novo pareamento; outros `close` passam pelo período de graça. A regressão e as evidências adicionais estão em [task-5-review-p1-report.md](task-5-review-p1-report.md).
 
 ## RED
 
@@ -28,5 +28,5 @@ Base: `1221670a8b1bb37205dced0d9c8cfa3d01f26f96`.
 ## Limites
 
 - A entrega é at-least-once: se n8n processar uma requisição cuja resposta se perca ou expire, a outbox pode reenviar. Não há alegação de exactly-once no destino.
-- Não houve acesso à VPS, chamada a n8n real, envio de mensagem real nem verificação de integração com uma versão Evolution específica.
+- Não houve acesso à VPS, chamada a n8n real nem envio de mensagem real. O repositório não fixa uma tag/digest Evolution e a compatibilidade da instalação implantada permanece sem verificação; o handler foi implementado com base na fonte oficial móvel `main`, detalhada no relatório complementar.
 - A suíte completa não foi executada.

@@ -56,9 +56,9 @@ public class ConnectionService {
                         """);
                 return;
             }
-            if (!current.connected()) return;
-
-            boolean pairing = event.state() == ConnectionEvent.State.DEVICE_REMOVED;
+            boolean pairing = event.state() == ConnectionEvent.State.DEVICE_REMOVED
+                    || event.state() == ConnectionEvent.State.MANUAL_PAIRING_REQUIRED;
+            if (!current.connected() && (!pairing || current.manualPairingRequired() || current.alerted())) return;
             long generation = current.generation() + 1;
             String reason = event.reason() == null || event.reason().isBlank()
                     ? pairing ? "device_removed" : "connection_lost" : event.reason();
