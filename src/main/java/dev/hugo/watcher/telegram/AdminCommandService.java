@@ -1,9 +1,11 @@
 package dev.hugo.watcher.telegram;
 
 import dev.hugo.watcher.NotificationOutboxRepository;
+import dev.hugo.watcher.notification.ReportService;
 import dev.hugo.watcher.policy.AvailabilityState;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
@@ -29,14 +31,22 @@ public class AdminCommandService {
     private final CallbackTokenService tokens;
     private final NotificationOutboxRepository outbox;
     private final Clock clock;
+    private final ReportService reports;
 
+    @Autowired
     public AdminCommandService(JdbcTemplate jdbc, PlatformTransactionManager manager, CallbackTokenService tokens,
-                               NotificationOutboxRepository outbox, Clock clock) {
+                               NotificationOutboxRepository outbox, Clock clock, ReportService reports) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.tokens = tokens;
         this.outbox = outbox;
         this.clock = clock;
+        this.reports = reports;
+    }
+
+    public AdminCommandService(JdbcTemplate jdbc, PlatformTransactionManager manager, CallbackTokenService tokens,
+                               NotificationOutboxRepository outbox, Clock clock) {
+        this(jdbc, manager, tokens, outbox, clock, null);
     }
 
     public AdminResult execute(AdminCommand command) {
@@ -148,6 +158,10 @@ public class AdminCommandService {
     }
 
     private String report() {
+        if (reports != null) {
+            reports.schedule(LocalDate.now(clock.withZone(ADMIN_ZONE)));
+            return "Resumo diário de simulação enfileirado para entrega no Telegram.";
+        }
         Integer decisions = jdbc.queryForObject("select count(*) from simulation_decisions where decided_at >= ?",
                 Integer.class, Timestamp.from(clock.instant().minus(Duration.ofHours(24))));
         Integer alerts = jdbc.queryForObject("select count(*) from simulation_decisions where decided_at >= ? and would_alert=true",

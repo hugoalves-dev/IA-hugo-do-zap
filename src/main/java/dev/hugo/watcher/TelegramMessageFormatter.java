@@ -18,6 +18,7 @@ public class TelegramMessageFormatter {
                 case "telegram_admin_reply" -> limit(clean(payload.path("text").asString("")), MAX_MESSAGE_LENGTH);
                 case NotificationService.ARCHIVED_MESSAGES -> archived(payload);
                 case ConnectionService.ACTION_TYPE -> connection(payload);
+                case "simulation_daily_summary" -> dailySummary(payload);
                 default -> "📬 O watcher registrou uma nova atualização do WhatsApp.";
             };
         } catch (RuntimeException ex) {
@@ -53,6 +54,17 @@ public class TelegramMessageFormatter {
         String reason = clean(payload.path("reason").asString("connection_lost"));
         return "⚠️ Conexão do WhatsApp perdida\nMotivo informado: " + limit(reason, 120)
                 + ". Verifique o WhatsApp no telefone; as notificações serão retomadas quando a conexão voltar.";
+    }
+
+    private String dailySummary(JsonNode payload) {
+        return "📊 Resumo diário de simulação — " + clean(payload.path("date").asString(""))
+                + "\nDecisões: " + payload.path("decisionCount").asLong(0)
+                + " · alertas previstos: " + payload.path("predictedAlerts").asLong(0)
+                + " · respostas previstas: " + payload.path("predictedReplies").asLong(0)
+                + " · bloqueadas: " + payload.path("blockedDecisions").asLong(0)
+                + "\nCusto reservado: " + payload.path("reservedCostMicros").asLong(0)
+                + " micros · informado: " + payload.path("reportedActualCostMicros").asLong(0)
+                + " micros. Sem conteúdo de conversas.";
     }
 
     private static String clean(String value) {

@@ -34,10 +34,11 @@ class SpringFlywayStartupTest {
     @Autowired JdbcTemplate jdbc;
 
     @Test void appliesFlywayMigrationsAutomaticallyDuringApplicationStartup() {
-        assertEquals("21", jdbc.queryForObject(
+        assertEquals("23", jdbc.queryForObject(
                 "select version from flyway_schema_history order by installed_rank desc limit 1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from ai_budget_limits", Integer.class));
         assertEquals("UNKNOWN", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from inbox_events", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class));
     }
 }

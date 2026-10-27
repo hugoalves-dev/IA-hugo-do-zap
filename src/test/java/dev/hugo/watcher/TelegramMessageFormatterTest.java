@@ -31,6 +31,20 @@ class TelegramMessageFormatterTest {
         assertTrue(text.contains("pareamento manual"));
     }
 
+    @Test void formatsDailySimulationReportWithoutConversationContent() {
+        String text = formatter.format(new OutboxAction(5, "daily", "simulation_daily_summary", """
+                {"eventType":"simulation_daily_summary","date":"2026-10-27","decisionCount":4,
+                 "predictedAlerts":1,"predictedReplies":2,"blockedDecisions":1,
+                 "reservedCostMicros":50,"reportedActualCostMicros":25}
+                """, "[]", 1, null, null, null));
+
+        assertTrue(text.contains("Resumo diário de simulação"));
+        assertTrue(text.contains("Decisões: 4"));
+        assertTrue(text.contains("Custo reservado: 50 micros"));
+        assertTrue(text.contains("Sem conteúdo de conversas"));
+        assertFalse(text.contains("message"));
+    }
+
     @Test void boundsTelegramTextAndDoesNotExposeTheBotToken() {
         String hugePreview = "x".repeat(5000);
         String text = formatter.format(new OutboxAction(3, "archive", "archived_messages",
