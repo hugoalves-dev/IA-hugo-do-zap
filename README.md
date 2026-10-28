@@ -35,7 +35,7 @@ Uma resposta HTTP 2xx da Evolution significa apenas que a API aceitou a requisi�
 
 O cliente usa [`java-telegram-bot-api` 10.3.0](https://github.com/pengrad/java-telegram-bot-api), projeto comunitário listado na [documentação do Telegram](https://core.telegram.org/bots/samples), sob licença Apache-2.0.
 
-O container Spring não publica porta no host. Spring e Evolution compartilham a rede externa `infra_network`; Redis fica somente na rede interna `evolution_backend`, sem acesso a partir do watcher ou do host. O healthcheck consulta `/actuator/health`; os detalhes são ocultados. Mensagens e histórico não são persistidos pela configuração da Evolution (`DATABASE_SAVE_DATA_NEW_MESSAGE=false`, `DATABASE_SAVE_MESSAGE_UPDATE=false` e `DATABASE_SAVE_DATA_HISTORIC=false`).
+O container Spring não publica porta no host. Spring e Evolution compartilham a rede externa `infra_network`; Redis fica somente na rede interna `evolution_backend`, sem acesso a partir do watcher ou do host. Os probes de liveness/readiness ficam em `/actuator/health/liveness` e `/actuator/health/readiness`; a readiness também verifica PostgreSQL. O healthcheck Docker consulta readiness e oculta detalhes. Mensagens e histórico não são persistidos pela configuração da Evolution (`DATABASE_SAVE_DATA_NEW_MESSAGE=false`, `DATABASE_SAVE_MESSAGE_UPDATE=false` e `DATABASE_SAVE_DATA_HISTORIC=false`).
 
 Depois da preparação e autorização operacional, o Compose pode ser validado sem iniciar containers:
 
@@ -47,7 +47,7 @@ Uma execução local autorizada pode usar `docker compose --env-file .env up -d 
 
 ## CI/CD e deploy controlado
 
-`.github/workflows/backend.yml` executa `mvn verify` em pushes e pull requests usando Java 25. Pull requests não publicam imagem nem fazem deploy. Push em `main` publica a imagem com tag do commit e attestation de proveniência, mas não atualiza a VPS. Para deploy, abra **Actions → Backend CI/CD → Run workflow**, selecione `main` e marque `deploy`; o job consome o digest da imagem produzida nessa execução e atualiza somente o serviço Compose `watcher`.
+`.github/workflows/backend.yml` executa `mvn verify` em pushes e pull requests usando Java 25. Pull requests não publicam imagem nem fazem deploy. Push em `main` publica a imagem com tag do commit e attestation de proveniência, mas não atualiza a VPS. Para deploy, abra **Actions → Backend CI/CD → Run workflow**, selecione `main` e marque `deploy`; o job consome o digest da imagem produzida nessa execução e atualiza somente o serviço Compose `watcher`. O script remoto vem do mesmo commit; antes de agir, ele compara o SHA-256 de `compose.yaml` na VPS com o arquivo validado pelo workflow.
 
 Configure estes GitHub Actions repository secrets, sem valores padrão:
 
@@ -57,9 +57,21 @@ Configure estes GitHub Actions repository secrets, sem valores padrão:
 - `VPS_USER`: conta SSH de deploy.
 - `VPS_KNOWN_HOSTS`: linha `known_hosts` correspondente a `VPS_IP` e `SSH_PORT`, com chave verificada por canal independente. Em porta diferente de 22, o host deve estar no formato `[VPS_IP]:SSH_PORT`.
 
-Configure a repository variable `VPS_DEPLOY_DIR` com o caminho absoluto não raiz do diretório existente na VPS. Ele deve conter a versão revisada de `compose.yaml` e o `.env` já configurado. O job exige ambos, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
+Configure a repository variable `VPS_DEPLOY_DIR` com o caminho absoluto não raiz do diretório existente na VPS. Ele deve conter o `compose.yaml` byte a byte igual ao commit selecionado e o `.env` já configurado. O job exige ambos, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
 
-Antes do primeiro deploy, a VPS precisa ter Docker Compose v2, acesso ao `infra_network`, os bancos PostgreSQL acessíveis, e permissões Docker para `VPS_USER`. Se o pacote GHCR não for público, autentique previamente o Docker da VPS com permissão de leitura do pacote. Mantenha no diretório o volume `evolution_instances` e a configuração operacional existente; o workflow não copia arquivos nem faz pareamento, cutover ou ativa flags de envio real.
+O digest aprovado fica em `compose.override.yaml`, separado do `.env`. O Compose carrega esse override automaticamente em comandos padrão como `docker compose up`; no diretório da VPS, não passe `-f compose.yaml` nem defina `COMPOSE_FILE`, pois isso pode ignorar o lock. `pull_policy: always` faz os comandos padrão buscar esse digest do registry e falhar se ele não estiver disponível, sem fallback para build local. Antes do primeiro deploy, prepare esse arquivo com o digest atualmente saudável e conhecido, usando este formato:
+
+```yaml
+# Managed by backend deploy workflow; do not edit.
+services:
+  watcher:
+    image: ghcr.io/hugoalves-dev/ia-hugo-do-zap@sha256:<digest-atual-verificado>
+    pull_policy: always
+```
+
+O workflow falha sem substituir um `compose.override.yaml` que não tenha esse formato gerenciado. Isso preserva overrides existentes do operador; resolva qualquer override próprio antes de habilitar deploy automático. A imagem nova só substitui o override após ficar healthy; falha ou timeout restaura o digest anterior e verifica rollback. O timeout de readiness é 180 segundos.
+
+Antes do primeiro deploy, a VPS precisa ter Bash, `sha256sum`, Docker Compose com `up --wait --wait-timeout`, acesso ao `infra_network`, os bancos PostgreSQL acessíveis e permissões Docker para `VPS_USER`. Se o pacote GHCR não for público, autentique previamente o Docker da VPS com permissão de leitura do pacote. Mantenha o volume `evolution_instances` e a configuração operacional existente; o workflow não copia arquivos, remove serviços/volumes, faz pareamento, cutover ou ativa flags de envio real.
 
 ## Importação explícita de snapshot legado
 

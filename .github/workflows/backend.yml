@@ -116,12 +116,21 @@ jobs:
       VPS_DEPLOY_DIR: ${{ vars.VPS_DEPLOY_DIR }}
       IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}
     steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@v4
+
+      - name: Compute Compose file identity
+        id: compose
+        run: echo "sha256=$(sha256sum compose.yaml | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Deploy watcher by immutable image digest
         shell: bash
+        env:
+          COMPOSE_SHA256: ${{ steps.compose.outputs.sha256 }}
         run: |
           set -euo pipefail
 
-          for name in SSH_KEY SSH_PORT VPS_IP VPS_USER VPS_KNOWN_HOSTS VPS_DEPLOY_DIR IMAGE_REF; do
+          for name in SSH_KEY SSH_PORT VPS_IP VPS_USER VPS_KNOWN_HOSTS VPS_DEPLOY_DIR IMAGE_REF COMPOSE_SHA256; do
             if [[ -z "${!name}" ]]; then
               echo "Missing required deployment setting: $name" >&2
               exit 1
@@ -155,24 +164,5 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$known_hosts_file" \
             "$VPS_USER@$VPS_IP" \
-            "bash -s -- $deploy_dir_b64 $image_ref_b64" <<'REMOTE'
-          set -euo pipefail
-          deploy_dir="$(printf '%s' "$1" | base64 -d)"
-          image_ref="$(printf '%s' "$2" | base64 -d)"
-
-          if [[ "$deploy_dir" != /* || "$deploy_dir" == / ]]; then
-            echo "VPS_DEPLOY_DIR must be a non-root absolute path" >&2
-            exit 1
-          fi
-          if [[ ! "$image_ref" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ ]]; then
-            echo "IMAGE_REF must be a GHCR image pinned by SHA-256 digest" >&2
-            exit 1
-          fi
-
-          cd "$deploy_dir"
-          test -f compose.yaml
-          test -f .env
-          WATCHER_IMAGE="$image_ref" docker compose pull watcher
-          WATCHER_IMAGE="$image_ref" docker compose up -d --no-build watcher
-          WATCHER_IMAGE="$image_ref" docker compose ps watcher
-          REMOTE
+            "bash -s -- $deploy_dir_b64 $image_ref_b64 $COMPOSE_SHA256" \
+            < scripts/deploy-vps.sh

@@ -63,12 +63,13 @@ class BackendWorkflowContractTest(unittest.TestCase):
 
     def test_deploy_only_updates_watcher_without_global_cleanup(self):
         deploy = self.job("deploy-vps")
+        script = (ROOT / "scripts" / "deploy-vps.sh").read_text(encoding="utf-8") if (ROOT / "scripts" / "deploy-vps.sh").exists() else ""
         self.assertIn("VPS_DEPLOY_DIR", deploy)
-        self.assertIn("docker compose pull watcher", deploy)
-        self.assertRegex(deploy, r"docker compose up -d --no-build watcher")
-        self.assertIn("test -f .env", deploy)
+        self.assertIn("scripts/deploy-vps.sh", deploy)
+        self.assertIn("docker compose", script)
+        self.assertIn("[[ -f .env ]]", script)
         for destructive in ("docker image prune", "--remove-orphans", "docker compose down", "docker volume rm"):
-            self.assertNotIn(destructive, deploy)
+            self.assertNotIn(destructive, deploy + script)
 
 
 if __name__ == "__main__":
