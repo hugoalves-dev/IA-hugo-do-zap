@@ -97,3 +97,18 @@ mvn -Dtest=AiSimulationAcceptanceTest#crashedTelegramDispatchLeaseNeverReissuesA
 The slow transport asserts no SQL transaction is active. Tests prove another decision is deferred, original HTTP ACK survives lease expiry, crashed lease and worker restart never reissue a dispatched/unknown request, sibling WhatsApp still confirms, unknown does not start cooldown, and independently confirmed rejection allows retry. Tombstones survive payload/source expiry because they have no cascading FK. They contain only hashed chat key, UUIDs, channel/state and timestamp, never content or recipient address.
 
 Operational limit: DISPATCHED/UNKNOWN tombstones intentionally do not expire into permission to send, even after their sensitive queue payload is purged. A truly ambiguous conversation can remain blocked pending independent remote evidence; an evidence-backed reconciliation workflow and real Evolution transport are still not implemented. Never delete these tombstones merely to restore sending capacity. Defaults stay OFF. Evolution remains Disabled. No real transport request, deploy, pairing or account configuration occurred.
+
+
+## Admission ownership review follow-up
+
+RED PostgreSQL tests demonstrated that admission accepted an expired Telegram lease and a WhatsApp action still in PENDING. `DecisionDeliveryCoordinator.begin` now locks the matching outbox row before the conversation claim, following the ACK lock order (outbox, conversation, attempt/cooldown). Telegram requires the stored action type/key, PROCESSING status and current lease token. WhatsApp requires the matching decision/action UUID and DISPATCHED state. Both require unexpired sensitive/action data; Telegram additionally requires a live lease. Expiry is checked using PostgreSQL `clock_timestamp()` before admission and again after waiting for the conversation lock, while the outbox row remains locked. Only then may DISPATCHED admission commit before HTTP. A replaced/stale token cannot create a dispatch attempt or interfere with the current worker's ACK.
+
+The new interleaving test expires worker A's lease before begin, rejects it, lets worker B reclaim with a new token, rejects A's replaced token, admits B and acknowledges B successfully. The WhatsApp case rejects PENDING state, wrong action identity and expired DISPATCHED state without producing an attempt. Existing slow-HTTP lease-expiry behavior, crash ambiguity, safe rejection retry, worker restart, both sibling orders and concurrent WhatsApp dispatch remain covered.
+
+GREEN scratch JDK25/PostgreSQL17.11 command (exit 0):
+
+```text
+mvn -Dtest=AiSimulationAcceptanceTest#expiredOrReplacedTelegramLeaseCannotEnterDispatchAdmission+whatsappAdmissionRequiresItsCurrentDispatchedUnexpiredAction+twoWorkersCannotDispatchDifferentDecisionsDuringSlowTelegramRequest+crashedTelegramDispatchLeaseNeverReissuesAndStillAllowsSiblingChannel+confirmedTelegramRejectionAllowsSafeRetryButUnknownNeverDoes+telegramTransportTimeoutRetainsUnknownAcrossWorkerRestart+whatsappThenTelegramConfirmsBothSiblingsAndBlocksFutureDecision+telegramThenWhatsappConfirmsBothSiblingsAndStartsRealCooldown,WhatsAppActionServiceTest -DargLine=-Dapi.version=1.44 test -q
+```
+
+21 cases passed (8 admission/recovery/sibling acceptance cases and 13 WhatsApp cases), 0 failures/errors/skips. No full suite or remote call. Defaults OFF, Evolution Disabled, ambiguity reconciliation still requires independent proof; prior limits remain unchanged.

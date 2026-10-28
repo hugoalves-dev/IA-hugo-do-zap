@@ -513,6 +513,32 @@ class AiSimulationAcceptanceTest {
         assertEquals(0,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.success()));
         assertNull(jdbc.queryForObject("select last_real_action_at from decision_cooldowns where chat_jid=?",java.sql.Timestamp.class,chat));
     }
+    @Test void expiredOrReplacedTelegramLeaseCannotEnterDispatchAdmission() {
+        authorizeProducer(); var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
+        var first=outbox.claimNext(clock.instant()); assertNotNull(first);
+        var coordinator=new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc,manager);
+        jdbc.update("update outbox_actions set lease_expires_at=now()-interval '1 second' where id=?",first.id());
+        assertFalse(coordinator.begin(batch.id(),"TELEGRAM",UUID.fromString(first.leaseToken()),clock.instant()));
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
+        var second=outbox.claimNext(clock.instant()); assertNotNull(second);
+        assertNotEquals(first.leaseToken(),second.leaseToken());
+        assertFalse(coordinator.begin(batch.id(),"TELEGRAM",UUID.fromString(first.leaseToken()),clock.instant()));
+        assertTrue(coordinator.begin(batch.id(),"TELEGRAM",UUID.fromString(second.leaseToken()),clock.instant()));
+        assertEquals(second.leaseToken(),jdbc.queryForObject("select attempt_token::text from decision_delivery_attempts where decision_id=? and channel='TELEGRAM'",String.class,batch.id()));
+        assertTrue(outbox.acknowledge(second,clock.instant()));
+    }
+    @Test void whatsappAdmissionRequiresItsCurrentDispatchedUnexpiredAction() {
+        authorizeProducer(); var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        UUID action=jdbc.queryForObject("select action_id from whatsapp_action_outbox",UUID.class);
+        var coordinator=new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc,manager);
+        assertFalse(coordinator.begin(batch.id(),"WHATSAPP",action,clock.instant()));
+        jdbc.update("update whatsapp_action_outbox set status='DISPATCHED'");
+        assertFalse(coordinator.begin(batch.id(),"WHATSAPP",UUID.randomUUID(),clock.instant()));
+        jdbc.update("update whatsapp_action_outbox set expires_at=now()-interval '1 second',created_at=now()-interval '1 day'");
+        assertFalse(coordinator.begin(batch.id(),"WHATSAPP",action,clock.instant()));
+        assertEquals(0,jdbc.queryForObject("select count(*) from decision_delivery_attempts",Integer.class));
+    }
     private dev.hugo.watcher.NotificationService telegramService(dev.hugo.watcher.TelegramTransport transport) {
         var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
         var alerts=new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,outbox,clock,true,"owner@s.whatsapp.net");

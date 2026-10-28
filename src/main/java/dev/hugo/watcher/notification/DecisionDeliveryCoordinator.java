@@ -16,7 +16,15 @@ public final class DecisionDeliveryCoordinator {
         this.jdbc=jdbc; this.transactions=new TransactionTemplate(manager);
     }
     public boolean begin(UUID decisionId,String channel,UUID token,Instant now) {
+        if(token==null || !("TELEGRAM".equals(channel)||"WHATSAPP".equals(channel))) return false;
         return Boolean.TRUE.equals(transactions.execute(status -> {
+            // Same order as ACK: outbox row, then conversation claim, then attempt/cooldown.
+            // Holding the row prevents token/status replacement while admitting dispatch.
+            String lockedSql="TELEGRAM".equals(channel)
+                    ? "select id::text from outbox_actions where action_key='intelligent_alert:' || ?::text and action_type='intelligent_alert' and status='PROCESSING' and lease_token=? for update"
+                    : "select action_id::text from whatsapp_action_outbox where decision_id=? and status='DISPATCHED' and action_id=? for update";
+            if(jdbc.query(lockedSql,(rs,row)->rs.getString(1),decisionId,token).isEmpty()) return false;
+            if(!currentOwnership(decisionId,channel,token)) return false;
             var chats=jdbc.query("select chat_jid from simulation_batches where batch_id=?",(rs,row)->rs.getString(1),decisionId);
             if(chats.isEmpty()) return false;
             String chat=chats.getFirst(); String key=PersonalReferenceEvidence.hash(chat);
@@ -33,6 +41,8 @@ public final class DecisionDeliveryCoordinator {
                     and c.last_real_decision_id is distinct from ?)
                     """,Boolean.class,chat,Timestamp.from(now),decisionId);
             if(Boolean.TRUE.equals(cooldown)) return false;
+            // The claim lock may have waited. Recheck expiry against DB time after every lock.
+            if(!currentOwnership(decisionId,channel,token)) return false;
             jdbc.update("update decision_delivery_claims set decision_id=? where chat_key=?",decisionId,key);
             return jdbc.update("""
                     insert into decision_delivery_attempts(decision_id,channel,attempt_token,status,updated_at)
@@ -41,6 +51,12 @@ public final class DecisionDeliveryCoordinator {
                     where decision_delivery_attempts.status='RETRYABLE'
                     """,decisionId,channel,token,Timestamp.from(now))==1;
         }));
+    }
+    private boolean currentOwnership(UUID decisionId,String channel,UUID token) {
+        String sql="TELEGRAM".equals(channel)
+                ? "select exists(select 1 from outbox_actions where action_key='intelligent_alert:' || ?::text and action_type='intelligent_alert' and status='PROCESSING' and lease_token=? and lease_expires_at>clock_timestamp() and sensitive_expires_at>clock_timestamp())"
+                : "select exists(select 1 from whatsapp_action_outbox where decision_id=? and status='DISPATCHED' and action_id=? and expires_at>clock_timestamp())";
+        return Boolean.TRUE.equals(jdbc.queryForObject(sql,Boolean.class,decisionId,token));
     }
     /** Joins an existing ACK transaction. Only its matching dispatched token can settle once. */
     public void finish(UUID decisionId,String channel,UUID token,String outcome,Instant now) {
