@@ -14,6 +14,25 @@ O Compose não provisiona PostgreSQL: ele usa o serviço existente pela `infra_n
 
 Configure `WATCHER_TELEGRAM_BOT_TOKEN` com o token fornecido pelo BotFather e `WATCHER_TELEGRAM_CHAT_ID` com o ID da conversa privada autorizada. Mantenha o token somente no ambiente de execução; ele não entra no PostgreSQL nem nos logs. O bot envia resumos legíveis de mensagens arquivadas e alertas de perda de conexão.
 
+## Modos de simulação e ações reais
+
+Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`; isso impede novos lotes e o agendador. O administrador também pode pausar simulação por `telegram_admin_settings.simulation_enabled`. A variável de ambiente não força esse ajuste do banco para `true`: ambos precisam permitir processamento.
+
+Envio real exige opt-in explícito nas três variáveis abaixo. Todas começam em `false`, e as credenciais Evolution só são validadas quando os três opt-ins estão ligados:
+
+```dotenv
+WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false
+WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false
+WATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED=false
+WATCHER_WHATSAPP_ACTIONS_EVOLUTION_BASE_URL=https://evolution.example.invalid
+WATCHER_WHATSAPP_ACTIONS_EVOLUTION_INSTANCE=watcher-evolution
+WATCHER_WHATSAPP_ACTIONS_EVOLUTION_API_KEY=replace-with-evolution-api-key
+```
+
+Para ativar, ajuste explicitamente os três flags para `true`, informe URL HTTPS e credenciais válidas, e reinicie o serviço. Isso não ignora decisão elegível, consentimento/autorização explícita da conversa, template aprovado, política corrente nem o kill switch persistido `automation_settings.kill_switch_enabled`. Shadow e envio real são independentes: desligar shadow não ativa envio real, e ligar shadow não ativa envio real.
+
+Uma resposta HTTP 2xx da Evolution significa apenas que a API aceitou a requisição. Sem recibo autenticado de entrega, o resultado permanece `UNKNOWN`, não há reenvio automático, e o estado não deve ser tratado como confirmação de entrega.
+
 O cliente usa [`java-telegram-bot-api` 10.3.0](https://github.com/pengrad/java-telegram-bot-api), projeto comunitário listado na [documentação do Telegram](https://core.telegram.org/bots/samples), sob licença Apache-2.0.
 
 O container Spring não publica porta no host. Spring e Evolution compartilham a rede externa `infra_network`; Redis fica somente na rede interna `evolution_backend`, sem acesso a partir do watcher ou do host. O healthcheck consulta `/actuator/health`; os detalhes são ocultados. Mensagens e histórico não são persistidos pela configuração da Evolution (`DATABASE_SAVE_DATA_NEW_MESSAGE=false`, `DATABASE_SAVE_MESSAGE_UPDATE=false` e `DATABASE_SAVE_DATA_HISTORIC=false`).
@@ -62,4 +81,4 @@ mvn -Dtest=TelegramMessageFormatterTest,WatcherPropertiesTest,NotificationServic
 
 Os testes de persistência usam PostgreSQL real via Testcontainers e um transporte Telegram falso injetado. Eles não iniciam Evolution API, não chamam a Telegram Bot API e não executam pareamento ou envio real.
 
-O outbox confirma uma notificação somente após a resposta de sucesso da API. Em falhas ambíguas, a nova tentativa pode entregar a mesma mensagem novamente; o destino não oferece garantia de exactly-once.
+O outbox do Telegram pode repetir após falha ambígua e entregar a mesma mensagem novamente; a API não oferece garantia de exactly-once. A ação WhatsApp mantém resultado ambíguo como `UNKNOWN` e não tenta reenviar automaticamente.
