@@ -36,6 +36,8 @@ class AiSimulationAcceptanceTest {
         jdbc.update("delete from decision_delivery_attempts");
         jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
+        jdbc.update("delete from pending_notification");
+        jdbc.update("delete from processed_message");
         jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
         jdbc.update("delete from whatsapp_action_outbox");
         jdbc.update("delete from simulation_decisions");
@@ -48,6 +50,7 @@ class AiSimulationAcceptanceTest {
         jdbc.update("delete from ai_budget_limits");
         jdbc.update("insert into ai_budget_limits(singleton_id,daily_limit_micros,monthly_limit_micros) values (1,100,100)");
         jdbc.update("update archive_monitor_settings set mode='ALL'");
+        jdbc.update("update telegram_admin_settings set simulation_enabled=true where singleton_id=1");
         jdbc.update("update automation_settings set ai_classification_enabled=true,kill_switch_enabled=false,auto_reply_enabled=false,intelligent_alerts_enabled=false");
         consent("gemini"); consent("openrouter");
         calls = new AtomicInteger();
@@ -288,6 +291,48 @@ class AiSimulationAcceptanceTest {
         assertEquals(1, countActions()); assertEquals(1, countAlerts());
         String payload = jdbc.queryForObject("select payload::text from outbox_actions where action_type='intelligent_alert'", String.class);
         assertFalse(payload.contains(chat)); assertFalse(payload.contains("Preciso"));
+    }
+    @Test void realOnlyModeCapturesAndProcessesDespiteShadowAdminPause() {
+        authorizeProducer();
+        var simulation = new WatcherSimulationProperties();
+        simulation.setEnabled(false);
+        var debounce = new DebounceService(jdbc, simulation, manager, true);
+        var archiveModes = new dev.hugo.watcher.ArchiveModeService(jdbc, manager);
+        archiveModes.setMode(dev.hugo.watcher.ArchiveMode.ALL);
+        var messages = new dev.hugo.watcher.MessageService(jdbc, manager,
+                new dev.hugo.watcher.IdentityService(jdbc, manager), new WatcherProperties(), archiveModes,
+                debounce, simulation, true);
+        var incoming = new IncomingMessage(Optional.of("real-only-mode"), chat, Optional.empty(), Optional.empty(),
+                Optional.empty(), false, "notify", false, mention(), clock.instant().minusSeconds(60));
+        assertEquals(dev.hugo.watcher.MessageService.Acceptance.ACCEPTED, messages.accept(incoming));
+        jdbc.update("update telegram_admin_settings set simulation_enabled=false where singleton_id=1");
+        var scheduler = new SimulationScheduler(debounce, producingService(true, critical()), clock, jdbc, true);
+
+        scheduler.processReady();
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_decisions where production_mode", Integer.class));
+        assertEquals(1, countActions());
+        assertEquals(1, countAlerts());
+    }
+    @Test void bothModesOffDoNotCaptureEvaluateOrQueueActions() {
+        var simulation = new WatcherSimulationProperties();
+        simulation.setEnabled(false);
+        var debounce = new DebounceService(jdbc, simulation, manager);
+        var archiveModes = new dev.hugo.watcher.ArchiveModeService(jdbc, manager);
+        archiveModes.setMode(dev.hugo.watcher.ArchiveMode.ALL);
+        var messages = new dev.hugo.watcher.MessageService(jdbc, manager,
+                new dev.hugo.watcher.IdentityService(jdbc, manager), new WatcherProperties(), archiveModes,
+                debounce, simulation);
+        var incoming = new IncomingMessage(Optional.of("both-modes-off"), chat, Optional.empty(), Optional.empty(),
+                Optional.empty(), false, "notify", false, mention(), clock.instant().minusSeconds(60));
+        assertEquals(dev.hugo.watcher.MessageService.Acceptance.ACCEPTED, messages.accept(incoming));
+
+        new SimulationScheduler(debounce, producingService(false, critical()), clock, jdbc).processReady();
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_decisions", Integer.class));
+        assertEquals(0, countActions());
+        assertEquals(0, countAlerts());
     }
     @Test void shadowNeverEnqueuesEvenWithBothChannelFlagsEnabled() {
         authorizeProducer();

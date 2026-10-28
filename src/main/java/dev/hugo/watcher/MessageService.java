@@ -3,6 +3,7 @@ package dev.hugo.watcher;
 import dev.hugo.watcher.simulation.DebounceService;
 import dev.hugo.watcher.simulation.WatcherSimulationProperties;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -36,6 +37,7 @@ public class MessageService {
     private final ArchiveModeService archiveModes;
     private final DebounceService debounce;
     private final WatcherSimulationProperties simulationProperties;
+    private final boolean realModeEnabled;
 
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                           IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes) {
@@ -52,6 +54,14 @@ public class MessageService {
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                           IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
                           DebounceService debounce, WatcherSimulationProperties simulationProperties) {
+        this(jdbc, manager, identities, properties, archiveModes, debounce, simulationProperties, false);
+    }
+
+    @Autowired
+    public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                          IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
+                          DebounceService debounce, WatcherSimulationProperties simulationProperties,
+                          @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.identities = identities;
@@ -59,6 +69,7 @@ public class MessageService {
         this.archiveModes = archiveModes;
         this.debounce = debounce;
         this.simulationProperties = simulationProperties;
+        this.realModeEnabled = realModeEnabled;
     }
 
     public Acceptance accept(IncomingMessage message) {
@@ -179,7 +190,8 @@ public class MessageService {
     }
 
     private String shadowSnapshot(IncomingMessage message, String chat, String participant, Instant receivedAt) {
-        if (debounce == null || !simulationProperties.isEnabled() || isGroup(chat) && participant.isBlank()) return null;
+        if (debounce == null || !(simulationProperties.isEnabled() || realModeEnabled)
+                || isGroup(chat) && participant.isBlank()) return null;
         IncomingMessage snapshot = new IncomingMessage(message.externalId(), chat,
                 isGroup(chat) ? Optional.of(participant) : Optional.empty(), Optional.empty(), Optional.empty(),
                 message.fromMe(), message.upsertType(), message.history(), message.content(), receivedAt);

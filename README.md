@@ -16,7 +16,7 @@ Configure `WATCHER_TELEGRAM_BOT_TOKEN` com o token fornecido pelo BotFather e `W
 
 ## Modos de simulação e ações reais
 
-Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`; isso impede novos lotes e o agendador. O administrador também pode pausar simulação por `telegram_admin_settings.simulation_enabled`. A variável de ambiente não força esse ajuste do banco para `true`: ambos precisam permitir processamento.
+Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`. A captura e o agendador ficam desligados quando o produtor real também está desligado. Com `WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=true`, a avaliação real continua mesmo com shadow desligado. O administrador pode pausar avaliações shadow por `telegram_admin_settings.simulation_enabled`; esse ajuste não bloqueia o produtor real. Com shadow e produtor real desligados, não há captura, avaliação nem novas ações.
 
 Envio real exige opt-in explícito nas três variáveis abaixo. Todas começam em `false`, e as credenciais Evolution só são validadas quando os três opt-ins estão ligados:
 

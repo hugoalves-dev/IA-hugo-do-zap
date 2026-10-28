@@ -2,6 +2,7 @@ package dev.hugo.watcher.simulation;
 
 import dev.hugo.watcher.IncomingMessage;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -24,13 +25,21 @@ public class DebounceService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final WatcherSimulationProperties limits;
+    private final boolean processingEnabled;
 
     @Autowired
     public DebounceService(JdbcTemplate jdbc, WatcherSimulationProperties limits,
-                           PlatformTransactionManager manager) {
+                           PlatformTransactionManager manager,
+                           @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
         this.jdbc = jdbc;
         this.limits = limits;
         this.transactions = new TransactionTemplate(manager);
+        this.processingEnabled = limits.isEnabled() || realModeEnabled;
+    }
+
+    public DebounceService(JdbcTemplate jdbc, WatcherSimulationProperties limits,
+                           PlatformTransactionManager manager) {
+        this(jdbc, limits, manager, false);
     }
 
     public DebounceService(JdbcTemplate jdbc, WatcherSimulationProperties limits) {
@@ -139,12 +148,13 @@ public class DebounceService {
     }
 
     public List<Batch> claimReady(Instant now) {
+        if (!processingEnabled) return List.of();
         drainInbox(now);
         return Objects.requireNonNull(transactions.execute(status -> claimTransaction(now)));
     }
 
     private void drainInbox(Instant now) {
-        if (!limits.isEnabled()) return;
+        if (!processingEnabled) return;
         // One transaction per capture. A failed enqueue retains the durable snapshot for retry.
         for (int i = 0; i < 100; i++) {
             Long[] selectedId = { null };

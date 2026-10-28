@@ -30,6 +30,20 @@ class SimulationSchedulerTest {
         contexts.run(context -> assertTrue(context.getBeansOfType(SimulationScheduler.class).size() > 0));
     }
 
+    @Test void realModeKeepsSchedulerAndIgnoresShadowAdminPause() {
+        contexts.withPropertyValues("watcher.simulation.enabled=false", "watcher.decision-producer.real-mode-enabled=true")
+                .run(context -> {
+                    JdbcTemplate jdbc = context.getBean(JdbcTemplate.class);
+                    DebounceService debounce = context.getBean(DebounceService.class);
+                    when(jdbc.queryForObject(anyString(), eq(Boolean.class))).thenReturn(false);
+
+                    assertTrue(context.getBeansOfType(SimulationScheduler.class).size() > 0);
+                    context.getBean(SimulationScheduler.class).processReady();
+
+                    org.mockito.Mockito.verify(debounce).claimReady(org.mockito.ArgumentMatchers.any());
+                });
+    }
+
     @Test void runtimeAdminSwitchStopsProcessingReadyBatches() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(anyString(), eq(Boolean.class))).thenReturn(false);
