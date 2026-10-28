@@ -16,8 +16,16 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.UUID;
 
+import dev.hugo.watcher.notification.DisabledEvolutionActionTransport;
+import dev.hugo.watcher.notification.EvolutionActionTransport;
+import dev.hugo.watcher.notification.IntelligentAlertService;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -27,6 +35,7 @@ class EvolutionWebhookControllerTest {
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
     private static final String TOKEN = "test-webhook-token";
+    private static final String OWNER_JID = "15550000000@s.whatsapp.net";
     private static final String EVENT = """
             {"event":"messages.upsert","instance":"watcher-test","data":{"key":{"id":"evt-1","remoteJid":"120363000000000000@g.us"}}}
             """;
@@ -42,16 +51,67 @@ class EvolutionWebhookControllerTest {
         registry.add("watcher.evolution.webhook-token", () -> TOKEN);
         registry.add("watcher.evolution.instance", () -> "watcher-test");
         registry.add("watcher.evolution.max-body-bytes", () -> "1024");
+        registry.add("watcher.whatsapp-actions.owner-jid", () -> OWNER_JID);
+        registry.add("watcher.telegram.intelligent-alerts-enabled", () -> "true");
     }
 
     @Autowired JdbcTemplate jdbc;
+    @Autowired EvolutionJobProcessor jobs;
+    @Autowired IntelligentAlertService alerts;
+    @Autowired EvolutionActionTransport evolutionActionTransport;
     @LocalServerPort int port;
 
     @BeforeEach
     void clearTables() {
+        jdbc.update("delete from outbox_actions");
+        jdbc.update("delete from chat_automation_authorizations");
+        jdbc.update("delete from simulation_decisions");
+        jdbc.update("delete from simulation_batch_messages");
+        jdbc.update("delete from simulation_batches");
+        jdbc.update("delete from whatsapp_owner_message_references");
         jdbc.update("delete from processing_jobs");
         jdbc.update("delete from inbox_events");
         jdbc.update("delete from quarantined_events");
+    }
+
+    @Test void onlyBearerAuthenticatedWebhookCanCreateOwnReplyReference() throws Exception {
+        assertTrue(evolutionActionTransport instanceof DisabledEvolutionActionTransport,
+                "Spring's active Evolution transport must remain disabled in tests and by default");
+        String chat = "15551234567@s.whatsapp.net";
+        String unauthorized = messageEvent("owner-denied-1", chat, true,
+                "{\"conversation\":\"synthetic outbound\"}");
+        assertEquals(401, post(unauthorized, null).statusCode());
+        assertEquals(0, inboxCount());
+        assertEquals(0, jobs.processAvailable());
+        assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_owner_message_references", Integer.class));
+
+        String outbound = messageEvent("owner-outbound-1", chat, true,
+                "{\"conversation\":\"synthetic outbound\"}");
+        assertEquals(202, post(outbound, TOKEN).statusCode());
+        assertEquals(1, jobs.processAvailable());
+        assertEquals(1, jdbc.queryForObject("select count(*) from whatsapp_owner_message_references where chat_jid=? and external_id=?",
+                Integer.class, chat, "owner-outbound-1"));
+
+        // Classification/decision below is a synthetic audit fixture tied to a reply received over HTTP.
+        String reply = messageEvent("reply-to-owner-1", chat, false,
+                "{\"extendedTextMessage\":{\"text\":\"synthetic reply\",\"contextInfo\":{\"stanzaId\":\"owner-outbound-1\"}}}");
+        assertEquals(202, post(reply, TOKEN).statusCode());
+        assertEquals(1, jobs.processAvailable());
+        UUID decision = UUID.randomUUID();
+        Instant now = Instant.now();
+        Instant expiry = now.plusSeconds(86_400);
+        jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('http_alert_test',1,'CRITICAL_URGENCY','Resposta automática: alerta crítico.',true,true) on conflict (template_id,version) do update set enabled=true,identifies_automation=true,body=excluded.body");
+        jdbc.update("update automation_settings set ai_classification_enabled=true,intelligent_alerts_enabled=true,kill_switch_enabled=false where singleton_id=1");
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,?,'COMPLETED',?,?,?,?,?,?)",
+                decision, chat, "", Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(expiry), Timestamp.from(expiry));
+        String replyPayload = "{\"fromMe\":false,\"content\":{" +
+                "\"extendedTextMessage\":{\"text\":\"synthetic reply\",\"contextInfo\":{\"stanzaId\":\"owner-outbound-1\"}}}}";
+        jdbc.update("insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload) values (?,?,?,?,?,?::jsonb)",
+                decision, chat, "", "reply-to-owner-1", Timestamp.from(now), replyPayload);
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,real_action_allowed,decision_state,template_id,classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash) values (?,true,false,'synthetic_http_fixture',?,?,true,'WOULD_ACT','http_alert_test','CLASSIFIED','CRITICAL',0.99,?)",
+                decision, Timestamp.from(now), Timestamp.from(expiry), hash("reply-to-owner-1"));
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','http_alert_test',1)", chat);
+        assertTrue(alerts.enqueue(decision).accepted());
     }
 
     @Test void rejectsUnauthorizedOriginWithoutCreatingInbox() throws Exception {
@@ -129,5 +189,16 @@ class EvolutionWebhookControllerTest {
 
     private int inboxCount() {
         return jdbc.queryForObject("select count(*) from inbox_events", Integer.class);
+    }
+
+    private static String messageEvent(String id, String chat, boolean fromMe, String messageJson) {
+        return """
+                {"event":"messages.upsert","instance":"watcher-test","data":{"type":"notify","key":{"id":"%s","remoteJid":"%s","fromMe":%s},"messageTimestamp":1793008800,"message":%s}}
+                """.formatted(id, chat, fromMe, messageJson);
+    }
+
+    private static String hash(String value) {
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))); }
+        catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
 }

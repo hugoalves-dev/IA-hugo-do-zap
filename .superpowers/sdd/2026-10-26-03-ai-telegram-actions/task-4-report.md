@@ -23,6 +23,8 @@ Date: 2026-10-27
 - RED: the new report-format test failed because the Telegram formatter had no daily summary branch. GREEN after adding that formatter path.
 - RED: review follow-up tests initially exposed missing personal-reference validation, expiry constraint fixture error, and missing alert feature flags in a notification fixture.
 - GREEN: from isolated scratch `H:\Script\IA-hugo-do-zap-evolution-poc-task4-scratch`, `mvn '-Dtest=WhatsAppActionServiceTest,IntelligentAlertServiceTest,NotificationServiceTest,TelegramMessageFormatterTest,SpringFlywayStartupTest,MessageServiceTest,RetentionRegressionTest' test` — 82 tests, 0 failures, 0 errors, 0 skipped; PostgreSQL 17 Testcontainers.
+- GREEN follow-up: authenticated HTTP webhook → inbox/job → outbound `fromMe` reference → synthetic persisted reply decision queues an aggregate alert; unauthenticated `fromMe` request returns 401 and produces no inbox job or reference. Fixture proves this application's Bearer gate only; it does not prove Evolution's upstream `fromMe` authenticity.
+- GREEN: isolated scratch `mvn '-Dtest=EvolutionWebhookControllerTest#onlyBearerAuthenticatedWebhookCanCreateOwnReplyReference' test` — 1 test, 0 failures/errors/skips; also asserts Spring injects `DisabledEvolutionActionTransport` by default.
 - Tests cover bounded retention/purge, no resend after unknown/purge, no raw text or chat JID in alert payload, revocation revalidation, and feature defaults. No full suite was run.
 - CodeGraph reported 0 indexed nodes. Targeted `rg` and direct reads traced simulation decisions, policy tables, Telegram outbox and formatter.
 
@@ -31,5 +33,7 @@ Date: 2026-10-27
 - Classification and `BudgetService` remain disconnected from the simulation caller. Tests use synthetic persisted decision rows and fake transports. No AI mention evidence or sensitive text was fabricated.
 - Do not enqueue real AI-generated actions until task 5 wires validated classification and budget reservations to each attempt, including retries/fallbacks.
 - Evolution delivery remains `UNKNOWN` until Task 5 defines an authenticated provider receipt mapping. No public arbitrary-ID reconciliation API remains.
+- Once the seven-day action TTL expires, an `UNKNOWN` action row is purged and cannot be reconciled later; its non-identifying decision tombstone still blocks replay. TTL purge does not cancel an HTTP request already in flight. The active Spring transport is unconditionally `DisabledEvolutionActionTransport`, and real-send defaults OFF, so this code cannot start such a request.
+- Outbound `fromMe` trust currently relies on the shared-Bearer-protected webhook intake and validated inbox/job path. The test uses synthetic webhook JSON and does not establish that a live Evolution deployment authenticates or truthfully supplies `fromMe`; Task 5 must verify that upstream contract before relying on it.
 - Alerts are implemented but will not enqueue from current production decision rows until Task 5 connects validated classification, budget and structured personal-reference evidence.
 - No Telegram, WhatsApp, Evolution, AI provider, or VPS request was made. Tests use PostgreSQL Testcontainers and in-process fakes only.
