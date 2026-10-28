@@ -52,6 +52,13 @@ class IntelligentAlertServiceTest {
                     classification_confidence,intelligent_alert_reference_hash)
                 values (?,true,false,'synthetic_audit',?,?,true,'WOULD_ACT','alert_test','CLASSIFIED','CRITICAL',0.98,?)
                 """, decisionId, Timestamp.from(now), Timestamp.from(expiry), hash("synthetic-source-id"));
+        jdbc.update("update archive_monitor_settings set mode='ALL'");
+        jdbc.update("update automation_settings set ai_classification_enabled=true");
+        jdbc.update("delete from ai_data_consents");
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('15551234567@s.whatsapp.net','CONTACT_REQUEST','gemini',true,?)",Timestamp.from(expiry));
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('15551234567@s.whatsapp.net','CRITICAL_URGENCY','gemini',true,?)",Timestamp.from(expiry));
+        jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",decisionId,UUID.randomUUID(),Timestamp.from(expiry),"{\"provider\": \"gemini\", \"purposes\": [\"CONTACT_REQUEST\", \"CRITICAL_URGENCY\"], \"available\": true, \"requestDetected\": true, \"status\": \"CLASSIFIED\", \"urgency\": \"CRITICAL\", \"confidence\": 0.98}");
+        jdbc.update("update simulation_decisions set alert_template_reference='alert_test@v1',production_mode=true,classification_status='CLASSIFIED',classification_urgency='CRITICAL',classification_confidence=0.98 where batch_id=?",decisionId);
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','alert_test',1)", "15551234567@s.whatsapp.net");
         alerts = new IntelligentAlertService(jdbc, tx, new NotificationOutboxRepository(jdbc, tx),
                 Clock.fixed(now, ZoneOffset.UTC), true, OWNER_JID);

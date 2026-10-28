@@ -28,6 +28,7 @@ public class IntelligentAlertService {
     private final Clock clock;
     private final boolean enabled;
     private final String ownerJid;
+    private DecisionRuntimeGate runtimeGate;
 
     @Autowired
     public IntelligentAlertService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -40,12 +41,15 @@ public class IntelligentAlertService {
         this.clock = clock;
         this.enabled = enabled;
         this.ownerJid = ownerJid == null ? "" : ownerJid.strip();
+        this.runtimeGate = new DecisionRuntimeGate(jdbc,clock,new dev.hugo.watcher.WatcherProperties(),this.ownerJid);
     }
 
     public IntelligentAlertService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                    NotificationOutboxRepository outbox, Clock clock, boolean enabled) {
         this(jdbc, manager, outbox, clock, enabled, "");
     }
+
+    @Autowired public void configureRuntimeGate(DecisionRuntimeGate gate) { this.runtimeGate=gate; }
 
     public AlertEnqueueResult enqueue(UUID persistedDecisionId) {
         if (!enabled) return AlertEnqueueResult.rejected("ALERTS_DISABLED");
@@ -91,6 +95,7 @@ public class IntelligentAlertService {
     }
 
     private AlertContext eligible(UUID decisionId) {
+        if (!runtimeGate.allows(decisionId,true)) return null;
         List<AlertContext> contexts = jdbc.query("""
                 select b.chat_jid,d.decision_state,d.real_action_allowed,d.would_alert,
                        d.classification_status,d.classification_urgency,d.classification_confidence,
@@ -103,7 +108,7 @@ public class IntelligentAlertService {
                   join chat_automation_authorizations a on a.chat_jid=b.chat_jid
                     and a.situation='CRITICAL_URGENCY'
                   join response_templates t on t.template_id=a.template_id and t.version=a.template_version
-                    and t.situation=a.situation
+                    and t.situation=a.situation and d.alert_template_reference=t.template_id || '@v' || t.version::text
                  where d.batch_id=? and s.singleton_id=1
                  order by t.template_id,t.version desc limit 1
                 """, (rs, row) -> new AlertContext(rs.getString("chat_jid"), rs.getString("decision_state"),

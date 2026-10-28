@@ -19,15 +19,23 @@ public class WhatsAppActionService {
     private final TransactionTemplate transactions;
     private final Clock clock;
     private final boolean realSendEnabled;
+    private DecisionRuntimeGate runtimeGate;
 
     @Autowired
     public WhatsAppActionService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
-                                 @Value("${watcher.whatsapp-actions.real-send-enabled:false}") boolean realSendEnabled) {
+                                 @Value("${watcher.whatsapp-actions.real-send-enabled:false}") boolean realSendEnabled,
+                                 @Value("${watcher.whatsapp-actions.owner-jid:}") String ownerJid) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.clock = clock;
         this.realSendEnabled = realSendEnabled;
+        this.runtimeGate = new DecisionRuntimeGate(jdbc,clock,new dev.hugo.watcher.WatcherProperties(),ownerJid);
     }
+
+    public WhatsAppActionService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock, boolean enabled) {
+        this(jdbc,manager,clock,enabled,"");
+    }
+    @Autowired public void configureRuntimeGate(DecisionRuntimeGate gate) { this.runtimeGate=gate; }
 
     public ActionResult enqueue(UUID persistedDecisionId) {
         if (!realSendEnabled) return ActionResult.rejected("REAL_ACTION_DISABLED");
@@ -96,6 +104,7 @@ public class WhatsAppActionService {
     }
 
     private Authorization currentAuthorization(UUID decisionId, Instant now) {
+        if (!runtimeGate.allows(decisionId,false)) return null;
         List<Authorization> rows = jdbc.query("""
                 select b.chat_jid,b.participant_jid,t.situation,t.template_id,t.version,t.body,
                        d.decision_state,d.real_action_allowed,d.would_reply,d.would_alert,
@@ -118,8 +127,8 @@ public class WhatsAppActionService {
         Authorization a = rows.getFirst();
         if (!a.realActionAllowed() || !"WOULD_ACT".equals(a.decisionState()) || a.killSwitchEnabled()
                 || !a.templateEnabled() || !a.identifiesAutomation()) return null;
-        if (a.wouldReply() == a.wouldAlert()) return null;
-        if (a.wouldReply() && !a.autoReplyEnabled() || a.wouldAlert() && !a.intelligentAlertsEnabled()) return null;
+        if (!a.wouldReply()) return null;
+        if (!a.autoReplyEnabled()) return null;
         if (!a.body().stripLeading().toLowerCase(java.util.Locale.ROOT).startsWith("resposta automática:")) return null;
         Integer optedIn = jdbc.queryForObject("""
                 select count(*) from chat_automation_authorizations

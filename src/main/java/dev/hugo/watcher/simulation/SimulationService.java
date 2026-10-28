@@ -39,13 +39,15 @@ public class SimulationService {
     private final AvailabilityService availability;
     private final WatcherProperties watcher;
     private final dev.hugo.watcher.ai.AiSimulationClassifier classifier;
+    private final dev.hugo.watcher.notification.DecisionActionProducer producer;
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     @Autowired
     public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
                              WatcherSimulationProperties properties, DecisionEngine decisions, PersistedPolicyRepository policies,
                              AvailabilityService availability, WatcherProperties watcher,
-                             dev.hugo.watcher.ai.AiSimulationClassifier classifier) {
+                             dev.hugo.watcher.ai.AiSimulationClassifier classifier,
+                             dev.hugo.watcher.notification.DecisionActionProducer producer) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.clock = clock;
@@ -55,6 +57,14 @@ public class SimulationService {
         this.availability = availability;
         this.watcher = watcher;
         this.classifier = classifier;
+        this.producer = producer;
+    }
+
+    public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
+                             WatcherSimulationProperties properties, DecisionEngine decisions, PersistedPolicyRepository policies,
+                             AvailabilityService availability, WatcherProperties watcher,
+                             dev.hugo.watcher.ai.AiSimulationClassifier classifier) {
+        this(jdbc,manager,clock,properties,decisions,policies,availability,watcher,classifier,null);
     }
 
     public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
@@ -109,21 +119,26 @@ public class SimulationService {
         Availability currentAvailability = availability.at(now, ZoneId.of(watcher.getTimezone()), resolved);
         EffectivePolicy effective = new EffectivePolicy(resolved.fields(), resolved.temporaryAvailability(),
                 loadDecisionPolicy(batch), currentAvailability);
+        Classification verified = classifier == null ? classification : classifier.revalidate(batch);
         Decision decided = scopeBlocked == null
-                ? decisions.decide(batch, classifier == null ? classification : classifier.revalidate(batch), effective, now)
+                ? decisions.decide(batch, verified, effective, now)
                 : new Decision(false, false, null, "archive_scope_blocked", scopeBlocked, false, "archive_scope_blocked");
         SimulationDecision decision = new SimulationDecision(decided.wouldAlert(), decided.wouldReply(),
                 decided.templateReference(), decided.reason(), decided.blockedReason(),
                 decided.realActionAllowed(), decided.realBlockedReason(), decided.status());
         int inserted = jdbc.update("""
                 insert into simulation_decisions(batch_id,would_alert,would_reply,template_id,decision_reason,blocked_reason,
-                    decided_at,metadata_expires_at,real_action_allowed,real_blocked_reason,decision_state,policy_snapshot,availability_state,availability_source,availability_reason)
-                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?) on conflict (batch_id) do nothing
+                    decided_at,metadata_expires_at,real_action_allowed,real_blocked_reason,decision_state,policy_snapshot,availability_state,availability_source,availability_reason,
+                    classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash,production_mode,alert_template_reference)
+                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?) on conflict (batch_id) do nothing
                 """, batch.id(), decision.wouldAlert(), decision.wouldReply(), decision.templateId(), decision.decisionReason(),
                 decision.blockedReason(), Timestamp.from(now), Timestamp.from(now.plusSeconds(properties.getAuditRetentionDays() * 86_400L)),
                 decision.realActionAllowed(), decision.realBlockedReason(), decision.status().name(),
                 JSON.writeValueAsString(resolved.fields()), currentAvailability.state().name(),
-                currentAvailability.source().name(), currentAvailability.reason());
+                currentAvailability.source().name(), currentAvailability.reason(),
+                verified.status().name(),verified.urgency().name(),verified.confidence(),verified.personalReferenceHash(),producer != null && producer.realModeEnabled(),
+                effective.decisionPolicy().templates().containsKey(Situation.CRITICAL_URGENCY)
+                        ? effective.decisionPolicy().templates().get(Situation.CRITICAL_URGENCY).reference() : null);
         List<SimulationDecision> persisted = jdbc.query("""
                 select would_alert,would_reply,template_id,decision_reason,blocked_reason,real_action_allowed,real_blocked_reason,decision_state
                   from simulation_decisions where batch_id=?
@@ -140,6 +155,7 @@ public class SimulationService {
                     """, batch.chatJid(), "", Timestamp.from(now));
         }
         jdbc.update("update simulation_batches set status='COMPLETED', claimed_at=null where batch_id=? and status='CLAIMED'", batch.id());
+        if (producer != null && verified.available()) producer.produce(batch.id());
         return persisted.getFirst();
     }
 

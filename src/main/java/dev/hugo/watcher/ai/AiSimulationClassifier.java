@@ -85,7 +85,11 @@ public final class AiSimulationClassifier {
         Set<Situation> purposes = new HashSet<>();
         for (Object purpose : (List<?>)metadata.get("purposes")) purposes.add(Situation.valueOf(purpose.toString()));
         if (!authorized(batch, metadata.get("provider").toString(), purposes)) return Classification.unavailable();
-        return decode(stored);
+        Classification decoded = decode(stored);
+        String reference = referenceHash(batch);
+        if ((decoded.explicitPersonalReference() || decoded.groupTriggerMatched()) && reference == null) return Classification.unavailable();
+        return new Classification(decoded.situations(),decoded.requestDetected(),reference != null,
+                reference != null && batch.chatJid().endsWith("@g.us"),decoded.available(),decoded.urgency(),decoded.confidence(),decoded.status(),reference);
     }
     private ProviderTransport guarded(ProviderTransport http, Batch batch, String provider, Set<Situation> purposes,
                                       java.util.concurrent.atomic.AtomicReference<String> usedProvider) {
@@ -124,33 +128,41 @@ public final class AiSimulationClassifier {
                 """, Boolean.class, batch.id(), batch.chatJid(), Timestamp.from(clock.instant())));
     }
     private Classification convert(Batch batch, ClassificationResult result, Set<Situation> purposes) {
-        if (result.status() != ClassificationResult.Status.CLASSIFIED) return Classification.unavailable();
+        if (result.status() != ClassificationResult.Status.CLASSIFIED)
+            return new Classification(Set.of(),false,false,false,false,result.urgency(),result.confidence(),result.status(),null);
         Set<Situation> situations = EnumSet.noneOf(Situation.class);
         if (result.intent() == ClassificationResult.Intent.CONTACT_REQUEST) situations.add(Situation.CONTACT_REQUEST);
         if (result.intent() == ClassificationResult.Intent.GROUP_TRIGGER) situations.add(Situation.GROUP_TRIGGER);
         if (result.urgency() == ClassificationResult.Urgency.CRITICAL) situations.add(Situation.CRITICAL_URGENCY);
         if (!purposes.containsAll(situations)) return Classification.unavailable();
         boolean mention = structuredMention(batch);
-        return new Classification(situations, result.requestDetected(), mention, mention && batch.chatJid().endsWith("@g.us"), true);
+        return new Classification(situations, result.requestDetected(), mention, mention && batch.chatJid().endsWith("@g.us"), true,
+                result.urgency(), result.confidence(), result.status(), referenceHash(batch));
     }
-    private boolean structuredMention(Batch batch) {
-        if (properties.ownJid() == null || properties.ownJid().isBlank()) return false;
-        return batch.messages().stream().filter(message -> !message.fromMe() && !message.history())
-                .anyMatch(message -> message.content().get("extendedTextMessage") instanceof Map<?, ?> extended
-                        && extended.get("contextInfo") instanceof Map<?, ?> context
-                        && context.get("mentionedJid") instanceof List<?> mentions && mentions.contains(properties.ownJid()));
+    private String referenceHash(Batch batch) {
+        return dev.hugo.watcher.simulation.PersonalReferenceEvidence.findHash(jdbc,batch.id(),properties.ownJid(),clock.instant());
     }
+    private boolean structuredMention(Batch batch) { return referenceHash(batch) != null; }
     private static String encode(Classification result, String provider, Set<Situation> purposes) {
-        return JSON.writeValueAsString(Map.of("provider", provider, "purposes", purposes.stream().map(Enum::name).toList(), "situations", result.situations().stream().map(Enum::name).toList(),
-                "requestDetected",result.requestDetected(),"explicitPersonalReference",result.explicitPersonalReference(),
-                "groupTriggerMatched",result.groupTriggerMatched(),"available",result.available()));
+        Map<String,Object> metadata = new LinkedHashMap<>();
+        metadata.put("provider",provider); metadata.put("purposes",purposes.stream().map(Enum::name).toList());
+        metadata.put("situations",result.situations().stream().map(Enum::name).toList());
+        metadata.put("requestDetected",result.requestDetected()); metadata.put("explicitPersonalReference",result.explicitPersonalReference());
+        metadata.put("groupTriggerMatched",result.groupTriggerMatched()); metadata.put("available",result.available());
+        metadata.put("urgency",result.urgency().name()); metadata.put("confidence",result.confidence()); metadata.put("status",result.status().name());
+        metadata.put("personalReferenceHash",result.personalReferenceHash());
+        return JSON.writeValueAsString(metadata);
     }
     private static Classification decode(String value) {
         Map<?, ?> result = JSON.readValue(value, Map.class);
         Set<Situation> situations = new HashSet<>();
         for (Object situation : (List<?>)result.get("situations")) situations.add(Situation.valueOf(situation.toString()));
         return new Classification(situations, Boolean.TRUE.equals(result.get("requestDetected")),
-                Boolean.TRUE.equals(result.get("explicitPersonalReference")), Boolean.TRUE.equals(result.get("groupTriggerMatched")), Boolean.TRUE.equals(result.get("available")));
+                Boolean.TRUE.equals(result.get("explicitPersonalReference")), Boolean.TRUE.equals(result.get("groupTriggerMatched")), Boolean.TRUE.equals(result.get("available")),
+                ClassificationResult.Urgency.valueOf(Objects.toString(result.get("urgency"),"UNCERTAIN")),
+                result.get("confidence") instanceof Number n ? n.doubleValue() : 0,
+                ClassificationResult.Status.valueOf(Objects.toString(result.get("status"),"UNCERTAIN")),
+                (String)result.get("personalReferenceHash"));
     }
     private record Prior(String result, Instant expires) { }
 }
