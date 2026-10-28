@@ -38,12 +38,14 @@ public class SimulationService {
     private final PersistedPolicyRepository policies;
     private final AvailabilityService availability;
     private final WatcherProperties watcher;
+    private final dev.hugo.watcher.ai.AiSimulationClassifier classifier;
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     @Autowired
     public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
                              WatcherSimulationProperties properties, DecisionEngine decisions, PersistedPolicyRepository policies,
-                             AvailabilityService availability, WatcherProperties watcher) {
+                             AvailabilityService availability, WatcherProperties watcher,
+                             dev.hugo.watcher.ai.AiSimulationClassifier classifier) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.clock = clock;
@@ -52,6 +54,13 @@ public class SimulationService {
         this.policies = policies;
         this.availability = availability;
         this.watcher = watcher;
+        this.classifier = classifier;
+    }
+
+    public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
+                             WatcherSimulationProperties properties, DecisionEngine decisions, PersistedPolicyRepository policies,
+                             AvailabilityService availability, WatcherProperties watcher) {
+        this(jdbc, manager, clock, properties, decisions, policies, availability, watcher, null);
     }
 
     public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
@@ -70,18 +79,22 @@ public class SimulationService {
 
     public SimulationDecision evaluate(Batch batch) {
         Objects.requireNonNull(batch, "batch");
-        return Objects.requireNonNull(transactions.execute(status -> evaluateTransaction(batch, clock.instant())));
+        // Provider requests run without a database transaction or advisory lock held.
+        boolean existing = Boolean.TRUE.equals(jdbc.queryForObject(
+                "select exists(select 1 from simulation_decisions where batch_id=?)", Boolean.class, batch.id()));
+        Classification classification = classifier == null || existing ? Classification.unavailable() : classifier.classify(batch);
+        return Objects.requireNonNull(transactions.execute(status -> evaluateTransaction(batch, classification, clock.instant())));
     }
 
-    private SimulationDecision evaluateTransaction(Batch batch, Instant now) {
+    private SimulationDecision evaluateTransaction(Batch batch, Classification classification, Instant now) {
         jdbc.query("select pg_advisory_xact_lock(947221, 2)", rs -> { });
         List<Batch> current = jdbc.query("select chat_jid,participant_jid from simulation_batches where batch_id=?",
                 (rs, row) -> new Batch(batch.id(), rs.getString(1), rs.getString(2), batch.messages()), batch.id());
         if (current.isEmpty()) throw new IllegalStateException("simulation batch missing");
-        return evaluateCurrent(current.getFirst(), now);
+        return evaluateCurrent(current.getFirst(), classification, now);
     }
 
-    private SimulationDecision evaluateCurrent(Batch batch, Instant now) {
+    private SimulationDecision evaluateCurrent(Batch batch, Classification classification, Instant now) {
         lockDecisionKey(batch);
         List<Scope> scope = jdbc.query("""
                 select settings.mode, snapshot.archived, coalesce(snapshot.synchronized_snapshot,false) synchronized_snapshot
@@ -97,7 +110,7 @@ public class SimulationService {
         EffectivePolicy effective = new EffectivePolicy(resolved.fields(), resolved.temporaryAvailability(),
                 loadDecisionPolicy(batch), currentAvailability);
         Decision decided = scopeBlocked == null
-                ? decisions.decide(batch, Classification.unavailable(), effective, now)
+                ? decisions.decide(batch, classifier == null ? classification : classifier.revalidate(batch), effective, now)
                 : new Decision(false, false, null, "archive_scope_blocked", scopeBlocked, false, "archive_scope_blocked");
         SimulationDecision decision = new SimulationDecision(decided.wouldAlert(), decided.wouldReply(),
                 decided.templateReference(), decided.reason(), decided.blockedReason(),

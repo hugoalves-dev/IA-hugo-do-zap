@@ -31,7 +31,7 @@ class BudgetMigrationUpgradeTest {
                 """, existing, today);
         Integer checksumBefore = jdbc.queryForObject("select checksum from flyway_schema_history where version='20'", Integer.class);
 
-        Flyway currentRelease = Flyway.configure().dataSource(source).load();
+        Flyway currentRelease = Flyway.configure().dataSource(source).target("21").load();
         currentRelease.migrate();
 
         assertEquals("21", currentRelease.info().current().getVersion().getVersion());

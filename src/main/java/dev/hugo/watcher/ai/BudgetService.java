@@ -25,6 +25,8 @@ public final class BudgetService {
     public BudgetService(JdbcTemplate jdbc, PlatformTransactionManager manager, MeterRegistry metrics) {
         this.jdbc = Objects.requireNonNull(jdbc);
         this.transactions = new TransactionTemplate(Objects.requireNonNull(manager));
+        // Accounting must survive a surrounding simulation transaction rolling back.
+        this.transactions.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.metrics = Objects.requireNonNull(metrics);
     }
 
