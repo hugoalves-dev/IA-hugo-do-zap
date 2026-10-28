@@ -34,6 +34,9 @@ public class WhatsAppActionService {
         if (persistedDecisionId == null) return ActionResult.rejected("DECISION_NOT_FOUND");
         return transactions.execute(status -> {
             jdbc.query("select pg_advisory_xact_lock(hashtextextended(?, 947221))", rs -> { }, persistedDecisionId.toString());
+            Boolean decisionExists = jdbc.queryForObject("select exists(select 1 from simulation_decisions where batch_id=?)",
+                    Boolean.class, persistedDecisionId);
+            if (!Boolean.TRUE.equals(decisionExists)) return ActionResult.rejected("DECISION_NOT_FOUND");
             List<Queued> prior = jdbc.query("select action_id,status,expires_at from whatsapp_action_outbox where decision_id=?",
                     (rs, row) -> new Queued(rs.getObject("action_id", UUID.class), rs.getString("status"),
                             rs.getTimestamp("expires_at").toInstant()), persistedDecisionId);
@@ -100,8 +103,7 @@ public class WhatsAppActionService {
                        t.enabled,t.identifies_automation,
                        c.last_real_action_at
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
-                  join response_templates t on t.template_id=d.template_id
-                    and t.version=(select max(t2.version) from response_templates t2 where t2.template_id=d.template_id)
+                  join response_templates t on d.template_id=t.template_id || '@v' || t.version::text
                   cross join automation_settings s
                   left join decision_cooldowns c on c.chat_jid=b.chat_jid and c.participant_jid=''
                  where d.batch_id=? and s.singleton_id=1

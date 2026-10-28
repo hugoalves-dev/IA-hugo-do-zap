@@ -44,7 +44,7 @@ class WhatsAppActionServiceTest {
         Instant expiry = now.plusSeconds(86_400);
         jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,?,'COMPLETED',?,?,?,?,?,?)",
                 decisionId, "15551234567@s.whatsapp.net", "", Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(expiry), Timestamp.from(expiry));
-        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,real_action_allowed,decision_state,template_id) values (?,false,true,'synthetic_test',?,?,true,'WOULD_ACT','task4_test')",
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,real_action_allowed,decision_state,template_id) values (?,false,true,'synthetic_test',?,?,true,'WOULD_ACT','task4_test@v1')",
                 decisionId, Timestamp.from(now), Timestamp.from(expiry));
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','task4_test',1)", "15551234567@s.whatsapp.net");
     }
@@ -116,7 +116,7 @@ class WhatsAppActionServiceTest {
         Instant expiry = now.plusSeconds(86_400);
         jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,?,'COMPLETED',?,?,?,?,?,?)",
                 second, "15551234567@s.whatsapp.net", "participant-2", Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(expiry), Timestamp.from(expiry));
-        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,real_action_allowed,decision_state,template_id) values (?,false,true,'synthetic_test',?,?,true,'WOULD_ACT','task4_test')",
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,real_action_allowed,decision_state,template_id) values (?,false,true,'synthetic_test',?,?,true,'WOULD_ACT','task4_test@v1')",
                 second, Timestamp.from(now), Timestamp.from(expiry));
         assertFalse(service(true).enqueue(second).accepted(), "conversation cooldown must apply across participants");
     }
@@ -197,6 +197,59 @@ class WhatsAppActionServiceTest {
         }
         assertEquals(1, sends.get());
         assertEquals("UNKNOWN", status(queued.actionId()));
+    }
+
+    @Test void engineReferenceBindsExactlyApprovedVersionDespiteNewerTemplate() {
+        var situation = dev.hugo.watcher.policy.Situation.CONTACT_REQUEST;
+        var approved = new dev.hugo.watcher.policy.ResponseTemplate("task4_test", 1, situation,
+                "Resposta automática: retorno em breve.", true);
+        var policy = new dev.hugo.watcher.policy.DecisionPolicy(true, false, true, false,
+                java.util.Set.of(situation), java.util.Map.of(situation, approved),
+                java.time.Duration.ZERO, java.time.Duration.ZERO, null, null);
+        var decision = new dev.hugo.watcher.simulation.DecisionEngine().decide(
+                new dev.hugo.watcher.simulation.Batch(decisionId, "15551234567@s.whatsapp.net", "", java.util.List.of()),
+                dev.hugo.watcher.simulation.Classification.contactRequest(),
+                new dev.hugo.watcher.policy.EffectivePolicy(java.util.Map.of(), null, policy), now);
+        assertTrue(decision.wouldReply());
+        assertTrue(decision.realActionAllowed());
+        jdbc.update("update simulation_decisions set template_id=?,would_reply=?,would_alert=?,real_action_allowed=?,decision_state=? where batch_id=?",
+                decision.templateReference(), decision.wouldReply(), decision.wouldAlert(), decision.realActionAllowed(), decision.status().name(), decisionId);
+        jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('task4_test',2,'CONTACT_REQUEST','Resposta automática: versão nova.',true,true) on conflict do nothing");
+
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        assertEquals(1, jdbc.queryForObject("select template_version from whatsapp_action_outbox where action_id=?", Integer.class, queued.actionId()));
+        assertEquals(approved.body(), jdbc.queryForObject("select body from whatsapp_action_outbox where action_id=?", String.class, queued.actionId()));
+        jdbc.update("update whatsapp_action_outbox set status='DISPATCHED' where action_id=?", queued.actionId());
+        assertNotNull(service(true).revalidate(queued.actionId(), now));
+        jdbc.update("delete from chat_automation_authorizations");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','task4_test',2)", "15551234567@s.whatsapp.net");
+        assertNull(service(true).revalidate(queued.actionId(), now), "a newer approval cannot replace the original approved version");
+    }
+
+    @Test void auditExpiryDoesNotDeleteActionOrRollbackSensitivePurgeWithBacklog() {
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        // Audit TTL 1 day; action TTL 7 days. The action keeps its own evidence snapshot.
+        Instant cutoff = now.plusSeconds(86_401);
+        String inboxKey = "audit-expiry-" + decisionId;
+        jdbc.update("insert into inbox_events(source,event_type,external_id,payload,received_at,expires_at) values ('evolution','messages.upsert',?,'{\"secret\":\"raw\"}',?,?)",
+                inboxKey, Timestamp.from(now), Timestamp.from(now.plusSeconds(86_400)));
+        jdbc.update("insert into simulation_batch_messages(batch_id,chat_jid,external_id,received_at,payload) values (?,?,'sensitive',?,'{\"secret\":\"snippet\"}')",
+                decisionId, "15551234567@s.whatsapp.net", Timestamp.from(now));
+        new dev.hugo.watcher.RetentionService(jdbc, tx).purge(cutoff);
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_decisions where batch_id=?", Integer.class, decisionId));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_batch_messages where batch_id=?", Integer.class, decisionId));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from inbox_events where external_id=?", String.class, inboxKey));
+        assertEquals(1, actionCount());
+        jdbc.update("update whatsapp_action_outbox set status='DISPATCHED' where action_id=?", queued.actionId());
+        assertNull(service(true).revalidate(queued.actionId(), cutoff));
+        assertFalse(service(true).enqueue(decisionId).accepted());
+        // More than one old chunk must not hold expired bodies or block the remaining purge.
+        jdbc.update("insert into whatsapp_action_outbox(action_id,decision_id,chat_jid,situation,template_id,template_version,body,status,created_at,updated_at,expires_at) select gen_random_uuid(),gen_random_uuid(),'backlog-'||n,'CONTACT_REQUEST','task4_test',1,'Resposta automática: antiga.','DELIVERED',?,?,? from generate_series(1,1001) n",
+                Timestamp.from(now.minusSeconds(1)), Timestamp.from(now), Timestamp.from(now.plusSeconds(7 * 86_400L - 1)));
+        new dev.hugo.watcher.RetentionService(jdbc, tx).purge(now.plusSeconds(7 * 86_400L));
+        assertEquals(0, actionCount());
     }
 
     private WhatsAppActionService service(boolean enabled) { return new WhatsAppActionService(jdbc, tx, Clock.fixed(now, ZoneOffset.UTC), enabled); }

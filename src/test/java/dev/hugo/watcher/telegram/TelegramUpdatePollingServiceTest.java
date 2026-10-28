@@ -119,6 +119,44 @@ class TelegramUpdatePollingServiceTest {
         assertEquals(3, jdbc.queryForObject("select count(*) from outbox_actions where action_type='telegram_admin_reply'", Integer.class));
     }
 
+    @Test void invalidDatesAreRejectedAndDoNotBlockEmergency() {
+        Clock clock = Clock.systemUTC();
+        var manager = new DataSourceTransactionManager(source);
+        var callbacks = new CallbackTokenService(jdbc, clock);
+        var commands = new AdminCommandService(jdbc, manager, callbacks, new NotificationOutboxRepository(jdbc, manager), clock);
+        var handler = new TelegramUpdateHandler(1001, 2002, commands, callbacks);
+        jdbc.update("delete from availability_overrides");
+        jdbc.update("delete from holiday_calendar");
+        jdbc.update("update automation_settings set kill_switch_enabled=false where singleton_id=1");
+        TelegramUpdatesClient client = offset -> {
+            if (offset == 0) return List.of(messageUpdate(0, "/ferias invalid 2026-12-31"));
+            if (offset == 2) return List.of(messageUpdate(2, "/feriado 2026-99-99 BR https://fonte.invalid Teste"));
+            if (offset == 1 || offset == 3) {
+                String payload = jdbc.queryForObject("select payload::text from outbox_actions where action_type='telegram_admin_reply' order by id desc limit 1", String.class);
+                Matcher token = Pattern.compile("/confirm ([A-Za-z0-9_-]+)").matcher(payload);
+                if (!token.find()) throw new AssertionError("confirmation token missing");
+                return List.of(messageUpdate((int) offset, "/confirm " + token.group(1)));
+            }
+            if (offset == 4) return List.of(messageUpdate(4, "/emergencia"));
+            return List.of();
+        };
+        var polling = new TelegramUpdatePollingService(jdbc, client, handler);
+        for (int i = 0; i < 4; i++) {
+            polling.poll();
+            if (i == 1 || i == 3) assertEquals(1, jdbc.queryForObject(
+                    "select count(*) from telegram_admin_callback_tokens where consumed_at is not null", Integer.class));
+        }
+        assertEquals(4L, jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
+        assertEquals(2, jdbc.queryForObject("select count(*) from telegram_admin_audit where action in ('ferias','feriado') and outcome='REJECTED'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from availability_overrides", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from holiday_calendar", Integer.class));
+        // Issuing the second confirmation prunes the first consumed token.
+        assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_callback_tokens where consumed_at is not null", Integer.class));
+        polling.poll();
+        assertEquals(5L, jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
+        assertEquals(true, jdbc.queryForObject("select kill_switch_enabled from automation_settings where singleton_id=1", Boolean.class));
+    }
+
     private Update messageUpdate(int updateId, String text) {
         Update update = mock(Update.class);
         Message message = mock(Message.class);

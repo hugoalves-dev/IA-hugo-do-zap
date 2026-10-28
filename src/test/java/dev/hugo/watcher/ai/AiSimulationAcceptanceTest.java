@@ -71,6 +71,28 @@ class AiSimulationAcceptanceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'", Integer.class));
     }
+    @Test void completeSimulationDecisionCanBindOnlyItsApprovedTemplateVersion() {
+        jdbc.update("update automation_settings set auto_reply_enabled=true,intelligent_alerts_enabled=false");
+        jdbc.update("update response_templates set body='Resposta automática: aprovada.',enabled=true where template_id='contact_request' and version=1");
+        jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('contact_request',2,'CONTACT_REQUEST','Resposta automática: nova.',true,true) on conflict do nothing");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)", chat);
+        var service = new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
+                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), classifier(true, fake()));
+        var batch = batch();
+        var decision = service.evaluate(batch);
+        assertTrue(decision.realActionAllowed(), decision.toString());
+        assertTrue(decision.wouldReply());
+        assertFalse(decision.wouldAlert());
+        assertEquals("contact_request@v1", decision.templateId());
+        assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class), "simulation itself must remain shadow");
+        var queued = new dev.hugo.watcher.notification.WhatsAppActionService(jdbc, manager, clock, true).enqueue(batch.id());
+        assertTrue(queued.accepted());
+        assertEquals(1, jdbc.queryForObject("select template_version from whatsapp_action_outbox where action_id=?", Integer.class, queued.actionId()));
+        assertEquals("Resposta automática: aprovada.", jdbc.queryForObject("select body from whatsapp_action_outbox where action_id=?", String.class, queued.actionId()));
+        assertEquals("UNCERTAIN", jdbc.queryForObject("select classification_status from simulation_decisions where batch_id=?", String.class, batch.id()));
+        assertNull(jdbc.queryForObject("select intelligent_alert_reference_hash from simulation_decisions where batch_id=?", String.class, batch.id()));
+    }
+
     @Test void privacyAndUnknownArchivedStateBlockBeforeHttp() {
         jdbc.update("delete from ai_data_consents");
         assertFalse(classifier(true, fake()).classify(batch()).available());

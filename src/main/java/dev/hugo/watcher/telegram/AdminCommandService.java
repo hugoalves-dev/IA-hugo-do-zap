@@ -58,7 +58,7 @@ public class AdminCommandService {
                 String message = apply(command);
                 enqueueReply(message);
                 return AdminResult.accepted(message);
-            } catch (IllegalArgumentException ex) {
+            } catch (IllegalArgumentException | java.time.format.DateTimeParseException ex) {
                 String message = safeError(command.name(), ex);
                 if (isMutation(command.name(), command.arguments())) audit(command, "REJECTED");
                 enqueueReply(message);

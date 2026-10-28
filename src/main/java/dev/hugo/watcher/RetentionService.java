@@ -61,7 +61,7 @@ public class RetentionService {
         int expiredWhatsappActions = jdbc.update("""
                 delete from whatsapp_action_outbox where action_id in (
                     select action_id from whatsapp_action_outbox where expires_at<=?
-                     order by expires_at limit 1000 for update skip locked
+                     order by expires_at for update skip locked
                 )
                 """, cutoff);
         int expiredOwnerReferences = jdbc.update("delete from whatsapp_owner_message_references where expires_at <= ?", cutoff);
