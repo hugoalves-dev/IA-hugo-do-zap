@@ -45,6 +45,68 @@ if [[ "$1" == inspect ]]; then
   fi
   exit 0
 fi
+if [[ "$1" == ps ]]; then
+  args="$*"
+  if [[ "$args" == *"label=com.docker.compose.service=watcher"* || "$args" == *"name=watcher"* ]]; then
+    printf '%s\n' "${FAKE_EXISTING_WATCHERS:-}"
+  elif [[ "$args" == *"label=com.docker.compose.project="* ]]; then
+    printf '%s\n' "${FAKE_PROJECT_CONTAINERS:-}"
+  fi
+  exit 0
+fi
+if [[ "$1" == volume && "$2" == ls ]]; then
+  printf '%s\n' "${FAKE_PROJECT_VOLUMES:-}"
+  exit 0
+fi
+if [[ "$1" == volume && "$2" == inspect ]]; then
+  [[ "${FAKE_EXISTING_VOLUME:-}" == "$3" ]] || exit 96
+  printf '%s\n' "$3"
+  exit 0
+fi
+if [[ "$1" == network && "$2" == ls ]]; then
+  printf '%s\n' "${FAKE_PROJECT_NETWORKS:-}"
+  exit 0
+fi
+if [[ "$1" == network && "$2" == inspect ]]; then
+  network_name="${@: -1}"
+  if [[ "$network_name" == infra_network ]]; then
+    printf '%s\n' infra_network
+    exit 0
+  fi
+  [[ "${FAKE_EXISTING_PROJECT_NETWORK:-}" == "$network_name" ]] || exit 97
+  printf '%s\n' "$network_name"
+  exit 0
+fi
+if [[ "$1" == ps ]]; then
+  args="$*"
+  if [[ "$args" == *"label=com.docker.compose.service=watcher"* || "$args" == *"name=watcher"* ]]; then
+    printf '%s\n' "${FAKE_EXISTING_WATCHERS:-}"
+  elif [[ "$args" == *"label=com.docker.compose.project="* ]]; then
+    printf '%s\n' "${FAKE_PROJECT_CONTAINERS:-}"
+  fi
+  exit 0
+fi
+if [[ "$1" == volume && "$2" == ls ]]; then
+  printf '%s\n' "${FAKE_PROJECT_VOLUMES:-}"
+  exit 0
+fi
+if [[ "$1" == volume && "$2" == inspect ]]; then
+  [[ "${FAKE_EXISTING_VOLUME:-}" == "${@: -1}" ]] || exit 96
+  printf '%s\n' "${@: -1}"
+  exit 0
+fi
+if [[ "$1" == network && "$2" == ls ]]; then
+  printf '%s\n' "${FAKE_PROJECT_NETWORKS:-}"
+  exit 0
+fi
+if [[ "$1" == network && "$2" == inspect ]]; then
+  network_name="${@: -1}"
+  if [[ "$network_name" == infra_network || "$network_name" == "${FAKE_EXISTING_PROJECT_NETWORK:-}" ]]; then
+    printf '%s\n' "$network_name"
+    exit 0
+  fi
+  exit 97
+fi
 [[ "$1" == compose ]] || exit 90
 shift
 args="$*"
@@ -59,7 +121,10 @@ while (($#)); do
     shift
   fi
 done
-image="$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "$compose_file" | head -n 1)"
+image=""
+if [[ -f "$compose_file" ]]; then
+  image="$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "$compose_file" | head -n 1)"
+fi
 
 case " $args " in
   *" up --help "*)
@@ -74,8 +139,32 @@ case " $args " in
     fi
     exit 0
     ;;
+  *" config --environment "*)
+    if [[ -n "${FAKE_CONFIG_ENV:-}" ]]; then
+      printf '%s\n' "$FAKE_CONFIG_ENV"
+    else
+      printf 'SPRING_DATASOURCE_URL=jdbc:postgresql://postgres.synthetic.invalid:5432/watcher\nSPRING_DATASOURCE_USERNAME=watcher_app\nEVOLUTION_DATABASE_URL=postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution\nWATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED=false\n'
+    fi
+    exit 0
+    ;;
+  *" config --environment "*)
+    if [[ -n "${FAKE_CONFIG_ENV:-}" ]]; then
+      printf '%s\n' "$FAKE_CONFIG_ENV"
+    else
+      printf 'SPRING_DATASOURCE_URL=jdbc:postgresql://postgres.synthetic.invalid:5432/watcher\nSPRING_DATASOURCE_USERNAME=watcher_app\nEVOLUTION_DATABASE_URL=postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution\nWATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED=false\n'
+    fi
+    exit 0
+    ;;
   *" config --volumes "*)
     printf '%s\n' "${FAKE_VOLUMES:-evolution_instances}"
+    exit 0
+    ;;
+  *" config --networks "*)
+    printf 'evolution_backend\ninfra_network\n'
+    exit 0
+    ;;
+  *" config --networks "*)
+    printf 'evolution_backend\ninfra_network\n'
     exit 0
     ;;
   *" config --images watcher "*)
@@ -199,13 +288,14 @@ class DeployScriptTest(unittest.TestCase):
             return "/" + drive[0].lower() + tail.replace("\\", "/")
         return str(path).replace("\\", "/")
 
-    def _deploy_args(self, image, expected_sha=None):
+    def _deploy_args(self, image, expected_sha=None, mode="deploy"):
         return [
             self.bash,
             str(SCRIPT),
             base64.b64encode(os.fsencode(self._bash_path(self.deploy_dir))).decode("ascii"),
             base64.b64encode(image.encode("ascii")).decode("ascii"),
             expected_sha or self._compose_sha(),
+            mode,
         ]
 
     def _deploy_env(self, **extra_env):
@@ -240,9 +330,9 @@ class DeployScriptTest(unittest.TestCase):
     def _wait_for_flock_release(self):
         self._wait_for_path(self.flock_dir, False)
 
-    def _run_deploy(self, image, expected_sha=None, wait_for_lock_release=True, **extra_env):
+    def _run_deploy(self, image, expected_sha=None, mode="deploy", wait_for_lock_release=True, **extra_env):
         result = subprocess.run(
-            self._deploy_args(image, expected_sha),
+            self._deploy_args(image, expected_sha, mode),
             cwd=self.root,
             env=self._deploy_env(**extra_env),
             text=True,
@@ -253,9 +343,9 @@ class DeployScriptTest(unittest.TestCase):
             self._wait_for_flock_release()
         return result
 
-    def _spawn_deploy(self, image, **extra_env):
+    def _spawn_deploy(self, image, mode="deploy", **extra_env):
         return subprocess.Popen(
-            self._deploy_args(image),
+            self._deploy_args(image, mode=mode),
             cwd=self.root,
             env=self._deploy_env(**extra_env),
             text=True,
@@ -273,6 +363,31 @@ class DeployScriptTest(unittest.TestCase):
 
     def _temporary_override_files(self):
         return list(self.deploy_dir.glob(".compose.override.yaml.*"))
+
+    def _reset_bootstrap_state(self):
+        self._wait_for_flock_release()
+        for path in (
+            self.override_path,
+            self.deploy_dir / ".watcher-deploy.journal",
+            self.deploy_dir / ".watcher-bootstrap.journal",
+            self.deploy_dir / ".compose.override.yaml.candidate",
+            self.deploy_dir / ".watcher-deploy.lock",
+        ):
+            path.unlink(missing_ok=True)
+        self.docker_log.unlink(missing_ok=True)
+        self.active_image.write_text(OLD_IMAGE + "\n", encoding="ascii")
+
+    def _config_env(self, spring_url=None, spring_user="watcher_app", evolution_url=None, evolution_enabled="false"):
+        return "\n".join(
+            (
+                f"SPRING_DATASOURCE_URL={spring_url or 'jdbc:postgresql://postgres.synthetic.invalid:5432/watcher'}",
+                f"SPRING_DATASOURCE_USERNAME={spring_user}",
+                f"EVOLUTION_DATABASE_URL={evolution_url or 'postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution'}",
+                "WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false",
+                "WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false",
+                f"WATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED={evolution_enabled}",
+            )
+        )
 
     def test_success_persists_digest_for_plain_compose_and_waits_for_health(self):
         result = self._run_deploy(NEW_IMAGE)
@@ -371,16 +486,20 @@ class DeployScriptTest(unittest.TestCase):
         self.assertEqual([], self._commands())
 
     def test_compose_file_override_is_rejected_without_touching_env(self):
-        self.env_path.write_text("COMPOSE_FILE=alternate.yaml\nSYNTHETIC_SETTING=keep-me\n", encoding="utf-8")
-        env_before = self.env_path.read_bytes()
+        for variable in ("COMPOSE_FILE", "COMPOSE_PROJECT_NAME"):
+            with self.subTest(variable=variable):
+                self._reset_bootstrap_state()
+                self.override_path.write_text(render_override(OLD_IMAGE), encoding="utf-8")
+                self.env_path.write_text(f"{variable}=alternate\nSYNTHETIC_SETTING=keep-me\n", encoding="utf-8")
+                env_before = self.env_path.read_bytes()
 
-        result = self._run_deploy(NEW_IMAGE)
+                result = self._run_deploy(NEW_IMAGE)
 
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn("COMPOSE_FILE", result.stderr)
-        self.assertEqual([], self._commands())
-        self.assertEqual(env_before, self.env_path.read_bytes())
-        self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(variable, result.stderr)
+                self.assertEqual([], self._commands())
+                self.assertEqual(env_before, self.env_path.read_bytes())
+                self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
 
     def test_service_or_volume_drift_fails_before_up(self):
         cases = (
@@ -469,6 +588,125 @@ class DeployScriptTest(unittest.TestCase):
         self.assertIn("scripts/deploy-vps.sh", workflow)
         self.assertIn("COMPOSE_SHA256", workflow)
         self.assertNotIn("<<'REMOTE'", workflow)
+
+    def test_bootstrap_creates_first_digest_only_after_health(self):
+        self.override_path.unlink()
+
+        result = self._run_deploy(NEW_IMAGE, mode="bootstrap")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(render_override(NEW_IMAGE), self.override_path.read_text(encoding="utf-8"))
+        self.assertEqual(NEW_IMAGE + "\n", self.active_image.read_text(encoding="ascii"))
+        self.assertFalse((self.deploy_dir / ".watcher-bootstrap.journal").exists())
+        self.assertFalse((self.deploy_dir / ".compose.override.yaml.candidate").exists())
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
+        up_commands = self._up_commands()
+        self.assertEqual(1, len(up_commands), up_commands)
+        self.assertIn("-p app", up_commands[0])
+        self.assertIn("--no-deps", up_commands[0])
+        self.assertIn("--pull never", up_commands[0])
+        self.assertTrue(up_commands[0].endswith(" watcher"))
+        forbidden = ("compose down", "prune", "--remove-orphans", "volume rm", "up .* redis", "up .* evolution-api")
+        for value in forbidden:
+            self.assertFalse(any(value in command for command in self._commands()), self._commands())
+
+    def test_bootstrap_refuses_existing_override_journals_candidate_and_project_resources(self):
+        cases = (
+            ("user override", "override", render_override(OLD_IMAGE), {}),
+            ("normal journal", ".watcher-deploy.journal", "existing", {}),
+            ("bootstrap journal", ".watcher-bootstrap.journal", "existing", {}),
+            ("candidate", ".compose.override.yaml.candidate", render_override(NEW_IMAGE), {}),
+            ("project container", None, None, {"FAKE_PROJECT_CONTAINERS": "container-id"}),
+            ("existing watcher", None, None, {"FAKE_EXISTING_WATCHERS": "container-id"}),
+            ("project volume", None, None, {"FAKE_PROJECT_VOLUMES": "app_evolution_instances"}),
+            ("project network", None, None, {"FAKE_PROJECT_NETWORKS": "app_evolution_backend"}),
+            ("named volume", None, None, {"FAKE_EXISTING_VOLUME": "app_evolution_instances"}),
+            ("internal network", None, None, {"FAKE_EXISTING_PROJECT_NETWORK": "app_evolution_backend"}),
+        )
+        for label, path_name, content, env in cases:
+            with self.subTest(label=label):
+                self._reset_bootstrap_state()
+                if path_name == "override":
+                    path = self.override_path
+                elif path_name:
+                    path = self.deploy_dir / path_name
+                else:
+                    path = None
+                if path is not None:
+                    path.write_text(content, encoding="utf-8")
+                result = self._run_deploy(NEW_IMAGE, mode="bootstrap", **env)
+                self.assertNotEqual(0, result.returncode, label)
+                self.assertEqual([], self._up_commands(), self._commands())
+                self.assertEqual(self.original_env, self.env_path.read_bytes())
+                candidate_file = self.deploy_dir / ".compose.override.yaml.candidate"
+                if path_name == ".compose.override.yaml.candidate":
+                    self.assertEqual(content, candidate_file.read_text(encoding="utf-8"))
+                else:
+                    self.assertFalse(candidate_file.exists())
+                self.assertEqual(content, path.read_text(encoding="utf-8") if path is not None else None)
+
+    def test_bootstrap_rejects_real_action_flags_or_shared_database_identity(self):
+        cases = (
+            self._config_env(evolution_enabled="true"),
+            self._config_env(
+                spring_url="jdbc:postgresql://postgres.synthetic.invalid:5432/shared",
+                evolution_url="postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/shared",
+            ),
+            self._config_env(
+                spring_user="shared_role",
+                evolution_url="postgresql://shared_role:synthetic-only@postgres.synthetic.invalid:5432/evolution",
+            ),
+        )
+        for config in cases:
+            with self.subTest(config=config.splitlines()[-1]):
+                self._reset_bootstrap_state()
+                result = self._run_deploy(NEW_IMAGE, mode="bootstrap", FAKE_CONFIG_ENV=config)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual([], self._up_commands(), self._commands())
+                self.assertFalse((self.deploy_dir / ".compose.override.yaml").exists())
+                self.assertEqual(self.original_env, self.env_path.read_bytes())
+
+    def test_bootstrap_pull_failure_can_retry_without_partial_state(self):
+        self.override_path.unlink()
+        first = self._run_deploy(NEW_IMAGE, mode="bootstrap", FAKE_PULL_FAIL_IMAGE=NEW_IMAGE)
+
+        self.assertNotEqual(0, first.returncode)
+        self.assertEqual([], self._up_commands())
+        self.assertFalse((self.deploy_dir / ".watcher-bootstrap.journal").exists())
+        self.assertFalse((self.deploy_dir / ".compose.override.yaml.candidate").exists())
+        self.assertFalse(self.override_path.exists())
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
+
+        retry = self._run_deploy(NEW_IMAGE, mode="bootstrap")
+
+        self.assertEqual(0, retry.returncode, retry.stderr)
+        self.assertEqual(render_override(NEW_IMAGE), self.override_path.read_text(encoding="utf-8"))
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
+
+    def test_failed_bootstrap_retains_journal_and_blocks_automatic_retry(self):
+        self.override_path.unlink()
+        failed = self._run_deploy(NEW_IMAGE, mode="bootstrap", FAKE_UNHEALTHY_IMAGE=NEW_IMAGE)
+
+        self.assertNotEqual(0, failed.returncode)
+        journal = self.deploy_dir / ".watcher-bootstrap.journal"
+        self.assertTrue(journal.is_file())
+        self.assertIn(NEW_IMAGE, journal.read_text(encoding="utf-8"))
+        self.assertNotIn("synthetic-only", journal.read_text(encoding="utf-8"))
+        self.assertTrue((self.deploy_dir / ".compose.override.yaml.candidate").is_file())
+        self.assertFalse(self.override_path.exists())
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
+        self.assertFalse(any(value in command for command in self._commands() for value in ("down", "prune", "volume rm")))
+
+        before = self._commands()
+        retry = self._run_deploy(NEW_IMAGE, mode="bootstrap")
+        normal_deploy = self._run_deploy(NEW_IMAGE, mode="deploy")
+
+        self.assertNotEqual(0, retry.returncode)
+        self.assertNotEqual(0, normal_deploy.returncode)
+        self.assertIn("journal", retry.stderr.lower() + normal_deploy.stderr.lower())
+        self.assertEqual(before, self._commands())
+        self.assertTrue(journal.is_file())
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
 
 
 if __name__ == "__main__":

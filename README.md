@@ -47,7 +47,7 @@ Uma execução local autorizada pode usar `docker compose --env-file .env up -d 
 
 ## CI/CD e deploy controlado
 
-`.github/workflows/backend.yml` executa `mvn verify` em pushes e pull requests usando Java 25. Pull requests não publicam imagem nem fazem deploy. Push em `main` publica a imagem com tag do commit e attestation de proveniência, mas não atualiza a VPS. Para deploy, abra **Actions → Backend CI/CD → Run workflow**, selecione `main` e marque `deploy`; o job consome o digest da imagem produzida nessa execução e atualiza somente o serviço Compose `watcher`. O script remoto vem do mesmo commit; antes de agir, ele compara o SHA-256 de `compose.yaml` na VPS com o arquivo validado pelo workflow.
+`.github/workflows/backend.yml` executa `mvn verify` e os checks de CI/CD em pushes e pull requests usando Java 25. Pull requests não publicam imagem nem fazem deploy. Push em `main` publica a imagem com tag do commit e attestation de proveniência, mas não atualiza a VPS. Para operação manual, abra **Actions → Backend CI/CD → Run workflow**, selecione `main` e marque exatamente uma opção: `deploy` para uma instalação existente ou `bootstrap` para um VPS vazio. O job consome o digest da imagem produzida nessa execução. O script remoto vem do mesmo commit; antes de agir, compara o SHA-256 de `compose.yaml` na VPS com o arquivo validado pelo workflow.
 
 Configure estes GitHub Actions repository secrets, sem valores padrão:
 
@@ -59,7 +59,9 @@ Configure estes GitHub Actions repository secrets, sem valores padrão:
 
 Configure a repository variable `VPS_DEPLOY_DIR` com o caminho absoluto não raiz do diretório existente na VPS. Ele deve conter o `compose.yaml` byte a byte igual ao commit selecionado e o `.env` já configurado. O job exige ambos, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
 
-O digest aprovado fica em `compose.override.yaml`, separado do `.env`. O Compose carrega esse override automaticamente em comandos padrão como `docker compose up`; no diretório da VPS, não passe `-f compose.yaml` nem defina `COMPOSE_FILE`, pois isso pode ignorar o lock. `pull_policy: never` faz os comandos padrão usarem o digest local aprovado e falharem, sem pull ou build alternativo, se ele não estiver em cache. A workflow atualiza a imagem explicitamente e só promove o novo digest após health. Antes do primeiro deploy, prepare esse arquivo com o digest atualmente saudável e conhecido, confirme que a imagem está no cache Docker e use este formato:
+O digest aprovado fica em `compose.override.yaml`, separado do `.env`. O Compose carrega esse override automaticamente em comandos padrão como `docker compose up`; no diretório da VPS, não passe `-f compose.yaml` nem defina `COMPOSE_FILE` ou `COMPOSE_PROJECT_NAME`, pois esses valores podem ignorar o lock ou apontar a outro projeto. `pull_policy: never` faz os comandos padrão usarem o digest local aprovado e falharem, sem pull ou build alternativo, se ele não estiver em cache. No modo `deploy`, o operador fornece um lock para o digest saudável atual. No modo `bootstrap`, o destino não pode ter override; o workflow cria esse lock somente após o novo watcher ficar healthy.
+
+Para `deploy` numa instalação existente, prepare `compose.override.yaml` com o digest saudável já presente no cache Docker:
 
 ```yaml
 # Managed by backend deploy workflow; do not edit.
@@ -69,9 +71,19 @@ services:
     pull_policy: never
 ```
 
-O workflow falha sem substituir um `compose.override.yaml` que não tenha esse formato gerenciado. Isso preserva overrides existentes do operador; resolva qualquer override próprio antes de habilitar deploy automático. A imagem anterior é verificada no cache antes de começar; falha ou timeout restaura esse digest com `--pull never` e verifica rollback sem depender do GHCR. O timeout de readiness é 180 segundos.
+`bootstrap` exige um diretório, `.env` e `compose.yaml` isolados, sem serviço watcher, projeto Compose, volume do projeto, override ou journal anterior. Um lock vazio deixado por uma tentativa que falhou antes de iniciar containers pode ser reutilizado; locks ocupados/não vazios bloqueiam. O nome do diretório precisa ser um project name Docker válido e exclusivo. O job valida os três flags de envio real desligados, verifica que os bancos/roles PostgreSQL de Spring e Evolution são distintos, e exige a rede externa `infra_network` existente. Ele inicia somente `watcher`, sem iniciar Evolution/Redis, e não remove recursos. Após readiness, salva o primeiro digest em `compose.override.yaml`.
 
-Deploys usam o lock exclusivo `.watcher-deploy.lock` via `flock`. Para coordenar comandos Compose manuais que alterem containers, use o mesmo lock, por exemplo `flock -n .watcher-deploy.lock docker compose up -d watcher`. O journal `.watcher-deploy.journal` guarda somente fase, SHA do Compose e digests. Se o processo for interrompido, a próxima execução restaura e verifica o digest anterior, remove o journal e para com instrução para revisão operacional. Journal inválido, Compose divergente ou digest anterior ausente bloqueiam o deploy sem apagar `.env` ou volumes.
+Falha antes de iniciar o serviço remove apenas o journal/candidato temporários e permite novo `bootstrap`. Falha depois do start preserva o container, `.compose.override.yaml.candidate` e `.watcher-bootstrap.journal`; outras execuções ficam bloqueadas para revisão. Inspecione o estado sem remover recursos, por exemplo com `docker compose --env-file .env -p <nome-do-diretório> -f compose.yaml -f .compose.override.yaml.candidate ps watcher`. Se o candidato estiver healthy e aprovado pelo operador, promova-o e limpe o journal sob o lock:
+
+```sh
+flock -n .watcher-deploy.lock bash -euo pipefail -c 'mv .compose.override.yaml.candidate compose.override.yaml && rm .watcher-bootstrap.journal'
+```
+
+Não use `compose down`, prune ou remoção de volumes para recuperar bootstrap.
+
+O workflow falha sem substituir overrides de operador. Para `deploy`, verifica que a imagem anterior está local antes de começar; falha ou timeout restaura esse digest com `--pull never`, sem depender do GHCR. O timeout de readiness é 180 segundos.
+
+Deploys usam o lock exclusivo `.watcher-deploy.lock` via `flock`. Para coordenar comandos Compose manuais que alterem containers, use o mesmo lock, por exemplo `flock -n .watcher-deploy.lock docker compose up -d watcher`. O journal `.watcher-deploy.journal` guarda somente fase, SHA do Compose e digests. Se um deploy existente for interrompido, a próxima execução restaura e verifica o digest anterior, remove o journal e para com instrução para revisão operacional. O bootstrap também usa `.watcher-bootstrap.journal`; se falhar depois de iniciar o watcher, preserva o candidato e o journal, sem apagar containers, `.env` ou volumes. Inspecione com `docker compose -f compose.yaml -f .compose.override.yaml.candidate ps watcher` e os logs antes de resolver manualmente o estado. Journal inválido, Compose divergente ou digest anterior ausente bloqueiam a automação.
 
 Antes do primeiro deploy, a VPS precisa ter Bash, `flock`, `sha256sum`, Docker Compose com `up --wait --wait-timeout`, acesso ao `infra_network`, os bancos PostgreSQL acessíveis e permissões Docker para `VPS_USER`. Se o pacote GHCR não for público, autentique previamente o Docker da VPS com permissão de leitura do pacote. Mantenha o volume `evolution_instances` e a configuração operacional existente; o workflow não copia arquivos, remove serviços/volumes, faz pareamento, cutover ou ativa flags de envio real.
 

@@ -45,6 +45,18 @@ class BackendWorkflowContractTest(unittest.TestCase):
             r"\s+description:.*\n\s+required: true\n\s+type: boolean\n\s+default: false",
         )
 
+    def test_bootstrap_is_a_separate_explicit_manual_mode(self):
+        deploy = self.job("deploy-vps")
+        self.assertIn("inputs.bootstrap == true", deploy)
+        self.assertIn("inputs.deploy == true", deploy)
+        self.assertIn("BOOTSTRAP", deploy)
+        self.assertIn('if [[ "$DEPLOY" == true && "$BOOTSTRAP" == true ]]', deploy)
+        self.assertIn("$COMPOSE_SHA256 $MODE", deploy)
+        self.assertRegex(
+            self.workflow,
+            r"(?ms)^      bootstrap:\s*\n\s+description:.*\n\s+required: true\n\s+type: boolean\n\s+default: false",
+        )
+
     def test_publish_attests_image_and_deploy_uses_digest(self):
         publish = self.job("publish-image")
         deploy = self.job("deploy-vps")
