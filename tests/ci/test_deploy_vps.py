@@ -643,7 +643,7 @@ class DeployScriptTest(unittest.TestCase):
                     self.assertFalse(candidate_file.exists())
                 self.assertEqual(content, path.read_text(encoding="utf-8") if path is not None else None)
 
-    def test_bootstrap_rejects_real_action_flags_or_shared_database_identity(self):
+    def test_bootstrap_rejects_real_action_flags_or_ambiguous_database_identity(self):
         cases = (
             self._config_env(evolution_enabled="true"),
             self._config_env(
@@ -665,6 +665,23 @@ class DeployScriptTest(unittest.TestCase):
                 spring_url="jdbc:postgresql://postgres-primary.synthetic.invalid:5432/watcher",
                 evolution_url="postgresql://evolution_app:synthetic-only@postgres-alias.synthetic.invalid:5432/evolution",
             ),
+            self._config_env(
+                evolution_url="postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/%77atcher",
+            ),
+            self._config_env(
+                spring_user="evolution_app",
+                evolution_url="postgresql://%65volution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution",
+            ),
+            self._config_env(
+                spring_url="jdbc:postgresql://postgres%2esynthetic.invalid:5432/watcher",
+                evolution_url="postgresql://evolution_app:synthetic-only@postgres%2esynthetic.invalid:5432/evolution",
+            ),
+            self._config_env(
+                spring_url="jdbc:postgresql://pöstgres.synthetic.invalid:5432/watcher",
+                evolution_url="postgresql://evolution_app:synthetic-only@pöstgres.synthetic.invalid:5432/evolution",
+            ),
+            self._config_env(spring_url="jdbc:postgresql://postgres.synthetic.invalid:5432/wátcher"),
+            self._config_env(spring_user="wátcher_app"),
         )
         for config in cases:
             with self.subTest(config=config.splitlines()[-1]):

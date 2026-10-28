@@ -253,7 +253,7 @@ bootstrap_config_value() {
 
 bootstrap_normalize_authority() {
   local authority="$1"
-  local host port remainder
+  local host port remainder host_address
 
   [[ -n "$authority" && "$authority" != *@* ]] || return 1
   if [[ "$authority" == \[*\]:* ]]; then
@@ -275,8 +275,17 @@ bootstrap_normalize_authority() {
   [[ -n "$host" && "$port" =~ ^[0-9]{1,5}$ ]] || return 1
   port=$((10#$port))
   (( port >= 1 && port <= 65535 )) || return 1
+  if [[ "$host" == \[*\] ]]; then
+    host_address="${host#\[}"
+    host_address="${host_address%\]}"
+    [[ "$host_address" =~ ^[A-Fa-f0-9:.]+$ ]] || return 1
+    host="[$host_address]"
+  else
+    [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  fi
   host="${host,,}"
   host="${host%.}"
+  [[ -n "$host" ]] || return 1
   bootstrap_normalized_authority="$host:$port"
 }
 
@@ -313,6 +322,8 @@ validate_bootstrap_environment() {
   [[ "$evolution_database" != */* ]] || return 1
   [[ -n "$spring_database" && -n "$spring_user" && -n "$spring_password" ]] || return 1
   [[ -n "$evolution_database" && -n "$evolution_user" && -n "$evolution_password" ]] || return 1
+  [[ "$spring_database" =~ ^[A-Za-z0-9_.-]+$ && "$evolution_database" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+  [[ "$spring_user" =~ ^[A-Za-z0-9_.-]+$ && "$evolution_user" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
   bootstrap_normalize_authority "$spring_authority" || return 1
   spring_endpoint="$bootstrap_normalized_authority"
   bootstrap_normalize_authority "$evolution_authority" || return 1
