@@ -43,7 +43,23 @@ Depois da preparação e autorização operacional, o Compose pode ser validado 
 docker compose --env-file .env config --quiet
 ```
 
-Uma implantação autorizada usaria `docker compose --env-file .env up -d --build`; essa tarefa não executa esse comando.
+Uma execução local autorizada pode usar `docker compose --env-file .env up -d --build`. Para implantação na VPS, siga o fluxo controlado abaixo.
+
+## CI/CD e deploy controlado
+
+`.github/workflows/backend.yml` executa `mvn verify` em pushes e pull requests usando Java 25. Pull requests não publicam imagem nem fazem deploy. Push em `main` publica a imagem com tag do commit e attestation de proveniência, mas não atualiza a VPS. Para deploy, abra **Actions → Backend CI/CD → Run workflow**, selecione `main` e marque `deploy`; o job consome o digest da imagem produzida nessa execução e atualiza somente o serviço Compose `watcher`.
+
+Configure estes GitHub Actions repository secrets, sem valores padrão:
+
+- `SSH_KEY`: chave privada de deploy para a conta restrita da VPS.
+- `SSH_PORT`: porta SSH da VPS.
+- `VPS_IP`: endereço usado na conexão SSH.
+- `VPS_USER`: conta SSH de deploy.
+- `VPS_KNOWN_HOSTS`: linha `known_hosts` correspondente a `VPS_IP` e `SSH_PORT`, com chave verificada por canal independente. Em porta diferente de 22, o host deve estar no formato `[VPS_IP]:SSH_PORT`.
+
+Configure a repository variable `VPS_DEPLOY_DIR` com o caminho absoluto não raiz do diretório existente na VPS. Ele deve conter a versão revisada de `compose.yaml` e o `.env` já configurado. O job exige ambos, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
+
+Antes do primeiro deploy, a VPS precisa ter Docker Compose v2, acesso ao `infra_network`, os bancos PostgreSQL acessíveis, e permissões Docker para `VPS_USER`. Se o pacote GHCR não for público, autentique previamente o Docker da VPS com permissão de leitura do pacote. Mantenha no diretório o volume `evolution_instances` e a configuração operacional existente; o workflow não copia arquivos nem faz pareamento, cutover ou ativa flags de envio real.
 
 ## Importação explícita de snapshot legado
 

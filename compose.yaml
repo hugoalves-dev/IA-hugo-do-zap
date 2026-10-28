@@ -1,5 +1,6 @@
 services:
   watcher:
+    image: ${WATCHER_IMAGE:-ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest}
     build:
       context: .
       dockerfile: Dockerfile

@@ -1,0 +1,178 @@
+name: Backend CI/CD
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the selected main branch commit to the configured VPS
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/hugoalves-dev/ia-hugo-do-zap
+
+jobs:
+  test-and-build:
+    name: Test and build (Java 25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Verify and package
+        run: mvn -B -ntp verify
+
+  publish-image:
+    name: Publish immutable image
+    needs: test-and-build
+    if: >-
+      ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long,prefix=sha-
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Attest image provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+  deploy-vps:
+    name: Deploy selected main commit to VPS
+    needs: publish-image
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' && inputs.deploy == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: watcher-vps-deploy
+      cancel-in-progress: false
+    env:
+      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      VPS_IP: ${{ secrets.VPS_IP }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+      VPS_DEPLOY_DIR: ${{ vars.VPS_DEPLOY_DIR }}
+      IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}
+    steps:
+      - name: Deploy watcher by immutable image digest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in SSH_KEY SSH_PORT VPS_IP VPS_USER VPS_KNOWN_HOSTS VPS_DEPLOY_DIR IMAGE_REF; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required deployment setting: $name" >&2
+              exit 1
+            fi
+          done
+
+          if [[ ! "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$SSH_PORT < 1 || 10#$SSH_PORT > 65535 )); then
+            echo "SSH_PORT must be between 1 and 65535" >&2
+            exit 1
+          fi
+
+          known_hosts_file="$RUNNER_TEMP/vps_known_hosts"
+          deploy_key_file="$RUNNER_TEMP/vps_deploy_key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$known_hosts_file"
+          printf '%s\n' "$SSH_KEY" > "$deploy_key_file"
+          chmod 600 "$known_hosts_file" "$deploy_key_file"
+
+          known_host="$VPS_IP"
+          if [[ "$SSH_PORT" != 22 ]]; then
+            known_host="[$VPS_IP]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host" -f "$known_hosts_file" >/dev/null
+
+          deploy_dir_b64="$(printf '%s' "$VPS_DEPLOY_DIR" | base64 --wrap=0)"
+          image_ref_b64="$(printf '%s' "$IMAGE_REF" | base64 --wrap=0)"
+
+          ssh -p "$SSH_PORT" \
+            -i "$deploy_key_file" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=30 \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_hosts_file" \
+            "$VPS_USER@$VPS_IP" \
+            "bash -s -- $deploy_dir_b64 $image_ref_b64" <<'REMOTE'
+          set -euo pipefail
+          deploy_dir="$(printf '%s' "$1" | base64 -d)"
+          image_ref="$(printf '%s' "$2" | base64 -d)"
+
+          if [[ "$deploy_dir" != /* || "$deploy_dir" == / ]]; then
+            echo "VPS_DEPLOY_DIR must be a non-root absolute path" >&2
+            exit 1
+          fi
+          if [[ ! "$image_ref" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ ]]; then
+            echo "IMAGE_REF must be a GHCR image pinned by SHA-256 digest" >&2
+            exit 1
+          fi
+
+          cd "$deploy_dir"
+          test -f compose.yaml
+          test -f .env
+          WATCHER_IMAGE="$image_ref" docker compose pull watcher
+          WATCHER_IMAGE="$image_ref" docker compose up -d --no-build watcher
+          WATCHER_IMAGE="$image_ref" docker compose ps watcher
+          REMOTE
