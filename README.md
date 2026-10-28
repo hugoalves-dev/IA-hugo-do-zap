@@ -71,12 +71,30 @@ services:
     pull_policy: never
 ```
 
-`bootstrap` exige um diretório, `.env` e `compose.yaml` isolados, sem serviço watcher, projeto Compose, volume do projeto, override ou journal anterior. Um lock vazio deixado por uma tentativa que falhou antes de iniciar containers pode ser reutilizado; locks ocupados/não vazios bloqueiam. O nome do diretório precisa ser um project name Docker válido e exclusivo. O job valida os três flags de envio real desligados, verifica que os bancos/roles PostgreSQL de Spring e Evolution são distintos, e exige a rede externa `infra_network` existente. Ele inicia somente `watcher`, sem iniciar Evolution/Redis, e não remove recursos. Após readiness, salva o primeiro digest em `compose.override.yaml`.
+`bootstrap` exige um diretório, `.env` e `compose.yaml` isolados, sem serviço watcher, projeto Compose, volume do projeto, override ou journal anterior. Um lock vazio deixado por uma tentativa que falhou antes de iniciar containers pode ser reutilizado; locks ocupados/não vazios bloqueiam. O nome do diretório precisa ser um project name Docker válido e exclusivo. O job valida os três flags de envio real desligados e exige que Spring e Evolution usem o mesmo hostname/porta PostgreSQL normalizado (porta padrão `5432`), mas bancos e roles distintos. Ele rejeita query params e hostnames diferentes porque não consegue provar que aliases DNS apontam para servidores distintos; a validação não conecta ao PostgreSQL nem faz query de identidade. Exige também a rede externa `infra_network` existente. Ele inicia somente `watcher`, sem iniciar Evolution/Redis, e não remove recursos. Após readiness, salva o primeiro digest em `compose.override.yaml`.
 
 Falha antes de iniciar o serviço remove apenas o journal/candidato temporários e permite novo `bootstrap`. Falha depois do start preserva o container, `.compose.override.yaml.candidate` e `.watcher-bootstrap.journal`; outras execuções ficam bloqueadas para revisão. Inspecione o estado sem remover recursos, por exemplo com `docker compose --env-file .env -p <nome-do-diretório> -f compose.yaml -f .compose.override.yaml.candidate ps watcher`. Se o candidato estiver healthy e aprovado pelo operador, promova-o e limpe o journal sob o lock:
 
 ```sh
 flock -n .watcher-deploy.lock bash -euo pipefail -c 'mv .compose.override.yaml.candidate compose.override.yaml && rm .watcher-bootstrap.journal'
+```
+
+Se `.compose.override.yaml.candidate` não existir, o processo pode ter parado depois de promover o lock. Não sobrescreva `compose.override.yaml` nem `.env`. Sob o mesmo lock, compare a imagem padrão com o digest do journal, confirme container running/healthy e limpe apenas o journal:
+
+```sh
+set -euo pipefail
+exec 9>>.watcher-deploy.lock
+flock -n 9
+test ! -e .compose.override.yaml.candidate
+grep -Eq '^phase=(promoting|committed)$' .watcher-bootstrap.journal
+candidate_image="$(sed -n 's/^candidate_image=//p' .watcher-bootstrap.journal)"
+current_image="$(docker compose --env-file .env -p "$(basename "$PWD")" config --images watcher)"
+test "$current_image" = "$candidate_image"
+container_id="$(docker compose --env-file .env -p "$(basename "$PWD")" ps -q watcher)"
+test -n "$container_id"
+test "$(docker inspect --format '{{.State.Running}}' "$container_id")" = true
+test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id")" = healthy
+rm -f -- .watcher-bootstrap.journal
 ```
 
 Não use `compose down`, prune ou remoção de volumes para recuperar bootstrap.

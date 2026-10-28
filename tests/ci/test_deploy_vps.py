@@ -143,15 +143,7 @@ case " $args " in
     if [[ -n "${FAKE_CONFIG_ENV:-}" ]]; then
       printf '%s\n' "$FAKE_CONFIG_ENV"
     else
-      printf 'SPRING_DATASOURCE_URL=jdbc:postgresql://postgres.synthetic.invalid:5432/watcher\nSPRING_DATASOURCE_USERNAME=watcher_app\nEVOLUTION_DATABASE_URL=postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution\nWATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED=false\n'
-    fi
-    exit 0
-    ;;
-  *" config --environment "*)
-    if [[ -n "${FAKE_CONFIG_ENV:-}" ]]; then
-      printf '%s\n' "$FAKE_CONFIG_ENV"
-    else
-      printf 'SPRING_DATASOURCE_URL=jdbc:postgresql://postgres.synthetic.invalid:5432/watcher\nSPRING_DATASOURCE_USERNAME=watcher_app\nEVOLUTION_DATABASE_URL=postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution\nWATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED=false\n'
+      printf 'SPRING_DATASOURCE_URL=jdbc:postgresql://postgres.synthetic.invalid:5432/watcher\nSPRING_DATASOURCE_USERNAME=watcher_app\nSPRING_DATASOURCE_PASSWORD=synthetic-only\nEVOLUTION_DATABASE_URL=postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution\nWATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false\nWATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED=false\n'
     fi
     exit 0
     ;;
@@ -218,6 +210,11 @@ FAKE_BASH_ENV = r'''mv() {
   fi
   if [[ "${FAKE_CRASH_PROMOTION:-}" == true && "$destination" == compose.override.yaml ]]; then
     : > "$FAKE_PROMOTION_STARTED"
+    kill -9 "$$"
+  fi
+  if [[ "${FAKE_CRASH_AFTER_PROMOTION:-}" == true && "$destination" == compose.override.yaml ]]; then
+    /usr/bin/mv "$@"
+    : > "$FAKE_PROMOTION_FINISHED"
     kill -9 "$$"
   fi
   /usr/bin/mv "$@"
@@ -312,7 +309,7 @@ class DeployScriptTest(unittest.TestCase):
             }
         )
         env.update(extra_env)
-        for name in ("FAKE_UP_STARTED", "FAKE_UP_RELEASE", "FAKE_PROMOTION_STARTED", "FAKE_PROMOTION_RELEASE"):
+        for name in ("FAKE_UP_STARTED", "FAKE_UP_RELEASE", "FAKE_PROMOTION_STARTED", "FAKE_PROMOTION_RELEASE", "FAKE_PROMOTION_FINISHED"):
             if name in env:
                 env[name] = self._bash_path(Path(env[name]))
         return env
@@ -382,6 +379,7 @@ class DeployScriptTest(unittest.TestCase):
             (
                 f"SPRING_DATASOURCE_URL={spring_url or 'jdbc:postgresql://postgres.synthetic.invalid:5432/watcher'}",
                 f"SPRING_DATASOURCE_USERNAME={spring_user}",
+                "SPRING_DATASOURCE_PASSWORD=synthetic-only",
                 f"EVOLUTION_DATABASE_URL={evolution_url or 'postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/evolution'}",
                 "WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false",
                 "WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false",
@@ -653,8 +651,19 @@ class DeployScriptTest(unittest.TestCase):
                 evolution_url="postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid:5432/shared",
             ),
             self._config_env(
+                spring_url="jdbc:postgresql://postgres.synthetic.invalid:5432/shared",
+                evolution_url="postgresql://evolution_app:synthetic-only@postgres.synthetic.invalid/shared",
+            ),
+            self._config_env(
                 spring_user="shared_role",
                 evolution_url="postgresql://shared_role:synthetic-only@postgres.synthetic.invalid:5432/evolution",
+            ),
+            self._config_env(
+                spring_url="jdbc:postgresql://postgres.synthetic.invalid:5432/watcher?user=evolution_app&password=synthetic-only",
+            ),
+            self._config_env(
+                spring_url="jdbc:postgresql://postgres-primary.synthetic.invalid:5432/watcher",
+                evolution_url="postgresql://evolution_app:synthetic-only@postgres-alias.synthetic.invalid:5432/evolution",
             ),
         )
         for config in cases:
@@ -662,6 +671,7 @@ class DeployScriptTest(unittest.TestCase):
                 self._reset_bootstrap_state()
                 result = self._run_deploy(NEW_IMAGE, mode="bootstrap", FAKE_CONFIG_ENV=config)
                 self.assertNotEqual(0, result.returncode)
+                self.assertNotIn("synthetic-only", result.stdout + result.stderr)
                 self.assertEqual([], self._up_commands(), self._commands())
                 self.assertFalse((self.deploy_dir / ".compose.override.yaml").exists())
                 self.assertEqual(self.original_env, self.env_path.read_bytes())
@@ -707,6 +717,70 @@ class DeployScriptTest(unittest.TestCase):
         self.assertEqual(before, self._commands())
         self.assertTrue(journal.is_file())
         self.assertEqual(self.original_env, self.env_path.read_bytes())
+
+    def test_promoted_bootstrap_lock_has_safe_manual_recovery_without_data_changes(self):
+        self.override_path.unlink()
+        promotion_finished = self.root / "promotion-finished"
+        process = self._spawn_deploy(
+            NEW_IMAGE,
+            mode="bootstrap",
+            FAKE_CRASH_AFTER_PROMOTION="true",
+            FAKE_PROMOTION_FINISHED=str(promotion_finished),
+        )
+        self._wait_for_path(promotion_finished, True, timeout=20, process=process)
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertNotEqual(0, process.returncode, stdout + stderr)
+        self._wait_for_flock_release()
+
+        journal = self.deploy_dir / ".watcher-bootstrap.journal"
+        candidate = self.deploy_dir / ".compose.override.yaml.candidate"
+        self.assertTrue(journal.is_file())
+        self.assertIn("phase=promoting", journal.read_text(encoding="utf-8"))
+        self.assertFalse(candidate.exists())
+        self.assertEqual(render_override(NEW_IMAGE), self.override_path.read_text(encoding="utf-8"))
+        self.assertEqual(NEW_IMAGE + "\n", self.active_image.read_text(encoding="ascii"))
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
+
+        before_retry = self._commands()
+        blocked = self._run_deploy(NEW_IMAGE, mode="bootstrap")
+        self.assertNotEqual(0, blocked.returncode)
+        self.assertIn("journal", blocked.stderr.lower())
+        self.assertEqual(before_retry, self._commands())
+
+        manual_recovery = r'''set -euo pipefail
+exec 9>>.watcher-deploy.lock
+flock -n 9
+test ! -e .compose.override.yaml.candidate
+grep -Eq '^phase=(promoting|committed)$' .watcher-bootstrap.journal
+candidate_image="$(sed -n 's/^candidate_image=//p' .watcher-bootstrap.journal)"
+current_image="$(docker compose --env-file .env -p "$(basename "$PWD")" config --images watcher)"
+test "$current_image" = "$candidate_image"
+container_id="$(docker compose --env-file .env -p "$(basename "$PWD")" ps -q watcher)"
+test -n "$container_id"
+test "$(docker inspect --format '{{.State.Running}}' "$container_id")" = true
+test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id")" = healthy
+rm -f -- .watcher-bootstrap.journal
+'''
+        manual_env = self._deploy_env()
+        recovery = subprocess.run(
+            [self.bash, "-c", manual_recovery],
+            cwd=self.deploy_dir,
+            env=manual_env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(0, recovery.returncode, recovery.stderr)
+        self._wait_for_flock_release()
+        self.assertFalse(journal.exists())
+        self.assertEqual(render_override(NEW_IMAGE), self.override_path.read_text(encoding="utf-8"))
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
+        self.assertIn("evolution_instances", self.compose_path.read_text(encoding="utf-8"))
+        self.assertFalse(any("down" in command or "volume rm" in command or "prune" in command for command in self._commands()))
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(".compose.override.yaml.candidate", readme)
+        self.assertIn(".watcher-bootstrap.journal", readme)
+        self.assertIn(manual_recovery, readme)
 
 
 if __name__ == "__main__":

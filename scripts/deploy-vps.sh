@@ -251,9 +251,39 @@ bootstrap_config_value() {
   printf '%s' "${line#*=}"
 }
 
+bootstrap_normalize_authority() {
+  local authority="$1"
+  local host port remainder
+
+  [[ -n "$authority" && "$authority" != *@* ]] || return 1
+  if [[ "$authority" == \[*\]:* ]]; then
+    remainder="${authority#\[}"
+    host="[${remainder%%]*}]"
+    port="${authority#*]:}"
+  elif [[ "$authority" == \[*\] ]]; then
+    host="$authority"
+    port=5432
+  elif [[ "$authority" == *:* ]]; then
+    [[ "$authority" != *:*:* ]] || return 1
+    host="${authority%:*}"
+    port="${authority##*:}"
+  else
+    host="$authority"
+    port=5432
+  fi
+
+  [[ -n "$host" && "$port" =~ ^[0-9]{1,5}$ ]] || return 1
+  port=$((10#$port))
+  (( port >= 1 && port <= 65535 )) || return 1
+  host="${host,,}"
+  host="${host%.}"
+  bootstrap_normalized_authority="$host:$port"
+}
+
 validate_bootstrap_environment() {
-  local name value spring_url spring_user evolution_url evolution_user
-  local spring_rest spring_authority spring_database evolution_rest evolution_userinfo evolution_authority_database evolution_authority evolution_database
+  local name value spring_url spring_user spring_password evolution_url evolution_user evolution_userinfo evolution_password
+  local spring_rest spring_authority spring_database evolution_rest evolution_authority_database evolution_authority evolution_database
+  local spring_endpoint evolution_endpoint
 
   bootstrap_config_environment="$(compose_bootstrap_base config --environment 2>/dev/null)" || return 1
   for name in WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED WATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED; do
@@ -263,23 +293,32 @@ validate_bootstrap_environment() {
 
   spring_url="$(bootstrap_config_value SPRING_DATASOURCE_URL)" || return 1
   spring_user="$(bootstrap_config_value SPRING_DATASOURCE_USERNAME)" || return 1
+  spring_password="$(bootstrap_config_value SPRING_DATASOURCE_PASSWORD)" || return 1
   evolution_url="$(bootstrap_config_value EVOLUTION_DATABASE_URL)" || return 1
   [[ "$spring_url" == jdbc:postgresql://*/* && "$evolution_url" == postgresql://*@*/* ]] || return 1
+  [[ "$spring_url" != *\?* && "$spring_url" != *\#* && "$evolution_url" != *\?* && "$evolution_url" != *\#* ]] || return 1
 
   spring_rest="${spring_url#jdbc:postgresql://}"
   spring_authority="${spring_rest%%/*}"
   spring_database="${spring_rest#*/}"
-  spring_database="${spring_database%%\?*}"
+  [[ "$spring_database" != */* ]] || return 1
   evolution_rest="${evolution_url#postgresql://}"
   evolution_userinfo="${evolution_rest%%@*}"
+  [[ "$evolution_userinfo" == *:* ]] || return 1
   evolution_user="${evolution_userinfo%%:*}"
+  evolution_password="${evolution_userinfo#*:}"
   evolution_authority_database="${evolution_rest#*@}"
   evolution_authority="${evolution_authority_database%%/*}"
   evolution_database="${evolution_authority_database#*/}"
-  evolution_database="${evolution_database%%\?*}"
-  [[ -n "$spring_authority" && -n "$spring_database" && -n "$spring_user" ]] || return 1
-  [[ -n "$evolution_authority" && -n "$evolution_database" && -n "$evolution_user" ]] || return 1
-  [[ "${spring_authority,,}/${spring_database,,}" != "${evolution_authority,,}/${evolution_database,,}" ]] || return 1
+  [[ "$evolution_database" != */* ]] || return 1
+  [[ -n "$spring_database" && -n "$spring_user" && -n "$spring_password" ]] || return 1
+  [[ -n "$evolution_database" && -n "$evolution_user" && -n "$evolution_password" ]] || return 1
+  bootstrap_normalize_authority "$spring_authority" || return 1
+  spring_endpoint="$bootstrap_normalized_authority"
+  bootstrap_normalize_authority "$evolution_authority" || return 1
+  evolution_endpoint="$bootstrap_normalized_authority"
+  [[ "$spring_endpoint" == "$evolution_endpoint" ]] || return 1
+  [[ "${spring_database,,}" != "${evolution_database,,}" ]] || return 1
   [[ "${spring_user,,}" != "${evolution_user,,}" ]]
 }
 
