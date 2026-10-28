@@ -3,8 +3,12 @@ package dev.hugo.watcher;
 import java.time.Duration;
 
 /** Result of one Bot API send attempt, including Telegram rate-limit metadata. */
-public record TelegramDeliveryResult(boolean delivered, boolean rateLimited, Duration retryAfter) {
+public record TelegramDeliveryResult(boolean delivered, boolean rateLimited, Duration retryAfter, boolean ambiguous) {
+    public TelegramDeliveryResult(boolean delivered,boolean rateLimited,Duration retryAfter) {
+        this(delivered,rateLimited,retryAfter,false);
+    }
     public TelegramDeliveryResult {
+        if (ambiguous && (delivered || rateLimited || retryAfter != null)) throw new IllegalArgumentException("ambiguous outcome cannot prove delivery or rejection");
         if (delivered && (rateLimited || retryAfter != null)) {
             throw new IllegalArgumentException("successful delivery cannot have retry metadata");
         }
@@ -12,6 +16,7 @@ public record TelegramDeliveryResult(boolean delivered, boolean rateLimited, Dur
         if (retryAfter != null) rateLimited = true;
     }
 
+    public static TelegramDeliveryResult unknown() { return new TelegramDeliveryResult(false,false,null,true); }
     public static TelegramDeliveryResult success() { return new TelegramDeliveryResult(true, false, null); }
     public static TelegramDeliveryResult failure() { return new TelegramDeliveryResult(false, false, null); }
     public static TelegramDeliveryResult failure(Duration retryAfter) {

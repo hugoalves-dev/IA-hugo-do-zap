@@ -23,6 +23,7 @@ public class NotificationOutboxRepository {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final Duration telegramSendInterval;
+    private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
 
     @Autowired
     public NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager) {
@@ -32,6 +33,7 @@ public class NotificationOutboxRepository {
     NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager, Duration telegramSendInterval) {
         if (telegramSendInterval.isNegative()) throw new IllegalArgumentException("telegram send interval cannot be negative");
         this.jdbc = jdbc;
+        this.deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc,manager);
         this.transactions = new TransactionTemplate(manager);
         this.telegramSendInterval = telegramSendInterval;
     }
@@ -81,7 +83,11 @@ public class NotificationOutboxRepository {
                     select id,action_key,action_type,payload::text,pending_snapshot::text,attempts,created_at,sensitive_expires_at
                     from outbox_actions
                     where sensitive_expires_at > ? and available_at <= ?
-                      and (status='PENDING' or (status='PROCESSING' and lease_expires_at <= ?))
+                      and (status='PENDING' or (status='PROCESSING' and lease_expires_at <= ?
+                        and (action_type<>'intelligent_alert' or not exists (
+                            select 1 from decision_delivery_attempts attempt where attempt.channel='TELEGRAM'
+                              and attempt.status in ('DISPATCHED','UNKNOWN')
+                              and attempt.decision_id::text=right(outbox_actions.action_key,36)))))
                     order by available_at,created_at,id
                     for update skip locked
                     limit 1
@@ -125,6 +131,7 @@ public class NotificationOutboxRepository {
             String stored = acknowledged.getFirst();
             if (stored.startsWith("intelligent_alert\nintelligent_alert:")) {
                 UUID decisionId = UUID.fromString(stored.substring("intelligent_alert\nintelligent_alert:".length()));
+                deliveries.finish(decisionId,"TELEGRAM",UUID.fromString(action.leaseToken()),"CONFIRMED",now);
                 jdbc.update("""
                         insert into decision_cooldowns(chat_jid,participant_jid,last_real_action_at,last_real_decision_id)
                         select chat_jid,'',?,batch_id from simulation_batches where batch_id=?

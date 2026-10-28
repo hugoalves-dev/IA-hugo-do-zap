@@ -46,6 +46,7 @@ public class NotificationService {
     private final Clock clock;
     private final ArchiveModeService archiveModes;
     private final IntelligentAlertService intelligentAlerts;
+    private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
     private final AtomicBoolean flushing = new AtomicBoolean();
 
     @Autowired
@@ -62,6 +63,7 @@ public class NotificationService {
         this.clock = clock;
         this.archiveModes = archiveModes;
         this.intelligentAlerts = intelligentAlerts;
+        this.deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc,manager);
     }
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -89,11 +91,31 @@ public class NotificationService {
                     } else if (IntelligentAlertService.ACTION_TYPE.equals(action.actionType())) {
                         OutboxAction latest = intelligentAlerts != null && intelligentAlerts.revalidate(action, clock.instant())
                                 ? action : null;
-                        TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
-                                : telegram.send(telegramFormatter.format(latest));
-                        if (result.delivered()) outbox.acknowledge(latest, clock.instant());
-                        else if (latest == null) outbox.suppress(action, clock.instant());
-                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
+                        if (latest == null) { outbox.suppress(action,clock.instant()); continue; }
+                        java.util.UUID decisionId=java.util.UUID.fromString(action.actionKey().substring("intelligent_alert:".length()));
+                        java.util.UUID token=java.util.UUID.fromString(action.leaseToken());
+                        if (!deliveries.begin(decisionId,"TELEGRAM",token,clock.instant())) {
+                            outbox.retry(action,clock.instant(),"ConversationDispatchUnresolved"); continue;
+                        }
+                        TelegramDeliveryResult result;
+                        try {
+                            result=telegram.send(telegramFormatter.format(latest));
+                            if(result==null || result.ambiguous()) throw new IllegalStateException("ambiguous transport result");
+                        } catch(RuntimeException ambiguousTransport) {
+                            transactions.executeWithoutResult(status -> {
+                                deliveries.finish(decisionId,"TELEGRAM",token,"UNKNOWN",clock.instant());
+                                outbox.retry(action,clock.instant(),"AmbiguousDelivery");
+                            });
+                            continue;
+                        }
+                        if(result.delivered()) outbox.acknowledge(latest,clock.instant());
+                        else {
+                            TelegramDeliveryResult rejected=result;
+                            transactions.executeWithoutResult(status -> {
+                                deliveries.finish(decisionId,"TELEGRAM",token,"RETRYABLE",clock.instant());
+                                outbox.retry(action,clock.instant(),"DeliveryFailure",rejected.rateLimited(),rejected.retryAfter());
+                            });
+                        }
                     } else {
                         OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());
                         TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()

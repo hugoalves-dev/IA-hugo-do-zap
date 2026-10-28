@@ -33,6 +33,8 @@ class AiSimulationAcceptanceTest {
         jdbc = new JdbcTemplate(source);
         manager = new DataSourceTransactionManager(source);
         budgets = new BudgetService(jdbc, manager, new SimpleMeterRegistry());
+        jdbc.update("delete from decision_delivery_attempts");
+        jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
         jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
         jdbc.update("delete from whatsapp_action_outbox");
@@ -451,6 +453,71 @@ class AiSimulationAcceptanceTest {
         assertEquals("PROCESSING",jdbc.queryForObject("select status from outbox_actions where id=?",String.class,action.id()));
         assertNull(jdbc.queryForObject("select last_real_action_at from decision_cooldowns where chat_jid=?",java.sql.Timestamp.class,chat));
         assertTrue(outbox.acknowledge(action,clock.instant())); assertFalse(outbox.acknowledge(action,clock.instant()));
+    }
+    @Test void twoWorkersCannotDispatchDifferentDecisionsDuringSlowTelegramRequest() throws Exception {
+        authorizeProducer(); jdbc.update("update automation_settings set auto_reply_enabled=false,real_cooldown_seconds=3600");
+        producingService(true,critical()).evaluate(batch(chat,mention()));
+        producingService(true,critical()).evaluate(batch(chat,mention()));
+        var entered=new java.util.concurrent.CountDownLatch(1); var release=new java.util.concurrent.CountDownLatch(1);
+        var sends=new AtomicInteger();
+        dev.hugo.watcher.TelegramTransport transport=text->{
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            sends.incrementAndGet(); entered.countDown();
+            try { assertTrue(release.await(10,java.util.concurrent.TimeUnit.SECONDS)); } catch(InterruptedException e){throw new RuntimeException(e);}
+            return dev.hugo.watcher.TelegramDeliveryResult.success();
+        };
+        try(var pool=java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            var first=pool.submit(()->telegramService(transport).flush(clock.instant()));
+            try {
+                assertTrue(entered.await(10,java.util.concurrent.TimeUnit.SECONDS));
+                jdbc.update("update outbox_actions set lease_expires_at=now()-interval '1 second' where status='PROCESSING'");
+                jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
+                telegramService(text->{sends.incrementAndGet();return dev.hugo.watcher.TelegramDeliveryResult.success();}).flush(clock.instant());
+                assertEquals(1,sends.get(),"second worker must defer another decision while first HTTP is unresolved");
+            } finally { release.countDown(); }
+            first.get(10,java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertEquals(1,jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert' and status='ACKNOWLEDGED'",Integer.class));
+        assertEquals(1,jdbc.queryForObject("select count(*) from decision_delivery_attempts where channel='TELEGRAM' and status='CONFIRMED'",Integer.class));
+    }
+    @Test void crashedTelegramDispatchLeaseNeverReissuesAndStillAllowsSiblingChannel() {
+        authorizeProducer(); var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
+        var action=outbox.claimNext(clock.instant()); assertNotNull(action);
+        var coordinator=new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc,manager);
+        assertTrue(coordinator.begin(batch.id(),"TELEGRAM",UUID.fromString(action.leaseToken()),clock.instant()));
+        jdbc.update("update outbox_actions set lease_expires_at=now()-interval '1 second'");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
+        assertEquals(0,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.success()));
+        dispatchWhatsApp(dev.hugo.watcher.notification.EvolutionSendResult.delivered());
+        assertEquals("DELIVERED",jdbc.queryForObject("select status from whatsapp_action_outbox",String.class));
+        producingService(true,critical()).evaluate(batch(chat,mention()));
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
+        assertEquals(0,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.success()));
+        assertEquals("DISPATCHED",jdbc.queryForObject("select status from decision_delivery_attempts where decision_id=? and channel='TELEGRAM'",String.class,batch.id()));
+    }
+    @Test void confirmedTelegramRejectionAllowsSafeRetryButUnknownNeverDoes() {
+        authorizeProducer(); var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        assertEquals(1,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.failure()));
+        jdbc.update("update outbox_actions set available_at=now()-interval '1 second'");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
+        assertEquals(1,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.success()));
+        assertEquals("CONFIRMED",jdbc.queryForObject("select status from decision_delivery_attempts where decision_id=? and channel='TELEGRAM'",String.class,batch.id()));
+    }
+    @Test void telegramTransportTimeoutRetainsUnknownAcrossWorkerRestart() {
+        authorizeProducer(); var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        telegramService(text->dev.hugo.watcher.TelegramDeliveryResult.unknown()).flush(clock.instant());
+        assertEquals("UNKNOWN",jdbc.queryForObject("select status from decision_delivery_attempts where decision_id=? and channel='TELEGRAM'",String.class,batch.id()));
+        jdbc.update("update outbox_actions set available_at=now()-interval '1 second'");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
+        assertEquals(0,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.success()));
+        assertNull(jdbc.queryForObject("select last_real_action_at from decision_cooldowns where chat_jid=?",java.sql.Timestamp.class,chat));
+    }
+    private dev.hugo.watcher.NotificationService telegramService(dev.hugo.watcher.TelegramTransport transport) {
+        var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
+        var alerts=new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,outbox,clock,true,"owner@s.whatsapp.net");
+        var properties=new WatcherProperties(); properties.setTelegramBotToken("fake"); properties.setTelegramChatId(123L);
+        return new dev.hugo.watcher.NotificationService(jdbc,manager,outbox,transport,new dev.hugo.watcher.TelegramMessageFormatter(),properties,clock,new dev.hugo.watcher.ArchiveModeService(jdbc,manager),alerts);
     }
     private void assertFutureDecisionBlocked() {
         var next=producingService(true,critical()).evaluate(batch(chat,mention()));

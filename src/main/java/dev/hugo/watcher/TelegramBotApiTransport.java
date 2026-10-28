@@ -31,7 +31,9 @@ public class TelegramBotApiTransport implements TelegramTransport {
     public TelegramDeliveryResult send(String text) {
         try {
             SendResponse response = execute.apply(chatId, text);
-            if (response != null && response.isOk()) return TelegramDeliveryResult.success();
+            if (response == null) return TelegramDeliveryResult.unknown();
+            if (response.isOk()) return TelegramDeliveryResult.success();
+            if (response.errorCode()<=0 || response.errorCode()>=500) return TelegramDeliveryResult.unknown();
             LOG.log(System.Logger.Level.WARNING, "Telegram delivery rejected: errorCode={0}",
                     response == null ? "no-response" : response.errorCode());
             boolean rateLimited = response != null && response.errorCode() == 429;
@@ -42,7 +44,7 @@ public class TelegramBotApiTransport implements TelegramTransport {
             return rateLimited ? TelegramDeliveryResult.rateLimited(retryAfter) : TelegramDeliveryResult.failure();
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.WARNING, "Telegram delivery failed: error={0}", ex.getClass().getSimpleName());
-            return TelegramDeliveryResult.failure();
+            return TelegramDeliveryResult.unknown();
         }
     }
 

@@ -50,6 +50,8 @@ class NotificationServiceTest {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(dataSource);
         Flyway.configure().dataSource(dataSource).load().migrate();
+        jdbc.update("delete from decision_delivery_attempts");
+        jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from processed_message");

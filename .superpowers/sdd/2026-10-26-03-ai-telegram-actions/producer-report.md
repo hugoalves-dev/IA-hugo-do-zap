@@ -68,3 +68,32 @@ mvn -Dtest=AiSimulationAcceptanceTest#whatsappThenTelegramConfirmsBothSiblingsAn
 ```
 
 The final tests exercise both delivery orders with nonzero cooldown, blocked future decisions, concurrent duplicate ACKs and stale retry, thrown fake WhatsApp timeout (`UNKNOWN`) plus Telegram failure, shadow without real cooldown, and a SQL-trigger failure proving ACK and cooldown roll back together before idempotent recovery. Combined follow-up coverage comprises 90 distinct cases with final outcomes passing (87 unchanged passing cases plus rerun corrections and the new rollback case); no full suite rerun. Spring startup applied and validated V28. Defaults remain OFF, real Evolution transport remains Disabled, no external request or deployment performed.
+
+
+## Final P2 follow-up: durable dispatch admission across workers
+
+Reproduced the remaining race with two PostgreSQL-backed workers and a blocked fake Telegram HTTP call: both different decisions for one chat sent before the first confirmation (2 sends, expected 1). V29 introduces a durable conversation claim keyed by SHA-256 of the chat JID, plus per-decision/channel attempt tokens and states. Dispatch admission commits before HTTP and never keeps a database transaction open across transport. A different decision waits while the owning decision has `DISPATCHED` or `UNKNOWN` work. Sibling channels of the same decision remain eligible subject to every existing policy gate. Busy work is deferred instead of incorrectly acknowledged/suppressed.
+
+Telegram uses its persisted outbox lease token; WhatsApp uses its immutable action UUID. Matching confirmed ACK/DELIVERED transitions settle the attempt atomically with existing state and cooldown. Explicit Telegram rejection records `RETRYABLE` with queue retry atomically; transport ambiguity records `UNKNOWN`. WhatsApp confirmed failure and ambiguity settle with its status transaction. Neither timeout, crash nor elapsed lease grants another send. A lease-expiry RED additionally showed that a second worker could replace the still-running Telegram worker's lease and lose its eventual positive ACK. `claimNext` now excludes lease takeover for already-dispatched/unknown intelligent alerts, with an indexed lookup; the original token can acknowledge safely even after its lease time passes.
+
+Transport source tracing found `TelegramBotApiTransport` previously collapsed exception/null responses into a confirmed failure. `TelegramDeliveryResult` now carries an explicit ambiguity flag while preserving its three-argument constructor. Exceptions, absent responses and server failures/invalid error codes return UNKNOWN. Explicit API rejection/rate limiting remains distinct. This ambiguity rule applies to the new intelligent-alert path; legacy notification retry semantics are unchanged.
+
+RED evidence: (1) two-worker slow HTTP sent 2 rather than 1; (2) exception/null/500 adapter results equaled confirmed rejection; (3) lease takeover lost ACK (expected acknowledged/confirmed count 1). Each was observed before its correction.
+
+GREEN in the same isolated JDK25/PostgreSQL17.11 scratch, all commands exit 0:
+
+```text
+mvn -Dtest=AiSimulationAcceptanceTest,WhatsAppActionServiceTest,NotificationServiceTest,SpringFlywayStartupTest -DargLine=-Dapi.version=1.44 test -q
+```
+
+85 cases, 0 failures/errors/skips (acceptance36, WhatsApp13, notifications35, startup1). This included the initial dispatch reservation, both sibling delivery orders, existing concurrent WhatsApp dispatch and legacy notifications. Spring startup applied/validated V29.
+
+```text
+mvn -Dtest=AiSimulationAcceptanceTest#crashedTelegramDispatchLeaseNeverReissuesAndStillAllowsSiblingChannel+confirmedTelegramRejectionAllowsSafeRetryButUnknownNeverDoes+telegramTransportTimeoutRetainsUnknownAcrossWorkerRestart+twoWorkersCannotDispatchDifferentDecisionsDuringSlowTelegramRequest+whatsappThenTelegramConfirmsBothSiblingsAndBlocksFutureDecision+telegramThenWhatsappConfirmsBothSiblingsAndStartsRealCooldown,TelegramBotApiTransportTest -DargLine=-Dapi.version=1.44 test -q
+```
+
+10 cases passed: 6 PostgreSQL dispatch/recovery/order cases plus 4 adapter cases. After adding the server-error case, the final `mvn -Dtest=TelegramBotApiTransportTest test -q` passed 5 adapter cases. After strengthening the HTTP test to expire the active lease, the final command selecting `twoWorkersCannotDispatchDifferentDecisionsDuringSlowTelegramRequest`, `crashedTelegramDispatchLeaseNeverReissuesAndStillAllowsSiblingChannel`, `confirmedTelegramRejectionAllowsSafeRetryButUnknownNeverDoes`, and `telegramTransportTimeoutRetainsUnknownAcrossWorkerRestart` passed all 4 PostgreSQL cases. Together these overlapping runs cover 93 distinct focused cases, all final outcomes passing; no full suite run.
+
+The slow transport asserts no SQL transaction is active. Tests prove another decision is deferred, original HTTP ACK survives lease expiry, crashed lease and worker restart never reissue a dispatched/unknown request, sibling WhatsApp still confirms, unknown does not start cooldown, and independently confirmed rejection allows retry. Tombstones survive payload/source expiry because they have no cascading FK. They contain only hashed chat key, UUIDs, channel/state and timestamp, never content or recipient address.
+
+Operational limit: DISPATCHED/UNKNOWN tombstones intentionally do not expire into permission to send, even after their sensitive queue payload is purged. A truly ambiguous conversation can remain blocked pending independent remote evidence; an evidence-backed reconciliation workflow and real Evolution transport are still not implemented. Never delete these tombstones merely to restore sending capacity. Defaults stay OFF. Evolution remains Disabled. No real transport request, deploy, pairing or account configuration occurred.

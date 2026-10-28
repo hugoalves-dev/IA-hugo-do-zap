@@ -33,6 +33,8 @@ class WhatsAppActionServiceTest {
         Flyway.configure().dataSource(source).load().migrate();
         jdbc = new JdbcTemplate(source);
         tx = new DataSourceTransactionManager(source);
+        jdbc.update("delete from decision_delivery_attempts");
+        jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from whatsapp_action_outbox");
         jdbc.update("delete from chat_automation_authorizations");
         jdbc.update("delete from decision_cooldowns");

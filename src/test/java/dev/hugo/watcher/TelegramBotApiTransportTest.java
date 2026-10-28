@@ -7,12 +7,25 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class TelegramBotApiTransportTest {
+    @Test void serverFailureDoesNotProveTheMessageWasRejected() {
+        var transport=new TelegramBotApiTransport(123L,(chat,text)->failedResponse(500,null));
+        assertNotEquals(TelegramDeliveryResult.failure(),transport.send("test"));
+    }
+    @Test void transportExceptionIsAmbiguousRatherThanConfirmedRejection() {
+        var transport=new TelegramBotApiTransport(123L,(chat,text)->{throw new RuntimeException("fake timeout");});
+        assertNotEquals(TelegramDeliveryResult.failure(),transport.send("test"));
+    }
+    @Test void absentResponseIsAmbiguousRatherThanConfirmedRejection() {
+        var transport=new TelegramBotApiTransport(123L,(chat,text)->null);
+        assertNotEquals(TelegramDeliveryResult.failure(),transport.send("test"));
+    }
     @Test void propagatesTelegram429RetryAfterWithoutClaimingDelivery() {
         ResponseParameters parameters = mock(ResponseParameters.class);
         when(parameters.retryAfter()).thenReturn(30);

@@ -19,11 +19,13 @@ public class WhatsAppActionDispatcher {
     private final EvolutionActionTransport transport;
     private final Clock clock;
     private final boolean realSendEnabled;
+    private final DecisionDeliveryCoordinator deliveries;
 
     public WhatsAppActionDispatcher(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                     WhatsAppActionService actions, EvolutionActionTransport transport,
                                     Clock clock, @Value("${watcher.whatsapp-actions.real-send-enabled:false}") boolean realSendEnabled) {
         this.jdbc = jdbc;
+        this.deliveries = new DecisionDeliveryCoordinator(jdbc,manager);
         this.transactions = new TransactionTemplate(manager);
         this.actions = actions;
         this.transport = transport;
@@ -45,6 +47,10 @@ public class WhatsAppActionDispatcher {
             return;
         }
 
+        if (!deliveries.begin(latest.decisionId(),"WHATSAPP",actionId,clock.instant())) {
+            updateStatus(actionId,"PENDING","ConversationDispatchUnresolved"); return;
+        }
+
         EvolutionSendResult result;
         try {
             result = transport.send(latest.chatJid(), latest.body(), latest.actionId().toString());
@@ -60,6 +66,7 @@ public class WhatsAppActionDispatcher {
                          where action_id=? and status='DISPATCHED'
                         """, Timestamp.from(clock.instant()), actionId);
                 if (updated == 1) {
+                    deliveries.finish(latest.decisionId(),"WHATSAPP",actionId,"CONFIRMED",clock.instant());
                     jdbc.update("""
                             insert into decision_cooldowns(chat_jid,participant_jid,last_real_action_at,last_real_decision_id)
                             select chat_jid,'',?,decision_id from whatsapp_action_outbox where action_id=?
@@ -94,7 +101,13 @@ public class WhatsAppActionDispatcher {
     }
 
     private void updateStatus(UUID id, String state, String error) {
-        jdbc.update("update whatsapp_action_outbox set status=?,last_error=?,updated_at=? where action_id=? and status='DISPATCHED'",
-                state, error, Timestamp.from(clock.instant()), id);
+        transactions.executeWithoutResult(status -> {
+            int updated=jdbc.update("update whatsapp_action_outbox set status=?,last_error=?,updated_at=? where action_id=? and status='DISPATCHED'",
+                    state,error,Timestamp.from(clock.instant()),id);
+            if(updated==1 && (state.equals("UNKNOWN") || state.equals("FAILED"))) {
+                UUID decisionId=jdbc.queryForObject("select decision_id from whatsapp_action_outbox where action_id=?",UUID.class,id);
+                deliveries.finish(decisionId,"WHATSAPP",id,state.equals("UNKNOWN")?"UNKNOWN":"RETRYABLE",clock.instant());
+            }
+        });
     }
 }

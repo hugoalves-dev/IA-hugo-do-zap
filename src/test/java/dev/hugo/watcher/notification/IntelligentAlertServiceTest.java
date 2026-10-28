@@ -31,6 +31,8 @@ class IntelligentAlertServiceTest {
         Flyway.configure().dataSource(source).load().migrate();
         jdbc = new JdbcTemplate(source);
         var tx = new DataSourceTransactionManager(source);
+        jdbc.update("delete from decision_delivery_attempts");
+        jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
         jdbc.update("delete from chat_automation_authorizations");
         jdbc.update("delete from simulation_decisions");
