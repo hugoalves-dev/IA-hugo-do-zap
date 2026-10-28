@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -18,11 +19,16 @@ MARKER = "# Managed by backend deploy workflow; do not edit."
 
 
 def render_override(image):
-    return f"{MARKER}\nservices:\n  watcher:\n    image: {image}\n    pull_policy: always\n"
+    return f"{MARKER}\nservices:\n  watcher:\n    image: {image}\n    pull_policy: never\n"
 
 
 FAKE_DOCKER = r'''#!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == image && "$2" == inspect ]]; then
+  printf 'image inspect %s\n' "$3" >> "$FAKE_DOCKER_LOG"
+  [[ "${FAKE_LOCAL_MISSING_IMAGE:-}" != "$3" ]] || exit 94
+  exit 0
+fi
 if [[ "$1" == inspect ]]; then
   format="$3"
   if [[ "$format" == *".State.Running"* ]]; then
@@ -76,11 +82,18 @@ case " $args " in
     printf '%s\n' "$image"
     exit 0
     ;;
-  *" pull watcher "*)
+  *" pull --policy always watcher "*)
     [[ "${FAKE_PULL_FAIL_IMAGE:-}" != "$image" ]] || exit 41
     exit 0
     ;;
   *" up "*" watcher "*)
+    if [[ "${FAKE_REGISTRY_OFFLINE:-}" == true && "$image" == "${FAKE_REGISTRY_OLD_IMAGE:-}" && "$args" != *"--pull never"* ]]; then
+      exit 45
+    fi
+    if [[ "${FAKE_BLOCK_UP_IMAGE:-}" == "$image" ]]; then
+      : > "$FAKE_UP_STARTED"
+      while [[ ! -f "$FAKE_UP_RELEASE" ]]; do sleep 0.02; done
+    fi
     printf '%s\n' "$image" > "$FAKE_ACTIVE_IMAGE"
     [[ "${FAKE_UP_FAIL_IMAGE:-}" != "$image" ]] || exit 42
     exit 0
@@ -91,6 +104,35 @@ case " $args " in
     ;;
 esac
 exit 91
+'''
+
+FAKE_FLOCK = r'''#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == -n && "$2" == 9 ]] || exit 95
+if ! mkdir "$FAKE_FLOCK_LOCK_DIR" 2>/dev/null; then
+  exit 1
+fi
+parent_pid="$PPID"
+(
+  while kill -0 "$parent_pid" 2>/dev/null; do sleep 0.02; done
+  rmdir "$FAKE_FLOCK_LOCK_DIR" 2>/dev/null || true
+) >/dev/null 2>&1 </dev/null &
+exit 0
+'''
+
+FAKE_BASH_ENV = r'''mv() {
+  local destination="${@: -1}"
+  printf 'mv %s\n' "$*" >> "$FAKE_MV_LOG"
+  if [[ "${FAKE_BLOCK_PROMOTION:-}" == true && "$destination" == compose.override.yaml ]]; then
+    : > "$FAKE_PROMOTION_STARTED"
+    while [[ ! -f "$FAKE_PROMOTION_RELEASE" ]]; do sleep 0.02; done
+  fi
+  if [[ "${FAKE_CRASH_PROMOTION:-}" == true && "$destination" == compose.override.yaml ]]; then
+    : > "$FAKE_PROMOTION_STARTED"
+    kill -9 "$$"
+  fi
+  /usr/bin/mv "$@"
+}
 '''
 
 class DeployScriptTest(unittest.TestCase):
@@ -124,8 +166,14 @@ class DeployScriptTest(unittest.TestCase):
         self.bin_dir.mkdir()
         self.docker_log = self.root / "docker.log"
         self.active_image = self.root / "active-image"
+        self.mv_log = self.root / "mv.log"
+        self.flock_dir = self.root / ".fake-flock"
         self.active_image.write_text(OLD_IMAGE + "\n", encoding="ascii")
         self._write_executable("docker", FAKE_DOCKER)
+        if shutil.which("flock") is None:
+            self._write_executable("flock", FAKE_FLOCK)
+        self.bash_env = self.root / "bash-env.sh"
+        self.bash_env.write_text(FAKE_BASH_ENV, encoding="utf-8", newline="\n")
         self._write_executable(
             "sha256sum",
             "#!/usr/bin/env bash\n"
@@ -146,39 +194,73 @@ class DeployScriptTest(unittest.TestCase):
     def _bash_path(self, path):
         if os.name != "nt":
             return str(path)
-        result = subprocess.run(
-            [self.bash, "-c", 'cygpath -u "$1"', "bash", str(path)],
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=10,
-        )
-        return result.stdout.strip()
+        drive, tail = os.path.splitdrive(str(path))
+        if len(drive) == 2 and drive[1] == ":":
+            return "/" + drive[0].lower() + tail.replace("\\", "/")
+        return str(path).replace("\\", "/")
 
-    def _run_deploy(self, image, expected_sha=None, **extra_env):
+    def _deploy_args(self, image, expected_sha=None):
+        return [
+            self.bash,
+            str(SCRIPT),
+            base64.b64encode(os.fsencode(self._bash_path(self.deploy_dir))).decode("ascii"),
+            base64.b64encode(image.encode("ascii")).decode("ascii"),
+            expected_sha or self._compose_sha(),
+        ]
+
+    def _deploy_env(self, **extra_env):
         env = os.environ.copy()
         env.update(
             {
                 "PATH": str(self.bin_dir) + os.pathsep + env.get("PATH", ""),
                 "FAKE_DOCKER_LOG": self._bash_path(self.docker_log),
                 "FAKE_ACTIVE_IMAGE": self._bash_path(self.active_image),
+                "FAKE_MV_LOG": self._bash_path(self.mv_log),
+                "FAKE_FLOCK_LOCK_DIR": self._bash_path(self.flock_dir),
                 "FAKE_COMPOSE_SHA": self._compose_sha(),
+                "BASH_ENV": self._bash_path(self.bash_env),
             }
         )
         env.update(extra_env)
-        return subprocess.run(
-            [
-                self.bash,
-                str(SCRIPT),
-                base64.b64encode(os.fsencode(self._bash_path(self.deploy_dir))).decode("ascii"),
-                base64.b64encode(image.encode("ascii")).decode("ascii"),
-                expected_sha or self._compose_sha(),
-            ],
+        for name in ("FAKE_UP_STARTED", "FAKE_UP_RELEASE", "FAKE_PROMOTION_STARTED", "FAKE_PROMOTION_RELEASE"):
+            if name in env:
+                env[name] = self._bash_path(Path(env[name]))
+        return env
+
+    def _wait_for_path(self, path, exists, timeout=10, process=None):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if path.exists() == exists:
+                return
+            if process is not None and process.poll() is not None:
+                self.fail(f"Process exited early ({process.returncode}); mv={self.mv_log.read_text(errors='ignore') if self.mv_log.exists() else '<none>'}; docker={self.docker_log.read_text(errors='ignore') if self.docker_log.exists() else '<none>'}")
+            time.sleep(0.02)
+        self.fail(f"Timed out waiting for {path} exists={exists}; mv={self.mv_log.read_text(errors='ignore') if self.mv_log.exists() else '<none>'}; docker={self.docker_log.read_text(errors='ignore') if self.docker_log.exists() else '<none>'}")
+
+    def _wait_for_flock_release(self):
+        self._wait_for_path(self.flock_dir, False)
+
+    def _run_deploy(self, image, expected_sha=None, wait_for_lock_release=True, **extra_env):
+        result = subprocess.run(
+            self._deploy_args(image, expected_sha),
             cwd=self.root,
-            env=env,
+            env=self._deploy_env(**extra_env),
             text=True,
             capture_output=True,
             timeout=30,
+        )
+        if wait_for_lock_release:
+            self._wait_for_flock_release()
+        return result
+
+    def _spawn_deploy(self, image, **extra_env):
+        return subprocess.Popen(
+            self._deploy_args(image),
+            cwd=self.root,
+            env=self._deploy_env(**extra_env),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
 
     def _commands(self):
@@ -222,6 +304,30 @@ class DeployScriptTest(unittest.TestCase):
         self.assertIn("--no-deps", up_commands[-1])
         self.assertTrue(up_commands[-1].endswith(" watcher"))
 
+    def test_previous_digest_must_be_cached_before_candidate_pull(self):
+        result = self._run_deploy(NEW_IMAGE, FAKE_LOCAL_MISSING_IMAGE=OLD_IMAGE)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("previous", result.stderr.lower())
+        self.assertFalse(any(" pull --policy always watcher" in command for command in self._commands()))
+        self.assertEqual([], self._up_commands())
+        self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
+
+    def test_rollback_uses_cached_digest_while_registry_is_offline(self):
+        result = self._run_deploy(
+            NEW_IMAGE,
+            FAKE_UP_FAIL_IMAGE=NEW_IMAGE,
+            FAKE_REGISTRY_OFFLINE="true",
+            FAKE_REGISTRY_OLD_IMAGE=OLD_IMAGE,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
+        self.assertEqual(OLD_IMAGE + "\n", self.active_image.read_text(encoding="ascii"))
+        up_commands = self._up_commands()
+        self.assertEqual(2, len(up_commands), up_commands)
+        self.assertTrue(all("--pull never" in command for command in up_commands))
+
     def test_unhealthy_candidate_rolls_back_and_returns_failure(self):
         result = self._run_deploy(NEW_IMAGE, FAKE_UNHEALTHY_IMAGE=NEW_IMAGE)
 
@@ -241,7 +347,7 @@ class DeployScriptTest(unittest.TestCase):
         self.assertEqual(render_override(NEXT_IMAGE), self.override_path.read_text(encoding="utf-8"))
         self.assertEqual(NEXT_IMAGE + "\n", self.active_image.read_text(encoding="ascii"))
         commands = self._commands()
-        self.assertEqual(2, sum(" pull watcher" in command for command in commands))
+        self.assertEqual(2, sum(" pull --policy always watcher" in command for command in commands))
         self.assertEqual(2, len(self._up_commands()))
         self.assertFalse(any("--remove-orphans" in command or "prune" in command for command in commands))
 
@@ -289,6 +395,63 @@ class DeployScriptTest(unittest.TestCase):
                 self.assertEqual([], self._up_commands())
                 self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
                 self.assertEqual(self.original_env, self.env_path.read_bytes())
+
+    def test_second_process_cannot_enter_while_deploy_lock_is_held(self):
+        promotion_started = self.root / "promotion-started"
+        release_promotion = self.root / "release-promotion"
+        process = self._spawn_deploy(
+            NEW_IMAGE,
+            FAKE_BLOCK_PROMOTION="true",
+            FAKE_PROMOTION_STARTED=str(promotion_started),
+            FAKE_PROMOTION_RELEASE=str(release_promotion),
+        )
+        try:
+            self._wait_for_path(promotion_started, True, timeout=20, process=process)
+            journal = self.deploy_dir / ".watcher-deploy.journal"
+            self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
+            commands_before = self._commands()
+
+            second = self._run_deploy(NEXT_IMAGE, wait_for_lock_release=False)
+
+            self.assertNotEqual(0, second.returncode)
+            self.assertIn("lock", second.stderr.lower())
+            self.assertEqual(commands_before, self._commands())
+            self.assertTrue(journal.is_file())
+            self.assertIn("phase=promoting", journal.read_text(encoding="utf-8"))
+        finally:
+            if process.poll() is None:
+                process.kill()
+            release_promotion.touch()
+            process.communicate(timeout=15)
+            self._wait_for_flock_release()
+
+    def test_restart_during_promotion_recovers_previous_digest(self):
+        promotion_started = self.root / "promotion-started"
+        process = self._spawn_deploy(
+            NEW_IMAGE,
+            FAKE_CRASH_PROMOTION="true",
+            FAKE_PROMOTION_STARTED=str(promotion_started),
+        )
+        self._wait_for_path(promotion_started, True, timeout=20, process=process)
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertNotEqual(0, process.returncode, stdout + stderr)
+        self._wait_for_flock_release()
+        journal = self.deploy_dir / ".watcher-deploy.journal"
+        self.assertTrue(journal.is_file())
+        self.assertIn("phase=promoting", journal.read_text(encoding="utf-8"))
+        self.assertEqual(NEW_IMAGE + "\n", self.active_image.read_text(encoding="ascii"))
+        self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
+
+        result = self._run_deploy(NEW_IMAGE)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("interrupted", result.stderr.lower())
+        self.assertEqual(render_override(OLD_IMAGE), self.override_path.read_text(encoding="utf-8"))
+        self.assertEqual(OLD_IMAGE + "\n", self.active_image.read_text(encoding="ascii"))
+        self.assertFalse((self.deploy_dir / ".watcher-deploy.journal").exists())
+        self.assertEqual([], self._temporary_override_files())
+        self.assertEqual(self.original_env, self.env_path.read_bytes())
+        self.assertIn("evolution_instances", self.compose_path.read_text(encoding="utf-8"))
 
     def test_readiness_healthcheck_is_enabled_and_has_no_details(self):
         compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")

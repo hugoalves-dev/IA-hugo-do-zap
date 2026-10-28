@@ -21,8 +21,10 @@ class BackendWorkflowContractTest(unittest.TestCase):
         return match.group(1)
 
     def test_jobs_run_as_test_publish_deploy_chain(self):
-        self.assertIn("runs-on: ubuntu-latest", self.job("test-and-build"))
-        self.assertIn("mvn -B -ntp verify", self.job("test-and-build"))
+        build = self.job("test-and-build")
+        self.assertIn("runs-on: ubuntu-latest", build)
+        self.assertIn("python3 -B -m unittest discover -s tests/ci -p 'test*.py'", build)
+        self.assertIn("mvn -B -ntp verify", build)
         self.assertIn("needs: test-and-build", self.job("publish-image"))
         self.assertIn("needs: publish-image", self.job("deploy-vps"))
 

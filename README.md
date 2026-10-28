@@ -59,19 +59,21 @@ Configure estes GitHub Actions repository secrets, sem valores padrão:
 
 Configure a repository variable `VPS_DEPLOY_DIR` com o caminho absoluto não raiz do diretório existente na VPS. Ele deve conter o `compose.yaml` byte a byte igual ao commit selecionado e o `.env` já configurado. O job exige ambos, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
 
-O digest aprovado fica em `compose.override.yaml`, separado do `.env`. O Compose carrega esse override automaticamente em comandos padrão como `docker compose up`; no diretório da VPS, não passe `-f compose.yaml` nem defina `COMPOSE_FILE`, pois isso pode ignorar o lock. `pull_policy: always` faz os comandos padrão buscar esse digest do registry e falhar se ele não estiver disponível, sem fallback para build local. Antes do primeiro deploy, prepare esse arquivo com o digest atualmente saudável e conhecido, usando este formato:
+O digest aprovado fica em `compose.override.yaml`, separado do `.env`. O Compose carrega esse override automaticamente em comandos padrão como `docker compose up`; no diretório da VPS, não passe `-f compose.yaml` nem defina `COMPOSE_FILE`, pois isso pode ignorar o lock. `pull_policy: never` faz os comandos padrão usarem o digest local aprovado e falharem, sem pull ou build alternativo, se ele não estiver em cache. A workflow atualiza a imagem explicitamente e só promove o novo digest após health. Antes do primeiro deploy, prepare esse arquivo com o digest atualmente saudável e conhecido, confirme que a imagem está no cache Docker e use este formato:
 
 ```yaml
 # Managed by backend deploy workflow; do not edit.
 services:
   watcher:
     image: ghcr.io/hugoalves-dev/ia-hugo-do-zap@sha256:<digest-atual-verificado>
-    pull_policy: always
+    pull_policy: never
 ```
 
-O workflow falha sem substituir um `compose.override.yaml` que não tenha esse formato gerenciado. Isso preserva overrides existentes do operador; resolva qualquer override próprio antes de habilitar deploy automático. A imagem nova só substitui o override após ficar healthy; falha ou timeout restaura o digest anterior e verifica rollback. O timeout de readiness é 180 segundos.
+O workflow falha sem substituir um `compose.override.yaml` que não tenha esse formato gerenciado. Isso preserva overrides existentes do operador; resolva qualquer override próprio antes de habilitar deploy automático. A imagem anterior é verificada no cache antes de começar; falha ou timeout restaura esse digest com `--pull never` e verifica rollback sem depender do GHCR. O timeout de readiness é 180 segundos.
 
-Antes do primeiro deploy, a VPS precisa ter Bash, `sha256sum`, Docker Compose com `up --wait --wait-timeout`, acesso ao `infra_network`, os bancos PostgreSQL acessíveis e permissões Docker para `VPS_USER`. Se o pacote GHCR não for público, autentique previamente o Docker da VPS com permissão de leitura do pacote. Mantenha o volume `evolution_instances` e a configuração operacional existente; o workflow não copia arquivos, remove serviços/volumes, faz pareamento, cutover ou ativa flags de envio real.
+Deploys usam o lock exclusivo `.watcher-deploy.lock` via `flock`. Para coordenar comandos Compose manuais que alterem containers, use o mesmo lock, por exemplo `flock -n .watcher-deploy.lock docker compose up -d watcher`. O journal `.watcher-deploy.journal` guarda somente fase, SHA do Compose e digests. Se o processo for interrompido, a próxima execução restaura e verifica o digest anterior, remove o journal e para com instrução para revisão operacional. Journal inválido, Compose divergente ou digest anterior ausente bloqueiam o deploy sem apagar `.env` ou volumes.
+
+Antes do primeiro deploy, a VPS precisa ter Bash, `flock`, `sha256sum`, Docker Compose com `up --wait --wait-timeout`, acesso ao `infra_network`, os bancos PostgreSQL acessíveis e permissões Docker para `VPS_USER`. Se o pacote GHCR não for público, autentique previamente o Docker da VPS com permissão de leitura do pacote. Mantenha o volume `evolution_instances` e a configuração operacional existente; o workflow não copia arquivos, remove serviços/volumes, faz pareamento, cutover ou ativa flags de envio real.
 
 ## Importação explícita de snapshot legado
 
