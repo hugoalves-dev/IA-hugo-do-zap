@@ -45,6 +45,19 @@ class TelegramMessageFormatterTest {
         assertFalse(text.contains("message"));
     }
 
+    @Test void formatsIntelligentAlertWithOnlyUrgencyAndDecisionReference() {
+        String reference = "54a5e6ad-7910-4dd6-a35b-8f14e5aee217";
+        String text = formatter.format(new OutboxAction(6, "alert", "intelligent_alert", """
+                {"eventType":"intelligent_alert","decisionId":"54a5e6ad-7910-4dd6-a35b-8f14e5aee217",
+                 "urgency":"CRITICAL","reference":"54a5e6ad-7910-4dd6-a35b-8f14e5aee217"}
+                """, "[]", 1, null, null, null));
+
+        assertTrue(text.contains("urgência CRITICAL"));
+        assertTrue(text.contains(reference));
+        assertTrue(text.contains("Sem conteúdo de conversa"));
+        assertFalse(text.contains("RAW"));
+    }
+
     @Test void boundsTelegramTextAndDoesNotExposeTheBotToken() {
         String hugePreview = "x".repeat(5000);
         String text = formatter.format(new OutboxAction(3, "archive", "archived_messages",

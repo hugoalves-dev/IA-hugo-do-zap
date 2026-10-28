@@ -58,6 +58,13 @@ public class RetentionService {
         int pending = jdbc.update("delete from pending_notification where expires_at <= ?", cutoff);
         int scrubbedPreviews = scrubExpiredPreviews(now);
         int outboxPayloads = jdbc.update("delete from outbox_actions where sensitive_expires_at <= ?", cutoff);
+        int expiredWhatsappActions = jdbc.update("""
+                delete from whatsapp_action_outbox where action_id in (
+                    select action_id from whatsapp_action_outbox where expires_at<=?
+                     order by expires_at limit 1000 for update skip locked
+                )
+                """, cutoff);
+        int expiredOwnerReferences = jdbc.update("delete from whatsapp_owner_message_references where expires_at <= ?", cutoff);
         int quarantined = jdbc.update("delete from quarantined_events where sensitive_expires_at <= ?", cutoff);
         int shadowPayloads = jdbc.update("update processed_message set shadow_payload=null,shadow_expires_at=null where shadow_expires_at <= ? and shadow_payload is not null", cutoff);
         int deduplication = jdbc.update("delete from processed_message where processed_at <= ?",
@@ -70,7 +77,7 @@ public class RetentionService {
                 where batch.metadata_expires_at <= ?
                   and not exists (select 1 from simulation_decisions decision where decision.batch_id=batch.batch_id)
                 """, cutoff);
-        return pending + scrubbedPreviews + expiredJobs + scrubbedInboxPayloads + outboxPayloads + quarantined + deduplication
+        return pending + scrubbedPreviews + expiredJobs + scrubbedInboxPayloads + outboxPayloads + expiredWhatsappActions + expiredOwnerReferences + quarantined + deduplication
                 + shadowPayloads + simulationPayloads + expiredSimulationBatches + expiredSimulationAudits + expiredSimulationMetadata;
     }
 

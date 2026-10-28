@@ -130,6 +130,10 @@ public class EvolutionJobProcessor {
         }
 
         boolean group = event.jid().orElseThrow().endsWith("@g.us");
+        if (fromMe.booleanValue() && event.externalId() != null && !event.externalId().isBlank()
+                && event.externalId().length() <= 255 && event.jid().orElseThrow().length() <= 255) {
+            messages.recordOutgoingReference(event.jid().orElseThrow(), event.externalId(), event.timestamp().orElseThrow());
+        }
         String participant = group ? text(key.get("participant")) : null;
         String alternateChat = group ? null : text(key.get("remoteJidAlt"));
         String alternateParticipant = group ? text(key.get("participantAlt")) : null;

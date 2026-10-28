@@ -34,10 +34,18 @@ public class WhatsAppActionService {
         if (persistedDecisionId == null) return ActionResult.rejected("DECISION_NOT_FOUND");
         return transactions.execute(status -> {
             jdbc.query("select pg_advisory_xact_lock(hashtextextended(?, 947221))", rs -> { }, persistedDecisionId.toString());
-            List<Queued> prior = jdbc.query("select action_id,status from whatsapp_action_outbox where decision_id=?",
-                    (rs, row) -> new Queued(rs.getObject("action_id", UUID.class), rs.getString("status")), persistedDecisionId);
-            if (!prior.isEmpty()) return prior.getFirst().status().equals("PENDING") || prior.getFirst().status().equals("DISPATCHED")
-                    ? ActionResult.accepted(prior.getFirst().id()) : ActionResult.rejected("DECISION_ALREADY_PROCESSED");
+            List<Queued> prior = jdbc.query("select action_id,status,expires_at from whatsapp_action_outbox where decision_id=?",
+                    (rs, row) -> new Queued(rs.getObject("action_id", UUID.class), rs.getString("status"),
+                            rs.getTimestamp("expires_at").toInstant()), persistedDecisionId);
+            if (!prior.isEmpty()) {
+                Queued queued = prior.getFirst();
+                boolean active = queued.status().equals("PENDING") || queued.status().equals("DISPATCHED") || queued.status().equals("UNKNOWN");
+                return active && queued.expiresAt().isAfter(clock.instant())
+                        ? ActionResult.accepted(queued.id()) : ActionResult.rejected("DECISION_ALREADY_PROCESSED");
+            }
+            Boolean alreadyEnqueued = jdbc.query("select whatsapp_action_enqueued from simulation_decisions where batch_id=?",
+                    rs -> rs.next() && rs.getBoolean(1), persistedDecisionId);
+            if (Boolean.TRUE.equals(alreadyEnqueued)) return ActionResult.rejected("DECISION_ALREADY_PROCESSED");
 
             Authorization authorization = currentAuthorization(persistedDecisionId, clock.instant());
             if (authorization == null) return ActionResult.rejected("AUTHORIZATION_OR_POLICY_BLOCKED");
@@ -46,17 +54,20 @@ public class WhatsAppActionService {
             if (authorization == null) return ActionResult.rejected("AUTHORIZATION_OR_POLICY_BLOCKED");
             Integer active = jdbc.queryForObject("""
                     select count(*) from whatsapp_action_outbox where chat_jid=?
-                      and status in ('PENDING','DISPATCHED','UNCERTAIN')
+                      and status in ('PENDING','DISPATCHED','UNKNOWN')
                     """, Integer.class, authorization.chatJid());
             if (active != null && active > 0) return ActionResult.rejected("ACTION_ALREADY_IN_FLIGHT");
             UUID actionId = UUID.randomUUID();
+            Instant createdAt = clock.instant();
             jdbc.update("""
                     insert into whatsapp_action_outbox(action_id,decision_id,chat_jid,participant_jid,situation,
-                        template_id,template_version,body,status,created_at,updated_at)
-                    values (?,?,?,?,?,?,?,?,'PENDING',?,?)
+                        template_id,template_version,body,status,created_at,updated_at,expires_at)
+                    values (?,?,?,?,?,?,?,?,'PENDING',?,?,?)
                     """, actionId, persistedDecisionId, authorization.chatJid(), authorization.participantJid(),
                     authorization.situation(), authorization.templateId(), authorization.templateVersion(),
-                    authorization.body(), Timestamp.from(clock.instant()), Timestamp.from(clock.instant()));
+                    authorization.body(), Timestamp.from(createdAt), Timestamp.from(createdAt),
+                    Timestamp.from(createdAt.plusSeconds(7 * 86_400L)));
+            jdbc.update("update simulation_decisions set whatsapp_action_enqueued=true where batch_id=?", persistedDecisionId);
             return ActionResult.accepted(actionId);
         });
     }
@@ -66,10 +77,10 @@ public class WhatsAppActionService {
         if (actionId == null || now == null || !realSendEnabled) return null;
         List<Action> actions = jdbc.query("""
                 select decision_id,chat_jid,participant_jid,situation,template_id,template_version
-                  from whatsapp_action_outbox where action_id=? and status='DISPATCHED'
+                from whatsapp_action_outbox where action_id=? and status='DISPATCHED' and expires_at>?
                 """, (rs, row) -> new Action(rs.getObject("decision_id", UUID.class), rs.getString("chat_jid"),
                 rs.getString("participant_jid"), rs.getString("situation"), rs.getString("template_id"),
-                rs.getInt("template_version")), actionId);
+                rs.getInt("template_version")), actionId, Timestamp.from(now));
         if (actions.isEmpty()) return null;
         Action expected = actions.getFirst();
         Authorization latest = currentAuthorization(expected.decisionId(), now);
@@ -118,7 +129,7 @@ public class WhatsAppActionService {
     }
 
     public record AuthorizedAction(UUID actionId, UUID decisionId, String chatJid, String body) { }
-    private record Queued(UUID id, String status) { }
+    private record Queued(UUID id, String status, Instant expiresAt) { }
     private record Action(UUID decisionId, String chatJid, String participantJid, String situation,
                           String templateId, int templateVersion) { }
     private record Authorization(String chatJid, String participantJid, String situation, String templateId,

@@ -3,6 +3,7 @@ package dev.hugo.watcher;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import java.util.List;
 
 /** Converts durable outbox payloads into short, readable Telegram messages. */
 @Component
@@ -19,6 +20,7 @@ public class TelegramMessageFormatter {
                 case NotificationService.ARCHIVED_MESSAGES -> archived(payload);
                 case ConnectionService.ACTION_TYPE -> connection(payload);
                 case "simulation_daily_summary" -> dailySummary(payload);
+                case "intelligent_alert" -> intelligentAlert(payload);
                 default -> "📬 O watcher registrou uma nova atualização do WhatsApp.";
             };
         } catch (RuntimeException ex) {
@@ -65,6 +67,15 @@ public class TelegramMessageFormatter {
                 + "\nCusto reservado: " + payload.path("reservedCostMicros").asLong(0)
                 + " micros · informado: " + payload.path("reportedActualCostMicros").asLong(0)
                 + " micros. Sem conteúdo de conversas.";
+    }
+
+    private String intelligentAlert(JsonNode payload) {
+        String urgency = clean(payload.path("urgency").asString(""));
+        String reference = clean(payload.path("reference").asString(""));
+        if (!List.of("HIGH", "CRITICAL").contains(urgency) || !reference.matches("[0-9a-fA-F-]{36}"))
+            return "⚠️ O watcher bloqueou um alerta sem classificação ou referência válida.";
+        return "⚠️ Alerta inteligente — urgência " + urgency + "\nReferência da decisão: " + reference
+                + ". Sem conteúdo de conversa.";
     }
 
     private static String clean(String value) {

@@ -15,6 +15,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Testcontainers(disabledWithoutDocker = true)
@@ -72,7 +75,7 @@ class WhatsAppActionServiceTest {
         jdbc.update("delete from chat_automation_authorizations");
         AtomicInteger sends = new AtomicInteger();
         var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, actions, (chat, body, key) -> {
-            sends.incrementAndGet(); return EvolutionSendResult.delivered("fake-message");
+            sends.incrementAndGet(); return EvolutionSendResult.delivered();
         }, Clock.fixed(now, ZoneOffset.UTC), true);
         dispatcher.dispatch(first.actionId());
         assertEquals(0, sends.get());
@@ -84,11 +87,11 @@ class WhatsAppActionServiceTest {
         var queued = service(true).enqueue(decisionId);
         AtomicInteger sends = new AtomicInteger();
         var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true), (chat, body, key) -> {
-            sends.incrementAndGet(); return EvolutionSendResult.uncertain();
+            sends.incrementAndGet(); return EvolutionSendResult.unknown();
         }, Clock.fixed(now, ZoneOffset.UTC), true);
         dispatcher.dispatch(queued.actionId()); dispatcher.dispatch(queued.actionId());
         assertEquals(1, sends.get());
-        assertEquals("UNCERTAIN", status(queued.actionId()));
+        assertEquals("UNKNOWN", status(queued.actionId()));
         assertEquals(0, jdbc.queryForObject("select count(*) from decision_cooldowns where last_real_action_at is not null", Integer.class));
     }
 
@@ -105,7 +108,7 @@ class WhatsAppActionServiceTest {
     @Test void confirmedDeliveryAdvancesRealCooldown() {
         var queued = service(true).enqueue(decisionId);
         var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
-                (chat, body, key) -> EvolutionSendResult.delivered("fake-message"), Clock.fixed(now, ZoneOffset.UTC), true);
+                (chat, body, key) -> EvolutionSendResult.delivered(), Clock.fixed(now, ZoneOffset.UTC), true);
         dispatcher.dispatch(queued.actionId());
         assertEquals("DELIVERED", status(queued.actionId()));
         assertEquals(Timestamp.from(now), jdbc.queryForObject("select last_real_action_at from decision_cooldowns where chat_jid=? and participant_jid=''", Timestamp.class, "15551234567@s.whatsapp.net"));
@@ -121,6 +124,79 @@ class WhatsAppActionServiceTest {
     @Test void realSendFeatureIsOffByDefault() {
         assertFalse(service(false).enqueue(decisionId).accepted());
         assertEquals(0, actionCount());
+    }
+
+    @Test void expiresUnknownActionWithoutAllowingDecisionToBeQueuedAgain() {
+        var actions = service(true);
+        var queued = actions.enqueue(decisionId);
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, actions,
+                (chat, body, key) -> EvolutionSendResult.unknown(), Clock.fixed(now, ZoneOffset.UTC), true);
+        dispatcher.dispatch(queued.actionId());
+        jdbc.update("update whatsapp_action_outbox set created_at=?,updated_at=?,expires_at=? where action_id=?",
+                Timestamp.from(now.minusSeconds(60)), Timestamp.from(now.minusSeconds(60)), Timestamp.from(now), queued.actionId());
+
+        assertEquals(1, dispatcher.purgeExpired(now));
+        assertEquals(0, actionCount());
+        assertFalse(actions.enqueue(decisionId).accepted());
+        dispatcher.dispatch(queued.actionId());
+        assertTrue(jdbc.queryForObject("select whatsapp_action_enqueued from simulation_decisions where batch_id=?", Boolean.class, decisionId));
+    }
+
+    @Test void retentionPurgesEveryActionStateIncludingUnknown() {
+        Instant created = now.minusSeconds(7 * 86_400L);
+        for (String state : java.util.List.of("PENDING", "DISPATCHED", "DELIVERED", "FAILED", "UNKNOWN", "SUPPRESSED")) {
+            UUID actionId = UUID.randomUUID();
+            jdbc.update("""
+                    insert into whatsapp_action_outbox(action_id,decision_id,chat_jid,participant_jid,situation,
+                        template_id,template_version,body,status,created_at,updated_at,expires_at)
+                    values (?,?,?,?, 'CONTACT_REQUEST','task4_test',1,'Resposta automática: teste.',?,?,?,?)
+                    """, actionId, decisionId, "retention-" + state + "@s.whatsapp.net", "",
+                    state, Timestamp.from(created), Timestamp.from(created), Timestamp.from(now));
+            var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
+                    (chat, body, key) -> EvolutionSendResult.unknown(), Clock.fixed(now, ZoneOffset.UTC), true);
+            assertEquals(1, dispatcher.purgeExpired(now), state);
+            assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox where action_id=?", Integer.class, actionId), state);
+        }
+    }
+
+    @Test void concurrentEnqueueReturnsOnePersistedAction() throws Exception {
+        var actions = service(true);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var a = pool.submit(() -> { start.await(); return actions.enqueue(decisionId); });
+            var b = pool.submit(() -> { start.await(); return actions.enqueue(decisionId); });
+            start.countDown();
+            var first = a.get(10, TimeUnit.SECONDS);
+            var second = b.get(10, TimeUnit.SECONDS);
+            assertTrue(first.accepted());
+            assertTrue(second.accepted());
+            assertEquals(first.actionId(), second.actionId());
+            assertEquals(1, actionCount());
+        }
+    }
+
+    @Test void concurrentDispatchSendsOnlyOnce() throws Exception {
+        var actions = service(true);
+        var queued = actions.enqueue(decisionId);
+        AtomicInteger sends = new AtomicInteger();
+        CountDownLatch enteredTransport = new CountDownLatch(1);
+        CountDownLatch releaseTransport = new CountDownLatch(1);
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, actions, (chat, body, key) -> {
+            sends.incrementAndGet(); enteredTransport.countDown();
+            try { releaseTransport.await(5, TimeUnit.SECONDS); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            return EvolutionSendResult.unknown();
+        }, Clock.fixed(now, ZoneOffset.UTC), true);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> dispatcher.dispatch(queued.actionId()));
+            assertTrue(enteredTransport.await(5, TimeUnit.SECONDS));
+            var second = pool.submit(() -> dispatcher.dispatch(queued.actionId()));
+            second.get(5, TimeUnit.SECONDS);
+            releaseTransport.countDown();
+            first.get(5, TimeUnit.SECONDS);
+        }
+        assertEquals(1, sends.get());
+        assertEquals("UNKNOWN", status(queued.actionId()));
     }
 
     private WhatsAppActionService service(boolean enabled) { return new WhatsAppActionService(jdbc, tx, Clock.fixed(now, ZoneOffset.UTC), enabled); }

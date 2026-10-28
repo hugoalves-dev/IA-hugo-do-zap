@@ -3,6 +3,7 @@ package dev.hugo.watcher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
@@ -25,6 +26,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
+import dev.hugo.watcher.notification.IntelligentAlertService;
 
 /** Persists notification payloads before Telegram delivery and acknowledges snapshots conditionally. */
 @Service
@@ -43,12 +45,14 @@ public class NotificationService {
     private final WatcherProperties properties;
     private final Clock clock;
     private final ArchiveModeService archiveModes;
+    private final IntelligentAlertService intelligentAlerts;
     private final AtomicBoolean flushing = new AtomicBoolean();
 
+    @Autowired
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                NotificationOutboxRepository outbox, TelegramTransport telegram,
                                TelegramMessageFormatter telegramFormatter, WatcherProperties properties,
-                               Clock clock, ArchiveModeService archiveModes) {
+                               Clock clock, ArchiveModeService archiveModes, IntelligentAlertService intelligentAlerts) {
         this.jdbc = jdbc;
         this.transactions = new TransactionTemplate(manager);
         this.outbox = outbox;
@@ -57,6 +61,14 @@ public class NotificationService {
         this.properties = properties;
         this.clock = clock;
         this.archiveModes = archiveModes;
+        this.intelligentAlerts = intelligentAlerts;
+    }
+
+    public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                               NotificationOutboxRepository outbox, TelegramTransport telegram,
+                               TelegramMessageFormatter telegramFormatter, WatcherProperties properties,
+                               Clock clock, ArchiveModeService archiveModes) {
+        this(jdbc, manager, outbox, telegram, telegramFormatter, properties, clock, archiveModes, null);
     }
 
     public void flush(Instant now) {
@@ -73,6 +85,14 @@ public class NotificationService {
                                 ? telegram.send(telegramFormatter.format(action)) : TelegramDeliveryResult.failure();
                         if (result.delivered()) outbox.acknowledge(action, clock.instant());
                         else if (!isCurrentConnectionAlert(action)) outbox.cancelClaimedConnectionAlert(action, clock.instant());
+                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
+                    } else if (IntelligentAlertService.ACTION_TYPE.equals(action.actionType())) {
+                        OutboxAction latest = intelligentAlerts != null && intelligentAlerts.revalidate(action, clock.instant())
+                                ? action : null;
+                        TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
+                                : telegram.send(telegramFormatter.format(latest));
+                        if (result.delivered()) outbox.acknowledge(latest, clock.instant());
+                        else if (latest == null) outbox.suppress(action, clock.instant());
                         else outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
                     } else {
                         OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());

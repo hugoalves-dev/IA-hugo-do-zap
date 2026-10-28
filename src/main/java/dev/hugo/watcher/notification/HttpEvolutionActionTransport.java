@@ -1,6 +1,5 @@
 package dev.hugo.watcher.notification;
 
-import tools.jackson.databind.json.JsonMapper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -9,6 +8,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Evolution sendText client. HTTP success is accepted by Evolution, not proof of WhatsApp delivery. */
 public class HttpEvolutionActionTransport implements EvolutionActionTransport {
@@ -34,15 +34,14 @@ public class HttpEvolutionActionTransport implements EvolutionActionTransport {
                     .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8)).build();
             HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() >= 400 && response.statusCode() < 500) return EvolutionSendResult.failed();
-            if (response.statusCode() < 200 || response.statusCode() >= 300) return EvolutionSendResult.uncertain();
-            String providerId = JSON.readTree(response.body()).path("key").path("id").asString(null);
-            // Evolution acceptance is not a delivery receipt. Preserve the ID for later reconciliation.
-            return EvolutionSendResult.uncertain(providerId);
+            if (response.statusCode() < 200 || response.statusCode() >= 300) return EvolutionSendResult.unknown();
+            // Evolution acceptance is not a delivery receipt. No authenticated receipt contract is wired yet.
+            return EvolutionSendResult.unknown();
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            return EvolutionSendResult.uncertain();
+            return EvolutionSendResult.unknown();
         } catch (Exception timeoutOrProtocolFailure) {
-            return EvolutionSendResult.uncertain();
+            return EvolutionSendResult.unknown();
         }
     }
 

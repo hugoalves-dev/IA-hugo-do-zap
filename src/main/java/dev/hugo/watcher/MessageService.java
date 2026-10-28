@@ -67,6 +67,17 @@ public class MessageService {
                 "Message transaction returned no result");
     }
 
+    /** Stores minimal, short-lived provenance for an authenticated own outbound message. */
+    public void recordOutgoingReference(String chatJid, String externalId, Instant observedAt) {
+        if (!validChatJid(chatJid) || externalId == null || externalId.isBlank() || externalId.length() > 255
+                || observedAt == null) return;
+        Instant expiresAt = observedAt.plusSeconds(7L * 86_400L);
+        jdbc.update("""
+                insert into whatsapp_owner_message_references(chat_jid,external_id,observed_at,expires_at)
+                values (?,?,?,?) on conflict (chat_jid,external_id) do nothing
+                """, chatJid, externalId, java.sql.Timestamp.from(observedAt), java.sql.Timestamp.from(expiresAt));
+    }
+
     private Acceptance acceptInTransaction(IncomingMessage message) {
         Instant now = Instant.now();
         Instant receivedAt = message.receivedAt() == null ? now : message.receivedAt();

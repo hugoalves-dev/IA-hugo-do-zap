@@ -10,11 +10,14 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
+import dev.hugo.watcher.notification.IntelligentAlertService;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.UUID;
+import java.sql.Timestamp;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -73,7 +76,8 @@ class NotificationServiceTest {
                     : TelegramDeliveryResult.failure(retryAfter.get());
         };
         notifications = new NotificationService(jdbc, manager, outbox, fakeTelegram,
-                new TelegramMessageFormatter(), properties, clock, archiveModes);
+                new TelegramMessageFormatter(), properties, clock, archiveModes,
+                new IntelligentAlertService(jdbc, manager, outbox, clock, true, "15550000000@s.whatsapp.net"));
     }
 
     @Test void sendsAReadableTelegramSummaryAndAcknowledgesItsSnapshot() {
@@ -103,6 +107,47 @@ class NotificationServiceTest {
         assertEquals(1, requestCount.get());
         assertEquals("Admin response", receivedBody.get());
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='telegram_admin_reply'", String.class));
+    }
+
+    @Test void revalidatesIntelligentAlertAfterEnqueueAndSuppressesRevokedAuthorization() {
+        clock.set(Instant.now());
+        Instant now = clock.instant();
+        UUID decisionId = UUID.randomUUID();
+        Instant expires = now.plus(Duration.ofDays(1));
+        jdbc.update("update automation_settings set ai_classification_enabled=true,intelligent_alerts_enabled=true,kill_switch_enabled=false where singleton_id=1");
+        jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('notify_alert_test',1,'CRITICAL_URGENCY','Resposta automática: alerta crítico.',true,true)");
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,?,'COMPLETED',?,?,?,?,?,?)",
+                decisionId, "15551234567@s.whatsapp.net", "", Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(expires), Timestamp.from(expires));
+        jdbc.update("insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload) values (?,?,?,?,?,?::jsonb)",
+                decisionId, "15551234567@s.whatsapp.net", "", "notify-source", Timestamp.from(now),
+                "{\"fromMe\":false,\"content\":{\"extendedTextMessage\":{\"text\":\"RAW_TEST_SECRET\",\"contextInfo\":{\"mentionedJid\":[\"15550000000@s.whatsapp.net\"]}}}}");
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,
+                    real_action_allowed,decision_state,template_id,classification_status,classification_urgency,
+                    classification_confidence,intelligent_alert_reference_hash)
+                values (?,true,false,'synthetic_audit',?,?,true,'WOULD_ACT','notify_alert_test','CLASSIFIED','HIGH',0.9,?)
+                """, decisionId, Timestamp.from(now), Timestamp.from(expires), hash("notify-source"));
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','notify_alert_test',1)", "15551234567@s.whatsapp.net");
+        var alerts = new IntelligentAlertService(jdbc, manager, outbox, clock, true, "15550000000@s.whatsapp.net");
+        var queued = alerts.enqueue(decisionId);
+        assertTrue(queued.accepted());
+        assertFalse(queued.action().payload().contains("RAW_TEST_SECRET"));
+        jdbc.update("update outbox_actions set available_at=? where action_key=?",
+                Timestamp.from(now.minusSeconds(1)), "intelligent_alert:" + decisionId);
+
+        jdbc.update("update automation_settings set kill_switch_enabled=true where singleton_id=1");
+        notifications.flush(now);
+
+        assertEquals(0, requestCount.get());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key=?", String.class,
+                "intelligent_alert:" + decisionId));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_key=?", String.class,
+                "intelligent_alert:" + decisionId));
+    }
+
+    private static String hash(String value) {
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))); }
+        catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
 
     @Test void defersWorkOnlyNotificationsOutsideTheLegacyWorkWindow() {
@@ -719,6 +764,7 @@ class NotificationServiceTest {
 
         private MutableClock(Instant initial) { now = new AtomicReference<>(initial); }
         private void advance(Duration duration) { now.updateAndGet(value -> value.plus(duration)); }
+        private void set(Instant value) { now.set(value); }
         @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
         @Override public Clock withZone(ZoneId zone) { return this; }
         @Override public Instant instant() { return now.get(); }
