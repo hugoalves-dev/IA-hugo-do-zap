@@ -43,3 +43,28 @@ Each final directed test passed: the availability/expiry case adds one distinct 
 ## Remaining limits
 
 No full suite, paid provider call, real Telegram/Evolution delivery, deploy, account activation, pairing or VPS change was performed. Evolution action transport remains `DisabledEvolutionActionTransport`. Provider classifications remain opt-in with separate data consent and budget gates even during shadow analysis. Runtime revocation cannot recall an HTTP request already dispatched after its last gate. A crash after remote send retains the existing ambiguous/unknown delivery semantics. Parent reviews and pushes this commit.
+
+
+## P2 review follow-up: confirmed cooldown across sibling channels
+
+Reproduced with real PostgreSQL and fake transports: WhatsApp delivery first suppressed its sibling Telegram alert; Telegram delivery first left the real cooldown null. V28 adds `decision_cooldowns.last_real_decision_id`. Cooldown remains shared by conversation, while the originating decision's sibling channels bypass only cooldown, retaining every current privacy/scope/reference/template/kill-switch gate. Future decisions stay blocked for the configured interval.
+
+Telegram's successful lease-token ACK now updates outbox state and real cooldown in one transaction, using the stored immutable action key. WhatsApp's confirmed `DELIVERED` transition records the same cause in its existing transaction. Both use monotonic timestamp updates; duplicate/stale ACKs cannot advance cooldown again. No real cooldown update occurs for simulation, suppression, confirmed failure or ambiguous outcome. A later sibling confirmation extends the shared window.
+
+RED PostgreSQL command selected the two delivery orders, duplicate ACK concurrency and shadow/ambiguous outcomes. The two order cases failed as expected: WhatsApp→Telegram sent 0 (expected 1), and Telegram→WhatsApp left last_real_action_at null. The initial concurrent case also exposed a test rate-limit fixture dependency, corrected by resetting the shared delivery rate-limit row in setup.
+
+Focused regression command:
+
+```text
+mvn -Dtest=AiSimulationAcceptanceTest,WhatsAppActionServiceTest,IntelligentAlertServiceTest,NotificationServiceTest,SpringFlywayStartupTest -DargLine=-Dapi.version=1.44 test -q
+```
+
+89 cases ran: 87 passed; two final assertions required fixture corrections. The concurrent ACK assertion compared nanosecond Java time against PostgreSQL microsecond precision; input now truncates to micros. `NotificationServiceTest.revalidatesIntelligentAlertAfterEnqueueAndSuppressesRevokedAuthorization` had an old synthetic audit without production mode, template binding or durable model/consent provenance; fixture now satisfies those gates before testing revocation. Production gates were not weakened.
+
+Final directed verification, exit 0, 6 tests, 0 failures/errors/skips:
+
+```text
+mvn -Dtest=AiSimulationAcceptanceTest#whatsappThenTelegramConfirmsBothSiblingsAndBlocksFutureDecision+telegramThenWhatsappConfirmsBothSiblingsAndStartsRealCooldown+concurrentDuplicateTelegramAcknowledgementAdvancesCooldownOnce+ambiguousDeliveryAndShadowNeverStartRealCooldown+telegramAckAndCooldownRollbackTogetherAndRetryOnlyAcknowledgesOnce,NotificationServiceTest#revalidatesIntelligentAlertAfterEnqueueAndSuppressesRevokedAuthorization -DargLine=-Dapi.version=1.44 test -q
+```
+
+The final tests exercise both delivery orders with nonzero cooldown, blocked future decisions, concurrent duplicate ACKs and stale retry, thrown fake WhatsApp timeout (`UNKNOWN`) plus Telegram failure, shadow without real cooldown, and a SQL-trigger failure proving ACK and cooldown roll back together before idempotent recovery. Combined follow-up coverage comprises 90 distinct cases with final outcomes passing (87 unchanged passing cases plus rerun corrections and the new rollback case); no full suite rerun. Spring startup applied and validated V28. Defaults remain OFF, real Evolution transport remains Disabled, no external request or deployment performed.

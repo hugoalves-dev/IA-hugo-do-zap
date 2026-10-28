@@ -61,9 +61,12 @@ public class WhatsAppActionDispatcher {
                         """, Timestamp.from(clock.instant()), actionId);
                 if (updated == 1) {
                     jdbc.update("""
-                            insert into decision_cooldowns(chat_jid,participant_jid,last_real_action_at)
-                            select chat_jid,'',? from whatsapp_action_outbox where action_id=?
-                            on conflict(chat_jid,participant_jid) do update set last_real_action_at=excluded.last_real_action_at
+                            insert into decision_cooldowns(chat_jid,participant_jid,last_real_action_at,last_real_decision_id)
+                            select chat_jid,'',?,decision_id from whatsapp_action_outbox where action_id=?
+                            on conflict(chat_jid,participant_jid) do update
+                            set last_real_action_at=excluded.last_real_action_at,last_real_decision_id=excluded.last_real_decision_id
+                            where decision_cooldowns.last_real_action_at is null
+                               or decision_cooldowns.last_real_action_at<=excluded.last_real_action_at
                             """, Timestamp.from(clock.instant()), actionId);
                 }
             });

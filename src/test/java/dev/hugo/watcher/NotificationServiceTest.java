@@ -128,6 +128,10 @@ class NotificationServiceTest {
                 values (?,true,false,'synthetic_audit',?,?,true,'WOULD_ACT','notify_alert_test','CLASSIFIED','HIGH',0.9,?)
                 """, decisionId, Timestamp.from(now), Timestamp.from(expires), hash("notify-source"));
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','notify_alert_test',1)", "15551234567@s.whatsapp.net");
+        jdbc.update("update simulation_decisions set production_mode=true,alert_template_reference='notify_alert_test@v1' where batch_id=?",decisionId);
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CONTACT_REQUEST','gemini',true,?)", "15551234567@s.whatsapp.net",Timestamp.from(expires));
+        jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",decisionId,UUID.randomUUID(),Timestamp.from(expires),
+                "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\"],\"available\":true,\"requestDetected\":true,\"status\":\"CLASSIFIED\",\"urgency\":\"HIGH\",\"confidence\":0.9}");
         var alerts = new IntelligentAlertService(jdbc, manager, outbox, clock, true, "15550000000@s.whatsapp.net");
         var queued = alerts.enqueue(decisionId);
         assertTrue(queued.accepted());

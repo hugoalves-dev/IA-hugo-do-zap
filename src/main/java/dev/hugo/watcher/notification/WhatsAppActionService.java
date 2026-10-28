@@ -135,7 +135,6 @@ public class WhatsAppActionService {
                  where chat_jid=? and situation=? and template_id=? and template_version=?
                 """, Integer.class, a.chatJid(), a.situation(), a.templateId(), a.templateVersion());
         if (optedIn == null || optedIn != 1) return null;
-        if (a.lastRealActionAt() != null && a.lastRealActionAt().plusSeconds(a.cooldownSeconds()).isAfter(now)) return null;
         return a;
     }
 

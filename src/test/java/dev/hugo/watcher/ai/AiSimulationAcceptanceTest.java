@@ -34,6 +34,7 @@ class AiSimulationAcceptanceTest {
         manager = new DataSourceTransactionManager(source);
         budgets = new BudgetService(jdbc, manager, new SimpleMeterRegistry());
         jdbc.update("delete from outbox_actions");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
         jdbc.update("delete from whatsapp_action_outbox");
         jdbc.update("delete from simulation_decisions");
         jdbc.update("delete from simulation_batches");
@@ -398,6 +399,75 @@ class AiSimulationAcceptanceTest {
         jdbc.update("delete from availability_overrides");
         jdbc.update("update simulation_batches set expires_at=now()-interval '1 second' where batch_id=?",batch.id());
         assertFalse(alerts.revalidate(action,clock.instant()));
+    }
+    @Test void whatsappThenTelegramConfirmsBothSiblingsAndBlocksFutureDecision() {
+        authorizeProducer(); jdbc.update("update automation_settings set real_cooldown_seconds=3600");
+        var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        dispatchWhatsApp(dev.hugo.watcher.notification.EvolutionSendResult.delivered());
+        assertEquals(1,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.success()));
+        assertFutureDecisionBlocked();
+    }
+    @Test void telegramThenWhatsappConfirmsBothSiblingsAndStartsRealCooldown() {
+        authorizeProducer(); jdbc.update("update automation_settings set real_cooldown_seconds=3600");
+        var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        assertEquals(1,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.success()));
+        assertNotNull(jdbc.queryForObject("select last_real_action_at from decision_cooldowns where chat_jid=?",java.sql.Timestamp.class,chat));
+        dispatchWhatsApp(dev.hugo.watcher.notification.EvolutionSendResult.delivered());
+        assertEquals("DELIVERED",jdbc.queryForObject("select status from whatsapp_action_outbox",String.class));
+        assertFutureDecisionBlocked();
+    }
+    @Test void ambiguousDeliveryAndShadowNeverStartRealCooldown() {
+        authorizeProducer();
+        producingService(false,critical()).evaluate(batch(chat,mention()));
+        assertEquals(0,jdbc.queryForObject("select count(*) from decision_cooldowns where last_real_action_at is not null",Integer.class));
+        producingService(true,critical()).evaluate(batch(chat,mention()));
+        var actions=new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
+        new dev.hugo.watcher.notification.WhatsAppActionDispatcher(jdbc,manager,actions,(jid,body,key)->{throw new RuntimeException("fake timeout");},clock,true).dispatchNext();
+        assertEquals("UNKNOWN",jdbc.queryForObject("select status from whatsapp_action_outbox",String.class));
+        assertEquals(1,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.failure()));
+        assertEquals(0,jdbc.queryForObject("select count(*) from decision_cooldowns where last_real_action_at is not null",Integer.class));
+    }
+    @Test void concurrentDuplicateTelegramAcknowledgementAdvancesCooldownOnce() throws Exception {
+        authorizeProducer(); var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
+        var action=outbox.claimNext(clock.instant()); assertNotNull(action);
+        var at=clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        try(var pool=java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var first=pool.submit(()->outbox.acknowledge(action,at));
+            var second=pool.submit(()->outbox.acknowledge(action,at));
+            assertEquals(1,(first.get(10,java.util.concurrent.TimeUnit.SECONDS)?1:0)+(second.get(10,java.util.concurrent.TimeUnit.SECONDS)?1:0));
+        }
+        assertFalse(outbox.acknowledge(action,at.plusSeconds(60)));
+        assertEquals(java.sql.Timestamp.from(at),jdbc.queryForObject("select last_real_action_at from decision_cooldowns where chat_jid=?",java.sql.Timestamp.class,chat));
+    }
+    @Test void telegramAckAndCooldownRollbackTogetherAndRetryOnlyAcknowledgesOnce() {
+        authorizeProducer(); var batch=batch(chat,mention()); producingService(true,critical()).evaluate(batch);
+        var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
+        var action=outbox.claimNext(clock.instant()); assertNotNull(action);
+        jdbc.execute("create function reject_test_real_cooldown() returns trigger language plpgsql as $$ begin if NEW.last_real_action_at is not null then raise exception 'test cooldown failure'; end if; return NEW; end $$");
+        jdbc.execute("create trigger reject_test_real_cooldown before update on decision_cooldowns for each row execute function reject_test_real_cooldown()");
+        try { assertThrows(RuntimeException.class,()->outbox.acknowledge(action,clock.instant())); }
+        finally { jdbc.execute("drop trigger reject_test_real_cooldown on decision_cooldowns"); jdbc.execute("drop function reject_test_real_cooldown()"); }
+        assertEquals("PROCESSING",jdbc.queryForObject("select status from outbox_actions where id=?",String.class,action.id()));
+        assertNull(jdbc.queryForObject("select last_real_action_at from decision_cooldowns where chat_jid=?",java.sql.Timestamp.class,chat));
+        assertTrue(outbox.acknowledge(action,clock.instant())); assertFalse(outbox.acknowledge(action,clock.instant()));
+    }
+    private void assertFutureDecisionBlocked() {
+        var next=producingService(true,critical()).evaluate(batch(chat,mention()));
+        assertFalse(next.realActionAllowed()); assertEquals("real_cooldown",next.realBlockedReason());
+        assertEquals(1,countActions()); assertEquals(1,countAlerts());
+    }
+    private void dispatchWhatsApp(dev.hugo.watcher.notification.EvolutionSendResult result) {
+        var actions=new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
+        new dev.hugo.watcher.notification.WhatsAppActionDispatcher(jdbc,manager,actions,(jid,body,key)->result,clock,true).dispatchNext();
+    }
+    private int sendTelegram(dev.hugo.watcher.TelegramDeliveryResult result) {
+        var count=new AtomicInteger(); var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
+        var alerts=new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,outbox,clock,true,"owner@s.whatsapp.net");
+        var properties=new WatcherProperties(); properties.setTelegramBotToken("fake"); properties.setTelegramChatId(123L);
+        new dev.hugo.watcher.NotificationService(jdbc,manager,outbox,text->{count.incrementAndGet();return result;},
+                new dev.hugo.watcher.TelegramMessageFormatter(),properties,clock,new dev.hugo.watcher.ArchiveModeService(jdbc,manager),alerts).flush(clock.instant());
+        return count.get();
     }
     private void authorizeProducer() {
         jdbc.update("update automation_settings set auto_reply_enabled=true,intelligent_alerts_enabled=true,simulation_cooldown_seconds=0,real_cooldown_seconds=0");

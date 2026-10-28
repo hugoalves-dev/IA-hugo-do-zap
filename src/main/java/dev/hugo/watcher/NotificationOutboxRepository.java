@@ -113,12 +113,27 @@ public class NotificationOutboxRepository {
 
     public boolean acknowledge(OutboxAction action, Instant now) {
         return Boolean.TRUE.equals(transactions.execute(status -> {
-            int updated = jdbc.update("""
+            // RETURNING uses the stored immutable key, never a caller/model-supplied payload.
+            List<String> acknowledged = jdbc.query("""
                     update outbox_actions set status='ACKNOWLEDGED',payload='{}'::jsonb,pending_snapshot='[]'::jsonb,
                         sensitive_expires_at=?,lease_token=null,lease_expires_at=null,last_error=null,updated_at=?
                     where id=? and status='PROCESSING' and lease_token=?::uuid
-                    """, Timestamp.from(now), Timestamp.from(now), action.id(), action.leaseToken());
-            if (updated != 1) return false;
+                    returning action_type,action_key
+                    """, (rs,row) -> rs.getString("action_type") + "\n" + rs.getString("action_key"),
+                    Timestamp.from(now), Timestamp.from(now), action.id(), action.leaseToken());
+            if (acknowledged.isEmpty()) return false;
+            String stored = acknowledged.getFirst();
+            if (stored.startsWith("intelligent_alert\nintelligent_alert:")) {
+                UUID decisionId = UUID.fromString(stored.substring("intelligent_alert\nintelligent_alert:".length()));
+                jdbc.update("""
+                        insert into decision_cooldowns(chat_jid,participant_jid,last_real_action_at,last_real_decision_id)
+                        select chat_jid,'',?,batch_id from simulation_batches where batch_id=?
+                        on conflict(chat_jid,participant_jid) do update
+                        set last_real_action_at=excluded.last_real_action_at,last_real_decision_id=excluded.last_real_decision_id
+                        where decision_cooldowns.last_real_action_at is null
+                           or decision_cooldowns.last_real_action_at<=excluded.last_real_action_at
+                        """, Timestamp.from(now),decisionId);
+            }
             if ("archived_messages".equals(action.actionType())) clearIfUnchanged(action.pendingSnapshot());
             return true;
         }));

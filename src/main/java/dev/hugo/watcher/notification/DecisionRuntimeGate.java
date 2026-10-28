@@ -39,7 +39,8 @@ public final class DecisionRuntimeGate {
                   and a.ai_classification_enabled and not a.kill_switch_enabled and d.real_action_allowed
                   and d.production_mode and d.decision_state='WOULD_ACT' and d.classification_status='CLASSIFIED'
                   and d.classification_confidence>=0.65 and e.result is not null
-                  and (cooldown.last_real_action_at is null or cooldown.last_real_action_at + a.real_cooldown_seconds * interval '1 second' <= ?)
+                  and (cooldown.last_real_action_at is null or cooldown.last_real_decision_id=d.batch_id
+                      or cooldown.last_real_action_at + a.real_cooldown_seconds * interval '1 second' <= ?)
                   and (s.mode='ALL' or (c.synchronized_snapshot and c.archived is not null and
                       ((s.mode='ARCHIVED_ONLY' and c.archived) or (s.mode='UNARCHIVED_ONLY' and not c.archived))))
                 """,(rs,row)->new Context(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getDouble(5),rs.getString(6),rs.getString(7)),id,Timestamp.from(now),Timestamp.from(now),Timestamp.from(now));
