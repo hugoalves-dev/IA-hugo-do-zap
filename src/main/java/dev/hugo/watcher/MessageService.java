@@ -50,7 +50,6 @@ public class MessageService {
         this(jdbc, manager, identities, properties, archiveModes, debounce, new WatcherSimulationProperties());
     }
 
-    @Autowired
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                           IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
                           DebounceService debounce, WatcherSimulationProperties simulationProperties) {
