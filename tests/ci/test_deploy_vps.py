@@ -285,17 +285,10 @@ class DeployScriptTest(unittest.TestCase):
             return "/" + drive[0].lower() + tail.replace("\\", "/")
         return str(path).replace("\\", "/")
 
-    def _deploy_args(self, image, expected_sha=None, mode="deploy"):
-        return [
-            self.bash,
-            str(SCRIPT),
-            base64.b64encode(os.fsencode(self._bash_path(self.deploy_dir))).decode("ascii"),
-            base64.b64encode(image.encode("ascii")).decode("ascii"),
-            expected_sha or self._compose_sha(),
-            mode,
-        ]
+    def _deploy_args(self):
+        return [self.bash, str(SCRIPT)]
 
-    def _deploy_env(self, **extra_env):
+    def _deploy_env(self, image=None, expected_sha=None, mode="deploy", **extra_env):
         env = os.environ.copy()
         env.update(
             {
@@ -308,11 +301,34 @@ class DeployScriptTest(unittest.TestCase):
                 "BASH_ENV": self._bash_path(self.bash_env),
             }
         )
+        if image is not None:
+            env.update(
+                {
+                    "VPS_DEPLOY_DIR_B64": base64.b64encode(
+                        os.fsencode(self._bash_path(self.deploy_dir))
+                    ).decode("ascii"),
+                    "IMAGE_REF_B64": base64.b64encode(image.encode("ascii")).decode("ascii"),
+                    "COMPOSE_SHA256": expected_sha or self._compose_sha(),
+                    "DEPLOY_MODE": mode,
+                }
+            )
         env.update(extra_env)
         for name in ("FAKE_UP_STARTED", "FAKE_UP_RELEASE", "FAKE_PROMOTION_STARTED", "FAKE_PROMOTION_RELEASE", "FAKE_PROMOTION_FINISHED"):
             if name in env:
                 env[name] = self._bash_path(Path(env[name]))
         return env
+
+    def test_deploy_script_receives_the_action_environment_contract(self):
+        env = self._deploy_env(NEW_IMAGE)
+
+        self.assertEqual([self.bash, str(SCRIPT)], self._deploy_args())
+        self.assertEqual(
+            base64.b64encode(os.fsencode(self._bash_path(self.deploy_dir))).decode("ascii"),
+            env["VPS_DEPLOY_DIR_B64"],
+        )
+        self.assertEqual(base64.b64encode(NEW_IMAGE.encode("ascii")).decode("ascii"), env["IMAGE_REF_B64"])
+        self.assertEqual(self._compose_sha(), env["COMPOSE_SHA256"])
+        self.assertEqual("deploy", env["DEPLOY_MODE"])
 
     def _wait_for_path(self, path, exists, timeout=10, process=None):
         deadline = time.monotonic() + timeout
@@ -329,9 +345,9 @@ class DeployScriptTest(unittest.TestCase):
 
     def _run_deploy(self, image, expected_sha=None, mode="deploy", wait_for_lock_release=True, **extra_env):
         result = subprocess.run(
-            self._deploy_args(image, expected_sha, mode),
+            self._deploy_args(),
             cwd=self.root,
-            env=self._deploy_env(**extra_env),
+            env=self._deploy_env(image, expected_sha, mode, **extra_env),
             text=True,
             capture_output=True,
             timeout=30,
@@ -342,9 +358,9 @@ class DeployScriptTest(unittest.TestCase):
 
     def _spawn_deploy(self, image, mode="deploy", **extra_env):
         return subprocess.Popen(
-            self._deploy_args(image, mode=mode),
+            self._deploy_args(),
             cwd=self.root,
-            env=self._deploy_env(**extra_env),
+            env=self._deploy_env(image, mode=mode, **extra_env),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
