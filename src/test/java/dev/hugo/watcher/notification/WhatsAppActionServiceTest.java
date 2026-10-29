@@ -32,6 +32,7 @@ class WhatsAppActionServiceTest {
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         Flyway.configure().dataSource(source).load().migrate();
         jdbc = new JdbcTemplate(source);
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
         tx = new DataSourceTransactionManager(source);
         jdbc.update("delete from decision_delivery_attempts");
         jdbc.update("delete from decision_delivery_claims");
@@ -68,7 +69,7 @@ class WhatsAppActionServiceTest {
         assertFalse(service(true).enqueue(decisionId).accepted());
         assertEquals(0, actionCount());
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','task4_test',1)", "15551234567@s.whatsapp.net");
-        jdbc.update("update automation_settings set kill_switch_enabled=true where singleton_id=1");
+        jdbc.update("update operational_restrictions set emergency_latched=true where singleton_id=1");
         assertFalse(service(true).enqueue(decisionId).accepted());
         assertEquals(0, actionCount());
     }
@@ -262,7 +263,10 @@ class WhatsAppActionServiceTest {
         assertEquals(0, actionCount());
     }
 
-    private WhatsAppActionService service(boolean enabled) { return new WhatsAppActionService(jdbc, tx, Clock.fixed(now, ZoneOffset.UTC), enabled); }
+    private WhatsAppActionService service(boolean enabled) {
+        var service = new WhatsAppActionService(jdbc, tx, Clock.fixed(now, ZoneOffset.UTC), enabled);
+        service.configureRuntimeGate(dev.hugo.watcher.TestOperational.gate(jdbc,Clock.fixed(now,ZoneOffset.UTC),"")); return service;
+    }
     private int actionCount() { return jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class); }
     private String status(UUID id) { return jdbc.queryForObject("select status from whatsapp_action_outbox where action_id=?", String.class, id); }
 }

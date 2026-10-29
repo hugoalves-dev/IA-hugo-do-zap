@@ -117,7 +117,8 @@ class SimulationServiceTest {
 
     @Test void engineDecisionAndReasonArePersistedWithoutTreatingRawMessageAsIntent() {
         String chat = "classified@s.whatsapp.net";
-        jdbc.update("update automation_settings set ai_classification_enabled=true, auto_reply_enabled=true where singleton_id=1");
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
+        simulations.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,?,?,?)",
                 chat, "CONTACT_REQUEST", "contact_request", 1);
         Batch batch = enqueueAndClaim(chat);

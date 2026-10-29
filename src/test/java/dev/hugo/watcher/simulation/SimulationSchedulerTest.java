@@ -58,6 +58,7 @@ class SimulationSchedulerTest {
         @Bean DebounceService debounceService() { return mock(DebounceService.class); }
         @Bean SimulationService simulationService() { return mock(SimulationService.class); }
         @Bean Clock clock() { return Clock.systemUTC(); }
+        @Bean dev.hugo.watcher.OperationalState operationalState() { return mock(dev.hugo.watcher.OperationalState.class); }
         @Bean JdbcTemplate jdbcTemplate() { return mock(JdbcTemplate.class); }
     }
 }

@@ -32,12 +32,14 @@ class AdminCommandServiceTest {
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         Flyway.configure().dataSource(source).load().migrate();
         jdbc = new JdbcTemplate(source);
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
         jdbc.update("delete from telegram_admin_audit");
         jdbc.update("delete from telegram_admin_callback_tokens");
         jdbc.update("delete from outbox_actions where action_type='telegram_admin_reply'");
         tokens = new CallbackTokenService(jdbc, clock);
         var outbox = new NotificationOutboxRepository(jdbc, new DataSourceTransactionManager(source));
         commands = new AdminCommandService(jdbc, new DataSourceTransactionManager(source), tokens, outbox, clock);
+        commands.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));
     }
 
     @Test void availabilityOverrideRequiresConfirmationAndExpires() {
@@ -57,11 +59,12 @@ class AdminCommandServiceTest {
         AdminResult result = commands.execute(command("emergencia", List.of(), false));
 
         assertTrue(result.accepted());
-        assertTrue(jdbc.queryForObject("select kill_switch_enabled from automation_settings where singleton_id=1", Boolean.class));
-        assertFalse(jdbc.queryForObject("select intelligent_alerts_enabled from automation_settings where singleton_id=1", Boolean.class));
-        assertFalse(jdbc.queryForObject("select auto_reply_enabled from automation_settings where singleton_id=1", Boolean.class));
-        assertFalse(jdbc.queryForObject("select ai_classification_enabled from automation_settings where singleton_id=1", Boolean.class));
-        assertEquals("emergencia", jdbc.queryForObject("select action from telegram_admin_audit order by id desc limit 1", String.class));
+        assertTrue(jdbc.queryForObject("select emergency_latched from operational_restrictions where singleton_id=1", Boolean.class));
+        assertTrue(commands.execute(command("recuperar", List.of(), false)).confirmationRequired());
+        assertTrue(jdbc.queryForObject("select emergency_latched from operational_restrictions where singleton_id=1", Boolean.class));
+        assertTrue(commands.execute(command("recuperar", List.of(), true)).accepted());
+        assertFalse(jdbc.queryForObject("select emergency_latched from operational_restrictions where singleton_id=1", Boolean.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='emergencia'", Integer.class));
     }
 
     @Test void menusExposePolicyTemplateHolidayAndBudgetControlsWithoutSecrets() {
@@ -75,16 +78,16 @@ class AdminCommandServiceTest {
     @Test void simulationToggleIsConfirmedAndReplyUsesTheDurableOutbox() {
         AdminResult pending = commands.execute(command("simulacao", List.of("off"), false));
         assertTrue(pending.confirmationRequired());
-        assertTrue(jdbc.queryForObject("select simulation_enabled from telegram_admin_settings where singleton_id=1", Boolean.class));
+        assertFalse(jdbc.queryForObject("select simulation_paused from operational_restrictions where singleton_id=1", Boolean.class));
 
         AdminResult changed = commands.execute(command("simulacao", List.of("off"), true));
 
         assertTrue(changed.accepted());
-        assertFalse(jdbc.queryForObject("select simulation_enabled from telegram_admin_settings where singleton_id=1", Boolean.class));
+        assertTrue(jdbc.queryForObject("select simulation_paused from operational_restrictions where singleton_id=1", Boolean.class));
         String payload = jdbc.queryForObject("select payload::text from outbox_actions where action_type='telegram_admin_reply' order by id desc limit 1", String.class);
         OutboxAction action = new OutboxAction(1, "fixture", "telegram_admin_reply", payload, "[]", 0,
                 clock.instant(), clock.instant().plusSeconds(60), null);
-        assertTrue(new TelegramMessageFormatter().format(action).contains("Simulação desligado."));
+        assertTrue(new TelegramMessageFormatter().format(action).contains("Simulação pausada."));
         assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='simulacao'", Integer.class));
     }
 

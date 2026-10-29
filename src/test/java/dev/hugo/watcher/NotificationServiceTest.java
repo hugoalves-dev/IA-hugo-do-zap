@@ -50,6 +50,7 @@ class NotificationServiceTest {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(dataSource);
         Flyway.configure().dataSource(dataSource).load().migrate();
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
         jdbc.update("delete from decision_delivery_attempts");
         jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
@@ -79,7 +80,12 @@ class NotificationServiceTest {
         };
         notifications = new NotificationService(jdbc, manager, outbox, fakeTelegram,
                 new TelegramMessageFormatter(), properties, clock, archiveModes,
-                new IntelligentAlertService(jdbc, manager, outbox, clock, true, "15550000000@s.whatsapp.net"));
+                configuredAlerts());
+    }
+
+    private IntelligentAlertService configuredAlerts() {
+        var alerts=new IntelligentAlertService(jdbc,manager,outbox,clock,true,"15550000000@s.whatsapp.net");
+        alerts.configureRuntimeGate(TestOperational.gate(jdbc,clock,"15550000000@s.whatsapp.net")); return alerts;
     }
 
     @Test void sendsAReadableTelegramSummaryAndAcknowledgesItsSnapshot() {
@@ -135,13 +141,14 @@ class NotificationServiceTest {
         jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",decisionId,UUID.randomUUID(),Timestamp.from(expires),
                 "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\"],\"available\":true,\"requestDetected\":true,\"status\":\"CLASSIFIED\",\"urgency\":\"HIGH\",\"confidence\":0.9}");
         var alerts = new IntelligentAlertService(jdbc, manager, outbox, clock, true, "15550000000@s.whatsapp.net");
+        alerts.configureRuntimeGate(TestOperational.gate(jdbc,clock,"15550000000@s.whatsapp.net"));
         var queued = alerts.enqueue(decisionId);
         assertTrue(queued.accepted());
         assertFalse(queued.action().payload().contains("RAW_TEST_SECRET"));
         jdbc.update("update outbox_actions set available_at=? where action_key=?",
                 Timestamp.from(now.minusSeconds(1)), "intelligent_alert:" + decisionId);
 
-        jdbc.update("update automation_settings set kill_switch_enabled=true where singleton_id=1");
+        jdbc.update("update operational_restrictions set emergency_latched=true where singleton_id=1");
         notifications.flush(now);
 
         assertEquals(0, requestCount.get());

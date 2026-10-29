@@ -127,7 +127,7 @@ class TelegramUpdatePollingServiceTest {
         var handler = new TelegramUpdateHandler(1001, 2002, commands, callbacks);
         jdbc.update("delete from availability_overrides");
         jdbc.update("delete from holiday_calendar");
-        jdbc.update("update automation_settings set kill_switch_enabled=false where singleton_id=1");
+        jdbc.update("update operational_restrictions set emergency_latched=false where singleton_id=1");
         TelegramUpdatesClient client = offset -> {
             if (offset == 0) return List.of(messageUpdate(0, "/ferias invalid 2026-12-31"));
             if (offset == 2) return List.of(messageUpdate(2, "/feriado 2026-99-99 BR https://fonte.invalid Teste"));
@@ -154,7 +154,7 @@ class TelegramUpdatePollingServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_callback_tokens where consumed_at is not null", Integer.class));
         polling.poll();
         assertEquals(5L, jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
-        assertEquals(true, jdbc.queryForObject("select kill_switch_enabled from automation_settings where singleton_id=1", Boolean.class));
+        assertEquals(true, jdbc.queryForObject("select emergency_latched from operational_restrictions where singleton_id=1", Boolean.class));
     }
 
     private Update messageUpdate(int updateId, String text) {

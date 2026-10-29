@@ -27,6 +27,7 @@ class AiSimulationAcceptanceTest {
     final Clock clock = Clock.systemUTC();
     final String chat = "consenting@s.whatsapp.net";
     AtomicInteger calls;
+    dev.hugo.watcher.AutomationProperties flags;
     @BeforeEach void setup() {
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         Flyway.configure().dataSource(source).load().migrate();
@@ -54,10 +55,13 @@ class AiSimulationAcceptanceTest {
         jdbc.update("update automation_settings set ai_classification_enabled=true,kill_switch_enabled=false,auto_reply_enabled=false,intelligent_alerts_enabled=false");
         consent("gemini"); consent("openrouter");
         calls = new AtomicInteger();
+        flags = new dev.hugo.watcher.AutomationProperties(); flags.setKillSwitchEnabled(false);
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
     }
     @Test void openRouterOnlyWorksWithoutGeminiCredentials() {
-        var settings = new AiClassificationProperties(true,null,null,"fake-router","fake-model",10,Duration.ofSeconds(1),null);
+        var settings = new AiClassificationProperties(true,null,null,"fake-router","fake-model",10,Duration.ofSeconds(1),null,true,false,true,false);
         var ai = new AiSimulationClassifier(jdbc,budgets,clock,settings,fake());
+        ai.configureOperationalState(state());
         assertTrue(ai.classify(batch()).available());
         assertEquals(1,calls.get());
     }
@@ -74,17 +78,17 @@ class AiSimulationAcceptanceTest {
     @Test void defaultOffAndKillSwitchPreventAllProviderCalls() {
         var batch = batch();
         assertFalse(classifier(false, fake()).classify(batch).available());
-        jdbc.update("update automation_settings set kill_switch_enabled=true");
+        jdbc.update("update operational_restrictions set emergency_latched=true");
         assertFalse(classifier(true, fake()).classify(batch).available());
         assertEquals(0, calls.get());
     }
     @Test void simulationClassifiesOutsideSqlTransactionAndReusesDurableResult() {
-        jdbc.update("update automation_settings set auto_reply_enabled=true,intelligent_alerts_enabled=true");
+        flags.setAutoReplyEnabled(true); flags.setIntelligentAlertsEnabled(true);
         jdbc.update("update response_templates set body='Resposta automática: retorno em breve.',enabled=true where template_id='contact_request'");
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)",chat);
         var ai = classifier(true, fake());
-        var service = new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
-                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai);
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
+                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai));
         var batch = batch();
         var decision = service.evaluate(batch);
         assertTrue(decision.wouldReply(),decision.toString()); assertTrue(decision.wouldAlert(),decision.toString());
@@ -95,12 +99,12 @@ class AiSimulationAcceptanceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'", Integer.class));
     }
     @Test void completeSimulationDecisionCanBindOnlyItsApprovedTemplateVersion() {
-        jdbc.update("update automation_settings set auto_reply_enabled=true,intelligent_alerts_enabled=false");
+        flags.setAutoReplyEnabled(true); flags.setIntelligentAlertsEnabled(false);
         jdbc.update("update response_templates set body='Resposta automática: aprovada.',enabled=true where template_id='contact_request' and version=1");
         jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('contact_request',2,'CONTACT_REQUEST','Resposta automática: nova.',true,true) on conflict do nothing");
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)", chat);
-        var service = new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
-                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), classifier(true, fake()));
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
+                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), classifier(true, fake())));
         var batch = batch();
         var decision = service.evaluate(batch);
         assertTrue(decision.realActionAllowed(), decision.toString());
@@ -150,7 +154,7 @@ class AiSimulationAcceptanceTest {
     }
     @Test void killSwitchBetweenSchemaAttemptsBlocksRetryAndDiscardsResult() {
         var ai = classifier(true,(request,timeout,max) -> {
-            calls.incrementAndGet(); jdbc.update("update automation_settings set kill_switch_enabled=true"); return openrouter("{}");
+            calls.incrementAndGet(); jdbc.update("update operational_restrictions set emergency_latched=true"); return openrouter("{}");
         });
         assertFalse(ai.classify(batch()).available()); assertEquals(1,calls.get());
         assertEquals("UNCERTAIN",jdbc.queryForObject("select status from ai_budget_reservations",String.class));
@@ -168,8 +172,8 @@ class AiSimulationAcceptanceTest {
     }
     @Test void decisionPersistenceFailureRecoversWithoutAnotherPaidAttempt() {
         var ai = classifier(true,fake());
-        var service = new SimulationService(jdbc,manager,clock,new WatcherSimulationProperties(),new DecisionEngine(),
-                new PersistedPolicyRepository(jdbc,new PolicyResolver()),new AvailabilityService(new HolidayService(jdbc)),new WatcherProperties(),ai);
+        var service = prepared(new SimulationService(jdbc,manager,clock,new WatcherSimulationProperties(),new DecisionEngine(),
+                new PersistedPolicyRepository(jdbc,new PolicyResolver()),new AvailabilityService(new HolidayService(jdbc)),new WatcherProperties(),ai));
         var batch = batch();
         jdbc.execute("create function reject_test_decision() returns trigger language plpgsql as $$ begin raise exception 'test persistence failure'; end $$");
         jdbc.execute("create trigger reject_test_decision before insert on simulation_decisions for each row execute function reject_test_decision()");
@@ -263,11 +267,12 @@ class AiSimulationAcceptanceTest {
     }
     @Test void aggregateTelegramReportAndDisabledEvolutionStayIsolatedFromShadowDecision() {
         var ai = classifier(true, fake());
-        var service = new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
-                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai);
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
+                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai));
         var batch = batch(); service.evaluate(batch);
         AtomicInteger evolution = new AtomicInteger();
         var actions = new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,false);
+        actions.configureRuntimeGate(gate());
         actions.enqueue(batch.id());
         new dev.hugo.watcher.notification.WhatsAppActionDispatcher(jdbc,manager,actions,
                 (jid,text,key) -> { evolution.incrementAndGet(); return dev.hugo.watcher.notification.EvolutionSendResult.unknown(); },clock,false).dispatchNext();
@@ -324,7 +329,7 @@ class AiSimulationAcceptanceTest {
         var incoming = new IncomingMessage(Optional.of("real-only-mode"), chat, Optional.empty(), Optional.empty(),
                 Optional.empty(), false, "notify", false, mention(), clock.instant().minusSeconds(60));
         assertEquals(dev.hugo.watcher.MessageService.Acceptance.ACCEPTED, messages.accept(incoming));
-        jdbc.update("update telegram_admin_settings set simulation_enabled=false where singleton_id=1");
+        jdbc.update("update operational_restrictions set simulation_paused=true");
         var scheduler = new SimulationScheduler(debounce, producingService(true, critical()), clock, jdbc, true);
 
         scheduler.processReady();
@@ -346,7 +351,8 @@ class AiSimulationAcceptanceTest {
                 Optional.empty(), false, "notify", false, mention(), clock.instant().minusSeconds(60));
         assertEquals(dev.hugo.watcher.MessageService.Acceptance.ACCEPTED, messages.accept(incoming));
 
-        new SimulationScheduler(debounce, producingService(false, critical()), clock, jdbc).processReady();
+        var scheduler = new SimulationScheduler(debounce, producingService(false, critical()), clock, jdbc);
+        scheduler.configureOperationalState(state()); scheduler.processReady();
 
         assertEquals(0, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from simulation_decisions", Integer.class));
@@ -390,10 +396,10 @@ class AiSimulationAcceptanceTest {
     @Test void providerKillSwitchPreventsProducerAndGroupWithoutStructuredTriggerNeverCallsModel() {
         authorizeProducer();
         producingService(true,(request,timeout,max) -> {
-            calls.incrementAndGet(); jdbc.update("update automation_settings set kill_switch_enabled=true"); return openrouter(valid());
+            calls.incrementAndGet(); jdbc.update("update operational_restrictions set emergency_latched=true"); return openrouter(valid());
         }).evaluate(batch(chat,mention()));
         assertEquals(0,countActions()); assertEquals(0,countAlerts());
-        jdbc.update("update automation_settings set kill_switch_enabled=false");
+        jdbc.update("update operational_restrictions set emergency_latched=false");
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('team@g.us','GROUP_TRIGGER','openrouter',true,now()+interval '1 day')");
         producingService(true, critical()).evaluate(batch("team@g.us",Map.of("conversation","@owner urgency")));
         assertEquals(1,calls.get()); assertEquals(0,countActions()); assertEquals(0,countAlerts());
@@ -411,7 +417,9 @@ class AiSimulationAcceptanceTest {
     @Test void pendingProducedWorkRevalidatesPrivacyScopeAndKillSwitchBeforeDelivery() {
         authorizeProducer(); var batch = batch(chat,mention()); producingService(true,critical()).evaluate(batch);
         var actions = new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
+        actions.configureRuntimeGate(gate());
         var alerts = new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager),clock,true,"owner@s.whatsapp.net");
+        alerts.configureRuntimeGate(gate());
         UUID id = jdbc.queryForObject("select action_id from whatsapp_action_outbox",UUID.class);
         var alert = alerts.enqueue(batch.id()).action();
         jdbc.update("update whatsapp_action_outbox set status='DISPATCHED'");
@@ -427,7 +435,7 @@ class AiSimulationAcceptanceTest {
         jdbc.update("update archive_monitor_settings set mode='ARCHIVED_ONLY'");
         assertNull(actions.revalidate(id,clock.instant())); assertFalse(alerts.revalidate(alert,clock.instant()));
         jdbc.update("update archive_monitor_settings set mode='ALL'");
-        jdbc.update("update automation_settings set kill_switch_enabled=true");
+        jdbc.update("update operational_restrictions set emergency_latched=true");
         assertNull(actions.revalidate(id,clock.instant())); assertFalse(alerts.revalidate(alert,clock.instant()));
     }
     @Test void personalReferenceUsesIndexedOwnerReplyWithoutAnyModelEvidence() {
@@ -446,9 +454,9 @@ class AiSimulationAcceptanceTest {
     }
     @Test void channelFlagsAndMissingConsentPreventProducerWork() {
         authorizeProducer();
-        jdbc.update("update automation_settings set auto_reply_enabled=false,intelligent_alerts_enabled=false");
+        flags.setAutoReplyEnabled(false); flags.setIntelligentAlertsEnabled(false);
         producingService(true,critical()).evaluate(batch(chat,mention()));
-        jdbc.update("update automation_settings set auto_reply_enabled=true,intelligent_alerts_enabled=true");
+        flags.setAutoReplyEnabled(true); flags.setIntelligentAlertsEnabled(true);
         jdbc.update("delete from ai_data_consents");
         producingService(true,critical()).evaluate(batch(chat,mention()));
         assertEquals(0,countActions()); assertEquals(0,countAlerts()); assertEquals(1,calls.get());
@@ -457,6 +465,7 @@ class AiSimulationAcceptanceTest {
         authorizeProducer(); var batch=batch(chat,mention());
         producingService(true,(request,timeout,max)->openrouter(valid().replace("NORMAL","HIGH"))).evaluate(batch);
         var alerts=new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager),clock,true,"owner@s.whatsapp.net");
+        alerts.configureRuntimeGate(gate());
         var action=alerts.enqueue(batch.id()).action();
         jdbc.update("update outbox_actions set status='PROCESSING'");
         assertTrue(alerts.revalidate(action,clock.instant()));
@@ -488,6 +497,7 @@ class AiSimulationAcceptanceTest {
         assertEquals(0,jdbc.queryForObject("select count(*) from decision_cooldowns where last_real_action_at is not null",Integer.class));
         producingService(true,critical()).evaluate(batch(chat,mention()));
         var actions=new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
+        actions.configureRuntimeGate(gate());
         new dev.hugo.watcher.notification.WhatsAppActionDispatcher(jdbc,manager,actions,(jid,body,key)->{throw new RuntimeException("fake timeout");},clock,true).dispatchNext();
         assertEquals("UNKNOWN",jdbc.queryForObject("select status from whatsapp_action_outbox",String.class));
         assertEquals(1,sendTelegram(dev.hugo.watcher.TelegramDeliveryResult.failure()));
@@ -519,7 +529,7 @@ class AiSimulationAcceptanceTest {
         assertTrue(outbox.acknowledge(action,clock.instant())); assertFalse(outbox.acknowledge(action,clock.instant()));
     }
     @Test void twoWorkersCannotDispatchDifferentDecisionsDuringSlowTelegramRequest() throws Exception {
-        authorizeProducer(); jdbc.update("update automation_settings set auto_reply_enabled=false,real_cooldown_seconds=3600");
+        authorizeProducer(); flags.setAutoReplyEnabled(false); jdbc.update("update automation_settings set real_cooldown_seconds=3600");
         producingService(true,critical()).evaluate(batch(chat,mention()));
         producingService(true,critical()).evaluate(batch(chat,mention()));
         var entered=new java.util.concurrent.CountDownLatch(1); var release=new java.util.concurrent.CountDownLatch(1);
@@ -606,6 +616,7 @@ class AiSimulationAcceptanceTest {
     private dev.hugo.watcher.NotificationService telegramService(dev.hugo.watcher.TelegramTransport transport) {
         var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
         var alerts=new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,outbox,clock,true,"owner@s.whatsapp.net");
+        alerts.configureRuntimeGate(gate());
         var properties=new WatcherProperties(); properties.setTelegramBotToken("fake"); properties.setTelegramChatId(123L);
         return new dev.hugo.watcher.NotificationService(jdbc,manager,outbox,transport,new dev.hugo.watcher.TelegramMessageFormatter(),properties,clock,new dev.hugo.watcher.ArchiveModeService(jdbc,manager),alerts);
     }
@@ -616,18 +627,20 @@ class AiSimulationAcceptanceTest {
     }
     private void dispatchWhatsApp(dev.hugo.watcher.notification.EvolutionSendResult result) {
         var actions=new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
+        actions.configureRuntimeGate(gate());
         new dev.hugo.watcher.notification.WhatsAppActionDispatcher(jdbc,manager,actions,(jid,body,key)->result,clock,true).dispatchNext();
     }
     private int sendTelegram(dev.hugo.watcher.TelegramDeliveryResult result) {
         var count=new AtomicInteger(); var outbox=new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager);
         var alerts=new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,outbox,clock,true,"owner@s.whatsapp.net");
+        alerts.configureRuntimeGate(gate());
         var properties=new WatcherProperties(); properties.setTelegramBotToken("fake"); properties.setTelegramChatId(123L);
         new dev.hugo.watcher.NotificationService(jdbc,manager,outbox,text->{count.incrementAndGet();return result;},
                 new dev.hugo.watcher.TelegramMessageFormatter(),properties,clock,new dev.hugo.watcher.ArchiveModeService(jdbc,manager),alerts).flush(clock.instant());
         return count.get();
     }
     private void authorizeProducer() {
-        jdbc.update("update automation_settings set auto_reply_enabled=true,intelligent_alerts_enabled=true,simulation_cooldown_seconds=0,real_cooldown_seconds=0");
+        flags.setAutoReplyEnabled(true); flags.setIntelligentAlertsEnabled(true); jdbc.update("update automation_settings set simulation_cooldown_seconds=0,real_cooldown_seconds=0");
         jdbc.update("update response_templates set body='Resposta automática: retorno em breve.',enabled=true,identifies_automation=true");
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1),(?,'CRITICAL_URGENCY','critical_urgency',1)",chat,chat);
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','openrouter',true,now()+interval '1 day')",chat);
@@ -635,16 +648,28 @@ class AiSimulationAcceptanceTest {
     private ProviderTransport critical() { return (request,timeout,max) -> { calls.incrementAndGet(); return openrouter(valid().replace("NORMAL","CRITICAL")); }; }
     private SimulationService producingService(boolean real, ProviderTransport transport) {
         var alerts = new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager),clock,true,"owner@s.whatsapp.net");
+        alerts.configureRuntimeGate(gate());
         var actions = new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
+        actions.configureRuntimeGate(gate());
         var producer = new dev.hugo.watcher.notification.DecisionActionProducer(jdbc, alerts, actions, real);
-        return new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
-                new PersistedPolicyRepository(jdbc,new PolicyResolver()),new AvailabilityService(new HolidayService(jdbc)),new WatcherProperties(),classifier(true,transport),producer);
+        return prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
+                new PersistedPolicyRepository(jdbc,new PolicyResolver()),new AvailabilityService(new HolidayService(jdbc)),new WatcherProperties(),classifier(true,transport),producer));
     }
     private int countActions() { return jdbc.queryForObject("select count(*) from whatsapp_action_outbox",Integer.class); }
     private int countAlerts() { return jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'",Integer.class); }
+    private dev.hugo.watcher.OperationalState state() {
+        var config = new AiClassificationProperties(true,null,null,"key","model",10,Duration.ofSeconds(1),"owner@s.whatsapp.net",true,false,true,false);
+        return new dev.hugo.watcher.OperationalState(jdbc,flags,config,new WatcherSimulationProperties(),true);
+    }
+    private SimulationService prepared(SimulationService service) { service.configureOperationalState(state()); return service; }
+    private dev.hugo.watcher.notification.DecisionRuntimeGate gate() {
+        var gate=new dev.hugo.watcher.notification.DecisionRuntimeGate(jdbc,clock,new WatcherProperties(),"owner@s.whatsapp.net");
+        gate.configureOperationalState(state()); return gate;
+    }
     private AiSimulationClassifier classifier(boolean enabled, ProviderTransport fake) {
-        return new AiSimulationClassifier(jdbc, budgets, clock,
-                new AiClassificationProperties(enabled,"fake-gemini","fake-model","fake-router","fake-model",10,Duration.ofSeconds(1),"owner@s.whatsapp.net"), fake);
+        var ai = new AiSimulationClassifier(jdbc, budgets, clock,
+                new AiClassificationProperties(enabled,"fake-gemini","fake-model","fake-router","fake-model",10,Duration.ofSeconds(1),"owner@s.whatsapp.net",true,false,true,false), fake);
+        ai.configureOperationalState(state()); return ai;
     }
     private ProviderTransport fake() { return (request, timeout, max) -> {
         assertFalse(TransactionSynchronizationManager.isActualTransactionActive()); calls.incrementAndGet(); return openrouter(valid());

@@ -39,10 +39,13 @@ class EnvironmentAiIntegrationTest {
     private AiSimulationClassifier classifier(AiClassificationProperties config, boolean kill) {
         ProviderTransport fake = (request, timeout, max) -> {
             calls.incrementAndGet();
-            return new ProviderTransport.Response(200, "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"CONTACT_REQUEST\\\",\\\"requestDetected\\\":true,\\\"urgency\\\":\\\"NORMAL\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}");
+            return validResponse();
         };
         var classifier = new AiSimulationClassifier(jdbc, budgets, clock, config, fake);
         classifier.configureOperationalState(state(config, kill)); return classifier;
+    }
+    private ProviderTransport.Response validResponse() {
+        return new ProviderTransport.Response(200, "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"CONTACT_REQUEST\\\",\\\"requestDetected\\\":true,\\\"urgency\\\":\\\"NORMAL\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}");
     }
     private Batch batch(Map<String,Object> content) {
         Instant now=clock.instant(); var debounce=new DebounceService(jdbc,new WatcherSimulationProperties());
@@ -91,7 +94,7 @@ class EnvironmentAiIntegrationTest {
     @Test void emergencyDuringProviderCallDiscardsResult() {
         var cfg=config(true,false); var ai=new AiSimulationClassifier(jdbc,budgets,clock,cfg,(request,timeout,max)->{
             calls.incrementAndGet(); jdbc.update("update operational_restrictions set emergency_latched=true");
-            return new ProviderTransport.Response(200,"{}");
+            return validResponse();
         });
         ai.configureOperationalState(state(cfg,false));
         assertFalse(ai.classify(batch(Map.of("conversation","Oi"))).available());
