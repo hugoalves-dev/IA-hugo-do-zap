@@ -164,10 +164,10 @@ class BackendWorkflowContractTest(unittest.TestCase):
             "WATCHER_AI_GEMINIAPIKEY",
             "WATCHER_AI_OPENROUTERAPIKEY",
             "WATCHER_AI_ENABLED",
-            "ai_data_consents",
-            "As migrações deixam o gate de classificação desligado, não criam consentimentos e não inserem limites",
-            "acionado somente após falha técnica do OpenRouter",
-            "Não há atualmente comando ou tela suportados para ligar `ai_classification_enabled`",
+            "WATCHER_AI_CLASSIFICATION_ENABLED",
+            "WATCHER_AI_DISABLE_LOCAL_BUDGET",
+            "WATCHER_AI_REQUIRE_CHAT_CONSENT",
+            "/emergencia",
         ):
             self.assertIn(required_text, readme)
 

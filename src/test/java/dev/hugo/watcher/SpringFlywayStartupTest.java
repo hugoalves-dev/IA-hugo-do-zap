@@ -35,7 +35,7 @@ class SpringFlywayStartupTest {
     @Autowired dev.hugo.watcher.ai.AiClassificationProperties ai;
 
     @Test void appliesFlywayMigrationsAutomaticallyDuringApplicationStartup() {
-        assertEquals("29", jdbc.queryForObject(
+        assertEquals("30", jdbc.queryForObject(
                 "select version from flyway_schema_history order by installed_rank desc limit 1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from ai_budget_limits", Integer.class));
         assertEquals(false, ai.enabled());
