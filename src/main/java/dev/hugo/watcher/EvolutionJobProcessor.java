@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /** Consumes durable webhook jobs; unknown event metadata is quarantined rather than inferred. */
 @Component
@@ -22,6 +23,12 @@ public class EvolutionJobProcessor {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final int MAX_JOBS_PER_PASS = 20;
     private static final Duration LEASE = Duration.ofMinutes(2);
+    private static final Set<String> EVOLUTION_LIVE_MESSAGE_TYPES = Set.of(
+            "conversation", "extendedTextMessage", "imageMessage", "videoMessage", "documentMessage",
+            "audioMessage", "stickerMessage", "contactMessage", "contactsArrayMessage",
+            "locationMessage", "liveLocationMessage", "ephemeralMessage",
+            "viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension",
+            "documentWithCaptionMessage");
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final JobRepository jobs;
@@ -121,7 +128,9 @@ public class EvolutionJobProcessor {
         JsonNode type = data.get("type");
         JsonNode fromMe = key == null ? null : key.get("fromMe");
         JsonNode message = data.get("message");
-        if (!"notify".equals(text(type)) || fromMe == null || !fromMe.isBoolean()
+        boolean liveMessage = "notify".equals(text(type))
+                || isFreshEvolutionUpsertWithoutBaileysType(type, data, message, event, now);
+        if (!liveMessage || fromMe == null || !fromMe.isBoolean()
                 || message == null || !message.isObject() || event.timestamp().isEmpty()
                 || event.jid().isEmpty()) {
             quarantine(event.externalId(), "unverified_message_metadata", now);
@@ -143,6 +152,30 @@ public class EvolutionJobProcessor {
                 "notify", false, content, event.timestamp().orElseThrow()));
         jobs.complete(job.id(), job.leaseToken());
         return ProcessResult.COMPLETED;
+    }
+
+    /**
+     * Evolution v2.3.7 emits message metadata (status/messageType) but not Baileys' upsert "type".
+     * Accept only a fresh, recognized message, never an explicit historical/append upsert.
+     * A delayed initial/history sync without a reliable live signal remains quarantined.
+     */
+    private static boolean isFreshEvolutionUpsertWithoutBaileysType(
+            JsonNode type, JsonNode data, JsonNode message, EvolutionEvent event, Instant now) {
+        if (type != null && !type.isNull()) return false;
+        if (data.path("isHistory").asBoolean(false) || data.path("history").asBoolean(false)) return false;
+
+        String status = text(data.get("status"));
+        if (!"DELIVERY_ACK".equals(status) && !"SERVER_ACK".equals(status)) return false;
+
+        String messageType = text(data.get("messageType"));
+        if (messageType == null || !EVOLUTION_LIVE_MESSAGE_TYPES.contains(messageType)
+                || message == null || !message.isObject()
+                || message.get(messageType) == null || message.get(messageType).isNull()
+                || event.timestamp().isEmpty()) return false;
+
+        Instant messageAt = event.timestamp().orElseThrow();
+        return !messageAt.isBefore(now.minus(Duration.ofMinutes(10)))
+                && !messageAt.isAfter(now.plus(Duration.ofMinutes(2)));
     }
 
     private enum ProcessResult { COMPLETED, EXPIRED, STALE_LEASE }

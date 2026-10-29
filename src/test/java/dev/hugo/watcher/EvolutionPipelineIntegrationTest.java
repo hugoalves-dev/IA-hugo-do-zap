@@ -119,6 +119,46 @@ class EvolutionPipelineIntegrationTest {
         assertTrue(TELEGRAM.lastMessage().contains("Olá"));
     }
 
+    @Test void evolutionV237FreshUpsertWithoutBaileysTypeIsProcessedAndDeduplicated() throws Exception {
+        String jid = "105342847439087@lid";
+        String alternate = "5511999998888@s.whatsapp.net";
+        String payload = evolutionLiveEvent("evolution-v237-live", jid, alternate, "Teste do webhook",
+                Instant.now().getEpochSecond());
+
+        assertEquals(202, post(payload).statusCode());
+        assertEquals(200, post(payload).statusCode());
+        jobs.processAvailable();
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from inbox_events", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from quarantined_events", Integer.class));
+        assertEquals("COMPLETED", jdbc.queryForObject("select status from processing_jobs", String.class));
+    }
+
+    @Test void missingBaileysTypeStillRejectsHistoryAppendStaleAndUnverifiedUpserts() throws Exception {
+        long current = Instant.now().getEpochSecond();
+        String jid = "5511999997777@s.whatsapp.net";
+        String base = evolutionLiveEvent("missing-type-test", jid, jid, "Teste", current);
+        String old = evolutionLiveEvent("stale-upsert", jid, jid, "Histórico antigo", current - 660);
+        String append = base.replace("\"missing-type-test\"", "\"explicit-append\"")
+                .replace("\"status\":\"DELIVERY_ACK\"", "\"type\":\"append\",\"status\":\"DELIVERY_ACK\"");
+        String history = base.replace("\"missing-type-test\"", "\"explicit-history\"")
+                .replace("\"status\":\"DELIVERY_ACK\"", "\"isHistory\":true,\"status\":\"DELIVERY_ACK\"");
+        String missingEvidence = base.replace("\"missing-type-test\"", "\"unverified-upsert\"")
+                .replace("\"status\":\"DELIVERY_ACK\"", "\"status\":\"UNKNOWN\"");
+
+        assertEquals(202, post(old).statusCode());
+        assertEquals(202, post(append).statusCode());
+        assertEquals(202, post(history).statusCode());
+        assertEquals(202, post(missingEvidence).statusCode());
+        jobs.processAvailable();
+
+        assertEquals(4, jdbc.queryForObject("select count(*) from quarantined_events where reason='unverified_message_metadata'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
     @Test void allModeAcceptsUnknownArchiveStateButFilteredModeQuarantinesIt() throws Exception {
         String jid = "5511888888888@s.whatsapp.net";
         assertEquals(202, post(event("unclassified", jid, "Tipo ausente").replace("\"type\":\"notify\",", "")).statusCode());
@@ -371,6 +411,16 @@ class EvolutionPipelineIntegrationTest {
                   "key":{"id":"%s","remoteJid":"%s","fromMe":false},
                   "messageTimestamp":1793008800,"message":{"conversation":"%s"}}}
                 """.formatted(id, jid, message);
+    }
+
+    private static String evolutionLiveEvent(String id, String jid, String alternate, String content, long timestamp) {
+        return """
+                {"event":"messages.upsert","instance":"pipeline-test","data":{
+                  "key":{"id":"%s","remoteJid":"%s","remoteJidAlt":"%s","fromMe":false},
+                  "status":"DELIVERY_ACK","messageType":"conversation",
+                  "messageTimestamp":%d,"source":"android",
+                  "message":{"conversation":"%s"}}}
+                """.formatted(id, jid, alternate, timestamp, content);
     }
 
     @TestConfiguration(proxyBeanMethods = false)
