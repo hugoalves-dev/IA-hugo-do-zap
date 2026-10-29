@@ -14,6 +14,7 @@ import java.util.List;
 
 @Component
 public class TelegramUpdateHandler {
+    private static final System.Logger LOG = System.getLogger(TelegramUpdateHandler.class.getName());
     private final long adminUserId;
     private final long privateChatId;
     private final AdminCommandService commands;
@@ -40,7 +41,7 @@ public class TelegramUpdateHandler {
         if (message == null) return AdminResult.rejected("Update não suportado.");
         User sender = message.from();
         Chat chat = message.chat();
-        if (!authorized(sender, chat)) return AdminResult.rejected("Acesso negado.");
+        if (!authorized(sender, chat)) return rejectUnauthorized();
         String text = message.text();
         if (text == null || text.isBlank() || !text.stripLeading().startsWith("/"))
             return queueUnknown();
@@ -53,7 +54,7 @@ public class TelegramUpdateHandler {
         User sender = callback.from();
         Message message = callback.message();
         Chat chat = message == null ? null : message.chat();
-        if (!authorized(sender, chat)) return AdminResult.rejected("Acesso negado.");
+        if (!authorized(sender, chat)) return rejectUnauthorized();
         try {
             CallbackAction action = tokens.consume(callback.data(), sender.id(), chat.id());
             return commands.execute(new AdminCommand(action.command(), action.arguments(), sender.id(), chat.id(), true));
@@ -76,6 +77,11 @@ public class TelegramUpdateHandler {
         return sender != null && chat != null && adminUserId > 0 && privateChatId > 0
                 && sender.id() != null && sender.id() == adminUserId
                 && chat.id() == privateChatId && isPrivate(chat.type());
+    }
+
+    private AdminResult rejectUnauthorized() {
+        LOG.log(System.Logger.Level.WARNING, "Telegram admin update rejected: unauthorized identity or chat");
+        return AdminResult.rejected("Acesso negado.");
     }
 
     private static boolean isPrivate(Chat.Type type) {
