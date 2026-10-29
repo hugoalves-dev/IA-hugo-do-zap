@@ -218,9 +218,9 @@ validate_model() {
     networks="$(compose_bootstrap_base config --networks | LC_ALL=C sort)" || return 1
   fi
 
-  [[ "$services" == $'evolution-api\nredis\nwatcher' ]] || return 1
+  [[ "$services" == $'evolution-api\nwatcher' ]] || return 1
   grep -Fxq 'evolution_instances' <<< "$volumes" || return 1
-  [[ "$networks" == $'evolution_backend\ninfra_network' ]] || return 1
+  [[ "$networks" == infra_network ]] || return 1
   [[ -z "$expected_image" || "$images" == "$expected_image" ]]
 }
 
@@ -397,7 +397,7 @@ reconcile_interrupted_deployment() {
 
 bootstrap_deploy() {
   local project_containers project_volumes project_networks existing_watchers
-  local expected_volume expected_internal_network network_name
+  local expected_volume network_name
   local config_environment
 
   bootstrap_project_name="${PWD##*/}"
@@ -434,10 +434,6 @@ bootstrap_deploy() {
   project_networks="$(docker network ls --quiet --filter "label=com.docker.compose.project=$bootstrap_project_name")" || \
     die "Cannot verify existing Docker networks for the bootstrap project."
   [[ -z "$project_networks" ]] || die "Bootstrap refuses to use an existing project network."
-  expected_internal_network="${bootstrap_project_name}_evolution_backend"
-  if docker network inspect "$expected_internal_network" >/dev/null 2>&1; then
-    die "Bootstrap refuses an existing evolution_backend network."
-  fi
   network_name="$(docker network inspect --format '{{.Name}}' infra_network)" || \
     die "The pre-existing infra_network is required for bootstrap."
   [[ "$network_name" == infra_network ]] || die "The required external infra_network could not be verified."

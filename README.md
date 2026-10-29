@@ -1,16 +1,16 @@
 # WhatsApp archived watcher
 
-Serviço Spring Boot 4 / Java 25 que recebe eventos da Evolution API, grava-os em PostgreSQL e envia notificações diretamente pela Telegram Bot API. A Evolution API usa outro banco e uma chave própria. Redis é uma dependência privada da Evolution e não tem porta publicada. A API Evolution só publica a porta do host em `127.0.0.1`; use túnel SSH autenticado para abrir o Manager.
+Serviço Spring Boot 4 / Java 25 que recebe eventos da Evolution API, grava-os em PostgreSQL e envia notificações diretamente pela Telegram Bot API. A Evolution API usa outro banco e uma chave própria. A Evolution utiliza cache local (sem container Redis) e mantém os dados persistentes no PostgreSQL e no volume de instâncias. A API Evolution só publica a porta do host em `127.0.0.1`; use túnel SSH autenticado para abrir o Manager.
 
-No fluxo VPS, o Compose usa o PostgreSQL já existente pela rede externa `infra_network`. Crie bancos e roles distintos para Spring e Evolution antes de uma implantação autorizada. A URL PostgreSQL da Evolution deve usar percent-encoding em senhas com caracteres reservados. Um profile `local-db` opcional fornece dois PostgreSQL isolados para desenvolvimento local; ele não substitui nem altera o PostgreSQL da VPS.
+No fluxo VPS, `COMPOSE_PROFILES=prod` ativa apenas `watcher` (imagem `ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest`) e `evolution-api`. O Compose usa o PostgreSQL já existente pela rede externa `infra_network`. Crie bancos e roles distintos para Spring e Evolution antes de uma implantação autorizada. A URL PostgreSQL da Evolution deve usar percent-encoding em senhas com caracteres reservados. Um profile `local-db` opcional fornece dois PostgreSQL isolados para desenvolvimento local; ele não substitui nem altera o PostgreSQL da VPS.
 
 O TypeScript legado permanece como referência e opção de rollback até o cutover ser validado. Ele implementa o watcher anterior baseado em Baileys; o Compose atual não compila nem inicia esse código. O runtime implantado é o serviço Spring Boot Java. Não remova o legado antes de validar o cutover e encerrar a janela de rollback.
 
 ## Preparação operacional
 
-1. Copie `.env.example` para `.env`, substitua cada valor `replace-*` e mantenha `.env` fora do Git. Não reutilize usuário, banco ou senha entre Spring e Evolution.
+1. Copie `.env.example` para `.env` (incluindo `COMPOSE_PROFILES=prod`), substitua cada valor `replace-*` e mantenha `.env` fora do Git. Um `.env` antigo não recebe automaticamente o novo profile. Não reutilize usuário, banco ou senha entre Spring e Evolution.
 2. Confirme que a rede Docker externa `infra_network` e os dois bancos PostgreSQL já existem.
-3. A imagem Evolution está fixada em `v2.3.7` e digest. Atualizações devem validar eventos e compatibilidade antes de trocar ambos. O Redis também está fixado por digest.
+3. A imagem Evolution está fixada em `v2.3.7` e digest. Atualizações devem validar eventos e compatibilidade antes de trocar ambos. O cache local é por processo e não é compartilhado entre réplicas; este Compose executa apenas uma Evolution API.
 4. Configure o webhook por instância na Evolution para `http://watcher:8080/internal/evolution/webhook`, com o cabeçalho `Authorization: Bearer <WATCHER_EVOLUTION_WEBHOOK_TOKEN>` e o mesmo identificador de instância de `WATCHER_EVOLUTION_INSTANCE`. Não habilite webhook global. A chave de API `EVOLUTION_API_KEY` é distinta do token do webhook.
 5. O serviço não cria sessão nem pareia automaticamente. Pareamento, validação do payload real, cutover e envio de notificações são passos operacionais separados e exigem autorização explícita.
 
@@ -33,17 +33,17 @@ Crie a rede externa exigida pelo Compose e inicie os dois bancos. Aguarde ambos 
 docker network inspect infra_network >/dev/null 2>&1 || docker network create infra_network >/dev/null
 docker compose --env-file .env.local --profile local-db up -d postgres-local-watcher postgres-local-evolution
 docker compose --env-file .env.local --profile local-db ps
-docker compose --env-file .env.local up -d --build watcher redis evolution-api
+docker compose --env-file .env.local up -d watcher evolution-api
 ```
 
 O profile pode ser validado sem iniciar containers com `docker compose --env-file .env.local --profile local-db config --quiet`. Na VPS, continue usando somente as URLs PostgreSQL externas, as roles dedicadas existentes e o deploy controlado descrito abaixo. Não passe `--profile local-db` na VPS.
 
 ## Conectar WhatsApp pessoal à Evolution
 
-O pareamento é sempre manual. O Compose inicia a API e Redis, mas não cria instância, não pede QR Code e não conecta a conta. A imagem fixada `evoapicloud/evolution-api:v2.3.7` inclui o Evolution Manager em `/manager`; a documentação oficial descreve `POST /instance/create` para criar instância e `GET /instance/connect/{instance}` para conectar e gerar QR Code ([criar instância](https://doc.evolution-api.com/v2/api-reference/instance-controller/create-instance-basic), [conectar](https://doc.evolution-api.com/v2/api-reference/instance-controller/instance-connect)). A versão da imagem está registrada no [release oficial v2.3.7](https://github.com/evolution-foundation/evolution-api/releases/tag/v2.3.7).
+O pareamento é sempre manual. O Compose inicia a API com cache local, mas não cria instância, não pede QR Code e não conecta a conta. A imagem fixada `evoapicloud/evolution-api:v2.3.7` inclui o Evolution Manager em `/manager`; a documentação oficial descreve `POST /instance/create` para criar instância e `GET /instance/connect/{instance}` para conectar e gerar QR Code ([criar instância](https://doc.evolution-api.com/v2/api-reference/instance-controller/create-instance-basic), [conectar](https://doc.evolution-api.com/v2/api-reference/instance-controller/instance-connect)). A versão da imagem está registrada no [release oficial v2.3.7](https://github.com/evolution-foundation/evolution-api/releases/tag/v2.3.7).
 
 1. Antes de trocar de cliente, revise a sessão TypeScript legada e planeje o cutover. Parear outro cliente pode desconectar uma sessão existente ou exigir novo vínculo. O estado de autenticação legado não é migrado pelo Compose; não copie arquivos de sessão entre Baileys e Evolution. Mantenha o rollback possível até validar a conexão e os eventos recebidos.
-2. Configure uma `EVOLUTION_API_KEY` forte e exclusiva no `.env` local. Inicie `docker compose --env-file .env up -d redis evolution-api`. As flags de envio real do watcher continuam `false`.
+2. Configure uma `EVOLUTION_API_KEY` forte e exclusiva no `.env` local. Inicie `docker compose --env-file .env up -d evolution-api`. As flags de envio real do watcher continuam `false`.
 3. Se a API estiver na VPS, abra um túnel SSH autenticado a partir da sua máquina: `ssh -N -L 8080:127.0.0.1:8080 usuario@host-vps` (inclua `-p PORTA` se necessário). A porta pública não deve ser aberta no firewall nem publicada no endereço da VPS. Em ambiente local, use o mesmo endereço sem túnel.
 4. Abra `http://localhost:8080/manager`, autentique com a chave global `EVOLUTION_API_KEY` e crie uma instância chamada `watcher-evolution` com integração `WHATSAPP-BAILEYS`. Gere uma chave própria da instância se o Manager solicitar. Não reutilize a chave global como token da instância.
 5. No Manager, solicite a conexão (`GET /instance/connect/watcher-evolution`) e exiba o QR Code recém-gerado. No telefone, abra **WhatsApp → Aparelhos conectados → Conectar aparelho** (Android) ou **WhatsApp → Configurações → Aparelhos conectados → Conectar aparelho** (iPhone) e escaneie o QR Code. QR Codes expiram; gere outro pelo Manager se necessário. Nunca publique, envie em chat ou registre captura do QR Code: ele autoriza vínculo da conta.
@@ -99,15 +99,16 @@ Para desligar as chamadas de IA via configuração, mantenha `WATCHER_AI_ENABLED
 
 O cliente usa [`java-telegram-bot-api` 10.3.0](https://github.com/pengrad/java-telegram-bot-api), projeto comunitário listado na [documentação do Telegram](https://core.telegram.org/bots/samples), sob licença Apache-2.0.
 
-O container Spring não publica porta no host. Spring e Evolution compartilham a rede externa `infra_network`; Redis fica somente na rede interna `evolution_backend`, sem acesso a partir do watcher ou do host. Os probes de liveness/readiness ficam em `/actuator/health/liveness` e `/actuator/health/readiness`; a readiness também verifica PostgreSQL. O healthcheck Docker consulta readiness e oculta detalhes. Mensagens e histórico não são persistidos pela configuração da Evolution (`DATABASE_SAVE_DATA_NEW_MESSAGE=false`, `DATABASE_SAVE_MESSAGE_UPDATE=false` e `DATABASE_SAVE_DATA_HISTORIC=false`).
+O container Spring não publica porta no host. Spring e Evolution compartilham a rede externa `infra_network`; a Evolution usa cache local (`CACHE_LOCAL_ENABLED=true`, `CACHE_REDIS_ENABLED=false`), sem Redis neste Compose. Os probes de liveness/readiness ficam em `/actuator/health/liveness` e `/actuator/health/readiness`; a readiness também verifica PostgreSQL. O healthcheck Docker consulta readiness e oculta detalhes. Mensagens e histórico não são persistidos pela configuração da Evolution (`DATABASE_SAVE_DATA_NEW_MESSAGE=false`, `DATABASE_SAVE_MESSAGE_UPDATE=false` e `DATABASE_SAVE_DATA_HISTORIC=false`).
 
 Depois da preparação e autorização operacional, o Compose pode ser validado sem iniciar containers:
 
 ```sh
 docker compose --env-file .env config --quiet
+docker compose --env-file .env config --services # evolution-api e watcher
 ```
 
-Uma execução local autorizada pode usar `docker compose --env-file .env up -d --build`. Para implantação na VPS, siga o fluxo controlado abaixo.
+Uma execução local autorizada pode usar `docker compose --env-file .env up -d`. Para construir a imagem localmente em vez de baixar a publicada, use `docker build -t ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest .` antes. Para implantação na VPS, siga o fluxo controlado abaixo.
 
 ## CI/CD e deploy controlado
 
@@ -137,7 +138,7 @@ services:
     pull_policy: never
 ```
 
-`bootstrap` exige um diretório, `.env` e `compose.yaml` isolados, sem serviço watcher, projeto Compose, volume do projeto, override ou journal anterior. Um lock vazio deixado por uma tentativa que falhou antes de iniciar containers pode ser reutilizado; locks ocupados/não vazios bloqueiam. O nome do diretório precisa ser um project name Docker válido e exclusivo. O job valida os três flags de envio real desligados e exige que Spring e Evolution usem o mesmo hostname/porta PostgreSQL normalizado (porta padrão `5432`), mas bancos e roles distintos. Ele rejeita query parameters, percent-encoding e caracteres não ASCII nesses identificadores, e hostnames diferentes; não faz conexão SQL de identidade. Se as URLs usam aliases DNS diferentes, o bootstrap falha fechado porque não prova que apontam ao mesmo servidor; configure o mesmo host canônico ou resolva a identidade externamente. Ele também exige a rede externa `infra_network`. O bootstrap inicia somente `watcher`, sem iniciar Evolution/Redis, e não remove recursos. Após readiness, salva o primeiro digest em `compose.override.yaml`.
+`bootstrap` exige um diretório, `.env` e `compose.yaml` isolados, sem serviço watcher, projeto Compose, volume do projeto, override ou journal anterior. Um lock vazio deixado por uma tentativa que falhou antes de iniciar containers pode ser reutilizado; locks ocupados/não vazios bloqueiam. O nome do diretório precisa ser um project name Docker válido e exclusivo. O job valida os três flags de envio real desligados e exige que Spring e Evolution usem o mesmo hostname/porta PostgreSQL normalizado (porta padrão `5432`), mas bancos e roles distintos. Ele rejeita query parameters, percent-encoding e caracteres não ASCII nesses identificadores, e hostnames diferentes; não faz conexão SQL de identidade. Se as URLs usam aliases DNS diferentes, o bootstrap falha fechado porque não prova que apontam ao mesmo servidor; configure o mesmo host canônico ou resolva a identidade externamente. Ele também exige a rede externa `infra_network`. O bootstrap inicia somente `watcher`, sem iniciar Evolution, e não remove recursos. Após readiness, salva o primeiro digest em `compose.override.yaml`.
 
 Falha antes de iniciar o serviço remove apenas o journal/candidato temporários e permite novo `bootstrap`. Falha depois do start preserva o container, `.compose.override.yaml.candidate` e `.watcher-bootstrap.journal`; outras execuções ficam bloqueadas para revisão. Inspecione o estado sem remover recursos, por exemplo com `docker compose --env-file .env -p <nome-do-diretório> -f compose.yaml -f .compose.override.yaml.candidate ps watcher`. Se o candidato estiver healthy e aprovado pelo operador, promova-o e limpe o journal sob o lock:
 

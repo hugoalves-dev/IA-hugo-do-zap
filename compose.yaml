@@ -1,9 +1,7 @@
 services:
   watcher:
+    profiles: ["prod"]
     image: ${WATCHER_IMAGE:-ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       SERVER_PORT: "8080"
@@ -54,6 +52,7 @@ services:
       retries: 3
 
   evolution-api:
+    profiles: ["prod"]
     image: ${EVOLUTION_IMAGE:?Set the official Evolution API image pinned by tag and digest}
     restart: unless-stopped
     environment:
@@ -71,34 +70,16 @@ services:
       DATABASE_SAVE_DATA_CHATS: "true"
       DATABASE_SAVE_DATA_LABELS: "false"
       DATABASE_SAVE_DATA_HISTORIC: "false"
-      CACHE_REDIS_ENABLED: "true"
-      CACHE_REDIS_URI: redis://redis:6379/1
-      CACHE_REDIS_PREFIX_KEY: watcher-evolution
+      CACHE_REDIS_ENABLED: "false"
       CACHE_REDIS_SAVE_INSTANCES: "false"
-      CACHE_LOCAL_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?Set the Evolution API key}
     ports:
       - "127.0.0.1:${EVOLUTION_HOST_PORT:-8080}:8080"
-    depends_on:
-      redis:
-        condition: service_healthy
     volumes:
       - evolution_instances:/evolution/instances
     networks:
       - infra_network
-      - evolution_backend
-
-  redis:
-    image: ${REDIS_IMAGE:?Set the Redis image pinned by tag and digest}
-    restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
-    networks:
-      - evolution_backend
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
   postgres-local-watcher:
     profiles: ["local-db"]
@@ -145,5 +126,3 @@ networks:
   infra_network:
     external: true
     name: infra_network
-  evolution_backend:
-    internal: true

@@ -135,7 +135,7 @@ case " $args " in
     if [[ -n "${FAKE_SERVICES:-}" ]]; then
       printf '%s\n' "$FAKE_SERVICES"
     else
-      printf 'watcher\nevolution-api\nredis\n'
+      printf 'watcher\nevolution-api\n'
     fi
     exit 0
     ;;
@@ -152,11 +152,11 @@ case " $args " in
     exit 0
     ;;
   *" config --networks "*)
-    printf 'evolution_backend\ninfra_network\n'
+    printf 'infra_network\n'
     exit 0
     ;;
   *" config --networks "*)
-    printf 'evolution_backend\ninfra_network\n'
+    printf 'infra_network\n'
     exit 0
     ;;
   *" config --images watcher "*)
@@ -237,13 +237,11 @@ class DeployScriptTest(unittest.TestCase):
             "      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/actuator/health/readiness]\n"
             "  evolution-api:\n"
             "    image: synthetic.invalid/evolution:v1\n"
-            "  redis:\n"
-            "    image: synthetic.invalid/redis:v1\n"
             "volumes:\n"
             "  evolution_instances:\n",
             encoding="utf-8",
         )
-        (self.deploy_dir / ".env").write_text("SYNTHETIC_SETTING=keep-me\n", encoding="utf-8")
+        (self.deploy_dir / ".env").write_text("COMPOSE_PROFILES=prod\nSYNTHETIC_SETTING=keep-me\n", encoding="utf-8")
         self.override_path = self.deploy_dir / "compose.override.yaml"
         self.override_path.write_text(render_override(OLD_IMAGE), encoding="utf-8")
         self.env_path = self.deploy_dir / ".env"
@@ -517,7 +515,7 @@ class DeployScriptTest(unittest.TestCase):
 
     def test_service_or_volume_drift_fails_before_up(self):
         cases = (
-            {"FAKE_SERVICES": "watcher\nevolution-api\nredis\nunrelated"},
+            {"FAKE_SERVICES": "watcher\nevolution-api\nunrelated"},
             {"FAKE_VOLUMES": "unexpected_volume"},
         )
         for overrides in cases:
@@ -633,9 +631,8 @@ class DeployScriptTest(unittest.TestCase):
             ("project container", None, None, {"FAKE_PROJECT_CONTAINERS": "container-id"}),
             ("existing watcher", None, None, {"FAKE_EXISTING_WATCHERS": "container-id"}),
             ("project volume", None, None, {"FAKE_PROJECT_VOLUMES": "app_evolution_instances"}),
-            ("project network", None, None, {"FAKE_PROJECT_NETWORKS": "app_evolution_backend"}),
+            ("project network", None, None, {"FAKE_PROJECT_NETWORKS": "app_unexpected"}),
             ("named volume", None, None, {"FAKE_EXISTING_VOLUME": "app_evolution_instances"}),
-            ("internal network", None, None, {"FAKE_EXISTING_PROJECT_NETWORK": "app_evolution_backend"}),
         )
         for label, path_name, content, env in cases:
             with self.subTest(label=label):

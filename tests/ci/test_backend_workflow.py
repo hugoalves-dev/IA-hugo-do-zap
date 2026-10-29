@@ -242,7 +242,7 @@ class BackendWorkflowContractTest(unittest.TestCase):
             "WATCHER_EVOLUTION_WEBHOOK_TOKEN": "synthetic-webhook-token",
             "EVOLUTION_API_KEY": "synthetic-evolution-api-key",
             "EVOLUTION_IMAGE": "evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339",
-            "REDIS_IMAGE": "redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952",
+            "COMPOSE_PROFILES": "prod",
             "WATCHER_AI_ENABLED": "true",
             "WATCHER_AI_GEMINIAPIKEY": "synthetic-gemini-key",
             "WATCHER_AI_GEMINIMODEL": "synthetic-gemini-model",
@@ -272,11 +272,12 @@ class BackendWorkflowContractTest(unittest.TestCase):
                 return json.loads(result.stdout)
 
             default = config()
-            self.assertEqual({"watcher", "evolution-api", "redis"}, set(default["services"]))
+            self.assertEqual({"watcher", "evolution-api"}, set(default["services"]))
             self.assertEqual("evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339", default["services"]["evolution-api"]["image"])
-            self.assertEqual("redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952", default["services"]["redis"]["image"])
-            self.assertNotIn("ports", default["services"]["redis"])
-            self.assertEqual("service_healthy", default["services"]["evolution-api"]["depends_on"]["redis"]["condition"])
+            self.assertEqual("false", default["services"]["evolution-api"]["environment"]["CACHE_REDIS_ENABLED"])
+            self.assertEqual("true", default["services"]["evolution-api"]["environment"]["CACHE_LOCAL_ENABLED"])
+            self.assertNotIn("depends_on", default["services"]["evolution-api"])
+            self.assertEqual("ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest", default["services"]["watcher"]["image"])
             self.assertEqual("127.0.0.1", default["services"]["evolution-api"]["ports"][0]["host_ip"])
             self.assertIn("postgres.synthetic.invalid", default["services"]["watcher"]["environment"]["SPRING_DATASOURCE_URL"])
             watcher_env = default["services"]["watcher"]["environment"]
