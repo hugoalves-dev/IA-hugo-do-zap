@@ -22,4 +22,13 @@ class OperationalMigrationTest {
         assertTrue(jdbc.queryForObject("select emergency_latched from operational_restrictions",Boolean.class));
         assertFalse(jdbc.queryForObject("select simulation_paused from operational_restrictions",Boolean.class));
     }
+    @Test void rejectedEmergencyDoesNotCreateLatch() {
+        var source=new DriverManagerDataSource(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword());
+        Flyway.configure().dataSource(source).schemas("rejected_emergency").target("29").load().migrate();
+        var jdbc=new JdbcTemplate(source);
+        jdbc.update("insert into rejected_emergency.telegram_admin_audit(action,outcome,actor_user_id,actor_chat_id,created_at) values ('emergencia','REJECTED',1,1,now())");
+        Flyway.configure().dataSource(source).schemas("rejected_emergency").load().migrate();
+        assertFalse(jdbc.queryForObject("select emergency_latched from rejected_emergency.operational_restrictions",Boolean.class));
+    }
+
 }
