@@ -283,7 +283,7 @@ class BackendWorkflowContractTest(unittest.TestCase):
             "WATCHER_AI_ENABLED",
             "ai_data_consents",
             "As migrações deixam o gate de classificação desligado, não criam consentimentos e não inserem limites",
-            "só é chamado após uma falha técnica do Gemini",
+            "acionado somente após falha técnica do OpenRouter",
             "Não há atualmente comando ou tela suportados para ligar `ai_classification_enabled`",
         ):
             self.assertIn(required_text, readme)
