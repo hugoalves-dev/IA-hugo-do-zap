@@ -67,6 +67,17 @@ class AdminCommandServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='emergencia'", Integer.class));
     }
 
+    @Test void statusReportsEffectiveEmergencyAndRecoveryRequiresConfirmation() {
+        assertTrue(commands.execute(command("status", List.of(), false)).message().contains("IA ligado"));
+        commands.execute(command("emergencia", List.of(), false));
+        String status=commands.execute(command("status", List.of(), false)).message();
+        assertTrue(status.contains("emergência ligado")); assertTrue(status.contains("IA desligado"));
+        commands.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));
+        assertTrue(commands.execute(command("status", List.of(), false)).message().contains("emergência ligado"));
+        assertTrue(commands.execute(command("recuperar", List.of(), false)).confirmationRequired());
+        assertTrue(commands.execute(command("status", List.of(), false)).message().contains("emergência ligado"));
+    }
+
     @Test void menusExposePolicyTemplateHolidayAndBudgetControlsWithoutSecrets() {
         assertTrue(commands.execute(command("perfis", List.of(), false)).message().contains("/perfil"));
         assertTrue(commands.execute(command("templates", List.of(), false)).message().contains("/template"));

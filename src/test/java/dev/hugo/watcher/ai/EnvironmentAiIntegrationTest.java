@@ -118,4 +118,17 @@ class EnvironmentAiIntegrationTest {
         assertEquals(0,calls.get());
     }
 
+    @Test void legacyValuesCannotOverrideDeclarativeActionFlagsOrKillSwitch() {
+        jdbc.update("update automation_settings set ai_classification_enabled=true,kill_switch_enabled=false,intelligent_alerts_enabled=true,auto_reply_enabled=true");
+        var flags=new AutomationProperties();
+        var state=new OperationalState(jdbc,flags,config(true,false),new WatcherSimulationProperties(),false);
+        assertTrue(state.killSwitch()); assertFalse(state.classification());
+        assertFalse(state.alerts()); assertFalse(state.replies());
+        flags.setKillSwitchEnabled(false);
+        assertFalse(state.alerts()); assertFalse(state.replies());
+        jdbc.update("update automation_settings set kill_switch_enabled=true,intelligent_alerts_enabled=false,auto_reply_enabled=false");
+        flags.setIntelligentAlertsEnabled(true); flags.setAutoReplyEnabled(true);
+        assertFalse(state.killSwitch()); assertTrue(state.alerts()); assertTrue(state.replies());
+    }
+
 }
