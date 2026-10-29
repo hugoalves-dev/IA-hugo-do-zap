@@ -32,6 +32,8 @@ public class AdminCommandService {
     private final NotificationOutboxRepository outbox;
     private final Clock clock;
     private final ReportService reports;
+    private dev.hugo.watcher.OperationalState operational;
+    @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
     @Autowired
     public AdminCommandService(JdbcTemplate jdbc, PlatformTransactionManager manager, CallbackTokenService tokens,
@@ -88,6 +90,7 @@ public class AdminCommandService {
             case "simulacao" -> setSimulation(args);
             case "relatorio" -> report();
             case "emergencia" -> emergency();
+            case "recuperar" -> recoverEmergency(args);
             case "perfis" -> profiles();
             case "perfil" -> setProfile(args);
             case "templates" -> templates();
@@ -102,22 +105,17 @@ public class AdminCommandService {
     }
 
     private String status() {
-        List<Status> rows = jdbc.query("""
-                select s.kill_switch_enabled,s.intelligent_alerts_enabled,s.auto_reply_enabled,
-                       a.simulation_enabled,o.state,o.expires_at
-                  from automation_settings s
-                  join telegram_admin_settings a on a.singleton_id=1
-                  left join availability_overrides o on o.singleton_id=1
-                 where s.singleton_id=1
-                """, (rs, row) -> new Status(rs.getBoolean(1), rs.getBoolean(2), rs.getBoolean(3), rs.getBoolean(4),
-                rs.getString(5), rs.getTimestamp(6) == null ? null : rs.getTimestamp(6).toInstant()));
-        if (rows.isEmpty()) return "Configuração administrativa ainda não foi inicializada.";
-        Status state = rows.getFirst();
+        if (operational == null) return "Configuração operacional indisponível.";
+        List<Status> rows = jdbc.query("select state,expires_at from availability_overrides where singleton_id=1",
+                (rs, row) -> new Status(rs.getString(1), rs.getTimestamp(2) == null ? null : rs.getTimestamp(2).toInstant()));
+        Status state = rows.isEmpty() ? new Status(null, null) : rows.getFirst();
         String override = state.overrideState() == null || state.overrideExpiresAt() == null
                 || !state.overrideExpiresAt().isAfter(clock.instant()) ? "sem override ativo"
                 : state.overrideState().toLowerCase() + " até " + state.overrideExpiresAt();
-        return "Estado: kill switch " + on(state.killSwitch()) + "; alertas reais " + on(state.alerts())
-                + "; respostas reais " + on(state.replies()) + "; simulação " + on(state.simulation()) + "; " + override + ".";
+        return "Estado: IA " + on(operational.classification()) + "; kill switch " + on(operational.killSwitch())
+                + "; emergência " + on(operational.emergency()) + "; alertas reais " + on(operational.alerts())
+                + "; respostas reais " + on(operational.replies()) + "; simulação " + on(operational.simulation())
+                + "; pausa de simulação " + on(operational.simulationPaused()) + "; " + override + ".";
     }
 
     private String setAvailability(AvailabilityState state, int minutes) {
@@ -153,8 +151,8 @@ public class AdminCommandService {
             case "off", "desligar" -> false;
             default -> throw new IllegalArgumentException("Use /simulacao on ou /simulacao off.");
         };
-        jdbc.update("update telegram_admin_settings set simulation_enabled=?,updated_at=? where singleton_id=1", enabled, Timestamp.from(clock.instant()));
-        return "Simulação " + on(enabled) + ".";
+        jdbc.update("update operational_restrictions set simulation_paused=?,updated_at=? where singleton_id=1", !enabled, Timestamp.from(clock.instant()));
+        return enabled ? "Pausa de simulação removida; o ambiente continua determinando se ela pode funcionar." : "Simulação pausada.";
     }
 
     private String report() {
@@ -173,11 +171,14 @@ public class AdminCommandService {
     }
 
     private String emergency() {
-        jdbc.update("""
-                update automation_settings set ai_classification_enabled=false,intelligent_alerts_enabled=false,
-                    auto_reply_enabled=false,kill_switch_enabled=true,updated_at=? where singleton_id=1
-                """, Timestamp.from(clock.instant()));
-        return "Emergência ativada: IA, alertas e respostas reais desligados pelo kill switch.";
+        jdbc.update("update operational_restrictions set emergency_latched=true,updated_at=? where singleton_id=1", Timestamp.from(clock.instant()));
+        return "Emergência ativada: IA, alertas e respostas bloqueados até recuperação explícita.";
+    }
+
+    private String recoverEmergency(List<String> args) {
+        if (!args.isEmpty()) throw new IllegalArgumentException("Use /recuperar e confirme a operação.");
+        jdbc.update("update operational_restrictions set emergency_latched=false,updated_at=? where singleton_id=1", Timestamp.from(clock.instant()));
+        return "Emergência desativada; os controles do ambiente continuam em vigor.";
     }
 
     private String profiles() {
@@ -284,7 +285,7 @@ public class AdminCommandService {
     }
 
     private static boolean isMutation(String name, List<String> args) {
-        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "perfil", "template", "feriado").contains(name)
+        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado").contains(name)
                 || (name.equals("orcamento") && !args.isEmpty());
     }
 
@@ -304,10 +305,9 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /emergencia, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
-    private record Status(boolean killSwitch, boolean alerts, boolean replies, boolean simulation, String overrideState,
-                          Instant overrideExpiresAt) { }
+    private record Status(String overrideState, Instant overrideExpiresAt) { }
     private record Budget(Long daily, Long monthly) { }
 }

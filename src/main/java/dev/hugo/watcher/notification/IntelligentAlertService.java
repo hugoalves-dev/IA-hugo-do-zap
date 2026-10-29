@@ -100,7 +100,6 @@ public class IntelligentAlertService {
                 select b.chat_jid,d.decision_state,d.real_action_allowed,d.would_alert,
                        d.classification_status,d.classification_urgency,d.classification_confidence,
                        d.intelligent_alert_reference_hash,d.intelligent_alert_enqueued,
-                       s.ai_classification_enabled,s.intelligent_alerts_enabled,s.kill_switch_enabled,
                        t.template_id,t.version,t.enabled,t.identifies_automation,t.body
                   from simulation_decisions d
                   join simulation_batches b on b.batch_id=d.batch_id
@@ -115,8 +114,7 @@ public class IntelligentAlertService {
                 rs.getBoolean("real_action_allowed"), rs.getBoolean("would_alert"),
                 rs.getString("classification_status"), rs.getString("classification_urgency"),
                 rs.getDouble("classification_confidence"), rs.getString("intelligent_alert_reference_hash"),
-                rs.getBoolean("intelligent_alert_enqueued"), rs.getBoolean("ai_classification_enabled"),
-                rs.getBoolean("intelligent_alerts_enabled"), rs.getBoolean("kill_switch_enabled"),
+                rs.getBoolean("intelligent_alert_enqueued"),
                 rs.getString("template_id"), rs.getInt("version"), rs.getBoolean("enabled"),
                 rs.getBoolean("identifies_automation"), rs.getString("body")), decisionId);
         if (contexts.isEmpty()) return null;
@@ -126,7 +124,6 @@ public class IntelligentAlertService {
                 || !("HIGH".equals(c.urgency()) || "CRITICAL".equals(c.urgency()))
                 || c.confidence() < 0.65 || c.referenceHash() == null || c.referenceHash().isBlank()
                 || c.enqueued() && !isOutboxAlreadyProcessing(decisionId)
-                || !c.aiEnabled() || !c.alertsEnabled() || c.killSwitchEnabled()
                 || !c.templateEnabled() || !c.identifiesAutomation()
                 || !c.templateBody().stripLeading().toLowerCase(java.util.Locale.ROOT).startsWith("resposta automática:")) return null;
         if (!c.referenceHash().matches("[0-9a-fA-F]{64}")) return null;
@@ -186,7 +183,7 @@ public class IntelligentAlertService {
 
     private record AlertContext(String chatJid, String decisionState, boolean realActionAllowed, boolean wouldAlert,
                                 String classificationStatus, String urgency, double confidence, String referenceHash,
-                                boolean enqueued, boolean aiEnabled, boolean alertsEnabled, boolean killSwitchEnabled,
+                                boolean enqueued,
                                 String templateId, int templateVersion, boolean templateEnabled,
                                 boolean identifiesAutomation, String templateBody) { }
     private record SourceMessage(String externalId, String chatJid, String payload) { }

@@ -42,6 +42,10 @@ class EvolutionWebhookControllerTest {
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
+        registry.add("watcher.ai.enabled", () -> "true");
+        registry.add("watcher.ai.classification-enabled", () -> "true");
+        registry.add("watcher.automation.kill-switch-enabled", () -> "false");
+        registry.add("watcher.automation.intelligent-alerts-enabled", () -> "true");
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);

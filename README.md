@@ -56,7 +56,7 @@ Configure `WATCHER_TELEGRAM_BOT_TOKEN` com o token fornecido pelo BotFather e `W
 
 ## Modos de simulação e ações reais
 
-Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`. A captura e o agendador ficam desligados quando o produtor real também está desligado. Com `WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=true`, a avaliação real continua mesmo com shadow desligado. O administrador pode pausar avaliações shadow por `telegram_admin_settings.simulation_enabled`; esse ajuste não bloqueia o produtor real. Com shadow e produtor real desligados, não há captura, avaliação nem novas ações.
+Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`. A captura e o agendador ficam desligados quando o produtor real também está desligado. Com `WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=true`, a avaliação real continua mesmo com shadow desligado. O administrador pode pausar avaliações shadow com `/simulacao off` e remover a pausa com `/simulacao on` (confirmado); o ambiente continua sendo a fonte de habilitação e a pausa não bloqueia o produtor real. Com shadow e produtor real desligados, não há captura, avaliação nem novas ações.
 
 Envio real exige opt-in explícito nas três variáveis abaixo. Todas começam em `false`, e as credenciais Evolution só são validadas quando os três opt-ins estão ligados:
 
@@ -69,7 +69,7 @@ WATCHER_WHATSAPP_ACTIONS_EVOLUTION_INSTANCE=watcher-evolution
 WATCHER_WHATSAPP_ACTIONS_EVOLUTION_API_KEY=replace-with-evolution-api-key
 ```
 
-Para ativar, ajuste explicitamente os três flags para `true`, informe URL HTTPS e credenciais válidas, e reinicie o serviço. Isso não ignora decisão elegível, consentimento/autorização explícita da conversa, template aprovado, política corrente nem o kill switch persistido `automation_settings.kill_switch_enabled`. Shadow e envio real são independentes: desligar shadow não ativa envio real, e ligar shadow não ativa envio real.
+Para ativar, ajuste explicitamente os três flags para `true`, informe URL HTTPS e credenciais válidas, e reinicie o serviço. Isso não ignora decisão elegível, consentimento/autorização explícita da conversa, template aprovado, política corrente nem o kill switch do ambiente e a trava persistente de emergência. Shadow e envio real são independentes: desligar shadow não ativa envio real, e ligar shadow não ativa envio real.
 
 Uma resposta HTTP 2xx da Evolution significa apenas que a API aceitou a requisição. Sem recibo autenticado de entrega, o resultado permanece `UNKNOWN`, não há reenvio automático, e o estado não deve ser tratado como confirmação de entrega.
 
@@ -79,6 +79,13 @@ As credenciais ficam no `.env` privado da VPS ou na cópia `.env.local`; nunca a
 
 ```dotenv
 WATCHER_AI_ENABLED=false
+WATCHER_AI_CLASSIFICATION_ENABLED=false
+WATCHER_AI_DISABLE_LOCAL_BUDGET=false
+WATCHER_AI_REQUIRE_CHAT_CONSENT=true
+WATCHER_AI_ALLOW_UNBUDGETED_GEMINI_FALLBACK=false
+WATCHER_AUTOMATION_KILL_SWITCH_ENABLED=true
+WATCHER_AUTOMATION_INTELLIGENT_ALERTS_ENABLED=false
+WATCHER_AUTOMATION_AUTO_REPLY_ENABLED=false
 WATCHER_AI_GEMINIAPIKEY=
 WATCHER_AI_GEMINIMODEL=
 WATCHER_AI_OPENROUTERAPIKEY=
@@ -87,15 +94,13 @@ WATCHER_AI_ATTEMPTHOLDMICROS=0
 WATCHER_AI_TIMEOUT=15s
 ```
 
-`WATCHER_AI_ENABLED` é o único flag de configuração para os provedores e fica `false` por padrão. Para habilitar a configuração de IA, seria necessário ligá-lo, preencher uma chave e um identificador de modelo OpenRouter, configurar `WATCHER_AI_ATTEMPTHOLDMICROS` com valor positivo e manter o timeout maior que zero e no máximo 30 segundos. Guarde somente chaves reais no `.env` privado e reinicie o container para aplicar mudanças.
+A classificação exige `WATCHER_AI_ENABLED=true` e `WATCHER_AI_CLASSIFICATION_ENABLED=true`, além de `WATCHER_AUTOMATION_KILL_SWITCH_ENABLED=false`, provedor válido e modo de processamento ativo. Os defaults são seguros: classificação desligada, kill switch ligado, alertas e respostas desligados. As quatro colunas antigas de `automation_settings` e `telegram_admin_settings.simulation_enabled` são preservadas como dados legados, mas não configuram esses comportamentos; não as altere para ativação. Mudanças no `.env` exigem recriar o watcher.
 
-OpenRouter é o provedor primário e exige chave e modelo quando IA estiver habilitada. O Google AI Studio/Gemini é fallback opcional quando chave e modelo estão preenchidos, acionado somente após falha técnica do OpenRouter (timeout, 408, 429 ou 5xx). Falhas de rota privada, autorização, configuração, resposta inválida ou resultado incerto não acionam Gemini. Cada tentativa exige consentimento específico por provedor e situação, reserva de orçamento independente e revalidação dos gates. Sem Gemini, o OpenRouter funciona sozinho.
+Por padrão, orçamento local e consentimento por conversa são obrigatórios. `WATCHER_AI_DISABLE_LOCAL_BUDGET=true` dispensa reservas e limites locais, deixando a quota para o provedor; `WATCHER_AI_REQUIRE_CHAT_CONSENT=false` dispensa os registros locais de consentimento. Eles são opt-ins separados. Com orçamento local ativo, `WATCHER_AI_ATTEMPTHOLDMICROS` deve ser positivo e cada tentativa reserva e reconcilia custos como antes. Gemini continua opcional; quando o orçamento local é dispensado, ele também exige `WATCHER_AI_ALLOW_UNBUDGETED_GEMINI_FALLBACK=true`. A quota OpenRouter não cobre a conta Gemini.
 
-Credenciais e esse flag, sozinhos, **não habilitam chamadas**. O pipeline também exige modo shadow ativo, `automation_settings.ai_classification_enabled=true`, consentimentos atuais na tabela `ai_data_consents` para o chat, provedor e propósito aplicáveis, e limites diários e mensais registrados em `ai_budget_limits`. As migrações deixam o gate de classificação desligado, não criam consentimentos e não inserem limites. A tabela de consentimento exige `privacy_approved=true` e `expires_at` futuro; os propósitos reconhecidos são `CONTACT_REQUEST`, `GROUP_TRIGGER` e `CRITICAL_URGENCY`.
+Com consentimento por chat dispensado e escopo `ALL`, texto minimizado de qualquer conversa elegível pode ser enviado ao provedor externo. Isso não equivale ao consentimento dos participantes. Restrinja o escopo e minimize dados conforme necessário. Limites no provedor podem diferir do ledger local por atrasos e regras de faturamento. Veja o [checklist de ativação](docs/local-ai-activation-checklist.md).
 
-O comando administrativo `/orcamento <diário-micros> <mensal-micros>` consulta ou atualiza os limites em micros de USD; alterações pedem `/confirm <token>`. Uma ausência de limite bloqueia chamadas pagas. Não há atualmente comando ou tela suportados para ligar `ai_classification_enabled` nem para conceder/revogar consentimentos por provedor. Por isso, o repositório ainda não oferece um procedimento operacional suportado para ativar IA paga de ponta a ponta; não trate os exemplos de configuração acima como autorização para uso.
-
-Para desligar as chamadas de IA via configuração, mantenha `WATCHER_AI_ENABLED=false` e reinicie o watcher. O comando `/emergencia` também desliga o gate de classificação persistido e ativa o kill switch, mas desliga junto alertas e respostas reais; não existe comando para reativar o gate de IA depois disso. Modo shadow, uso de IA e envio real de WhatsApp são controles distintos: IA não autoriza nem dispara envio real.
+O administrador autorizado pode executar `/emergencia` para bloquear imediatamente novas chamadas, alertas e respostas. A trava sobrevive ao reinício e a mudanças no `.env`. Para recuperar, use `/recuperar` no chat privado autorizado e confirme com o token fornecido; isso não altera os controles do ambiente. Uma requisição já enviada não pode ser recolhida, mas seu resultado é revalidado antes de persistir a decisão. `/status` mostra controles efetivos e a emergência. Shadow nunca autoriza envios reais.
 
 O cliente usa [`java-telegram-bot-api` 10.3.0](https://github.com/pengrad/java-telegram-bot-api), projeto comunitário listado na [documentação do Telegram](https://core.telegram.org/bots/samples), sob licença Apache-2.0.
 

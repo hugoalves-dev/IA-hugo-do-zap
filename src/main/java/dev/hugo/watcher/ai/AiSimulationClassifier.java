@@ -23,6 +23,8 @@ public final class AiSimulationClassifier {
     private final Clock clock;
     private final AiClassificationProperties properties;
     private final ProviderTransport transport;
+    private dev.hugo.watcher.OperationalState operational;
+    @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
     @Autowired public AiSimulationClassifier(JdbcTemplate jdbc, BudgetService budgets, Clock clock,
                                              AiClassificationProperties properties) {
@@ -38,7 +40,7 @@ public final class AiSimulationClassifier {
         if (TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("provider calls must run outside SQL transactions");
         if (!properties.configured() || !eligible(batch)) return Classification.unavailable();
-        Set<Situation> purposes = consents(batch.chatJid(), "openrouter");
+        Set<Situation> purposes = permittedPurposes(batch, "openrouter");
         purposes = contextualPurposes(batch, purposes);
         if (purposes.isEmpty()) return Classification.unavailable();
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
@@ -97,12 +99,16 @@ public final class AiSimulationClassifier {
             usedProvider.set(provider);
             return http.send(request, timeout, max);
         };
+        if (properties.disableLocalBudget()) return (request, timeout, max) -> {
+            if (!authorized(batch, provider, purposes)) throw ClassificationProviderException.authorizationDenied(provider);
+            return tracked.send(request, timeout, max);
+        };
         return new BudgetedProviderTransport(tracked, budgets, () -> authorized(batch, provider, purposes),
                 provider, properties.attemptHoldMicros(), clock);
     }
     private boolean authorized(Batch batch, String provider, Set<Situation> purposes) {
         return properties.configured() && eligible(batch)
-                && !purposes.isEmpty() && contextualPurposes(batch, consents(batch.chatJid(), provider)).containsAll(purposes);
+                && !purposes.isEmpty() && contextualPurposes(batch, permittedPurposes(batch, provider)).containsAll(purposes);
     }
     private Set<Situation> contextualPurposes(Batch batch, Set<Situation> consented) {
         boolean group = batch.chatJid().endsWith("@g.us");
@@ -113,15 +119,19 @@ public final class AiSimulationClassifier {
         if (mention && consented.contains(Situation.CRITICAL_URGENCY)) applicable.add(Situation.CRITICAL_URGENCY);
         return applicable;
     }
+    private Set<Situation> permittedPurposes(Batch batch, String provider) {
+        return properties.requireChatConsent() ? consents(batch.chatJid(), provider) : EnumSet.allOf(Situation.class);
+    }
     private Set<Situation> consents(String chat, String provider) {
         return new HashSet<>(jdbc.query("select situation from ai_data_consents where chat_jid=? and provider=? and privacy_approved=true and expires_at>?",
                 (rs, row) -> Situation.valueOf(rs.getString(1)), chat, provider, Timestamp.from(clock.instant())));
     }
     private boolean eligible(Batch batch) {
+        if (operational == null || !operational.classification()) return false;
         return Boolean.TRUE.equals(jdbc.queryForObject("""
-                select exists(select 1 from automation_settings a cross join archive_monitor_settings s
+                select exists(select 1 from archive_monitor_settings s
                     join simulation_batches b on b.batch_id=? left join chat_snapshot c on c.chat_jid=b.chat_jid
-                    where a.singleton_id=1 and s.singleton_id=1 and a.ai_classification_enabled and not a.kill_switch_enabled
+                    where s.singleton_id=1
                     and b.chat_jid=? and b.expires_at>? and b.status in ('CLAIMED','COMPLETED')
                     and (s.mode='ALL' or (c.synchronized_snapshot=true and c.archived is not null
                         and ((s.mode='ARCHIVED_ONLY' and c.archived) or (s.mode='UNARCHIVED_ONLY' and not c.archived)))))

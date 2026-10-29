@@ -30,6 +30,7 @@ class IntelligentAlertServiceTest {
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         Flyway.configure().dataSource(source).load().migrate();
         jdbc = new JdbcTemplate(source);
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
         var tx = new DataSourceTransactionManager(source);
         jdbc.update("delete from decision_delivery_attempts");
         jdbc.update("delete from decision_delivery_claims");
@@ -64,6 +65,7 @@ class IntelligentAlertServiceTest {
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','alert_test',1)", "15551234567@s.whatsapp.net");
         alerts = new IntelligentAlertService(jdbc, tx, new NotificationOutboxRepository(jdbc, tx),
                 Clock.fixed(now, ZoneOffset.UTC), true, OWNER_JID);
+        alerts.configureRuntimeGate(dev.hugo.watcher.TestOperational.gate(jdbc,Clock.fixed(now,ZoneOffset.UTC),OWNER_JID));
     }
 
     @Test void enqueuesOnlyAggregateAlertWithUrgencyAndPersistedObjectiveReference() {
@@ -89,7 +91,7 @@ class IntelligentAlertServiceTest {
         jdbc.update("delete from chat_automation_authorizations");
         assertFalse(alerts.enqueue(decisionId).accepted());
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','alert_test',1)", "15551234567@s.whatsapp.net");
-        jdbc.update("update automation_settings set kill_switch_enabled=true where singleton_id=1");
+        jdbc.update("update operational_restrictions set emergency_latched=true where singleton_id=1");
         assertFalse(alerts.enqueue(decisionId).accepted());
     }
 
@@ -105,7 +107,7 @@ class IntelligentAlertServiceTest {
         var action = alerts.enqueue(decisionId).action();
         jdbc.update("update outbox_actions set status='PROCESSING' where id=?", action.id());
         assertTrue(alerts.revalidate(action, now));
-        jdbc.update("update automation_settings set kill_switch_enabled=true where singleton_id=1");
+        jdbc.update("update operational_restrictions set emergency_latched=true where singleton_id=1");
         assertFalse(alerts.revalidate(action, now));
     }
 

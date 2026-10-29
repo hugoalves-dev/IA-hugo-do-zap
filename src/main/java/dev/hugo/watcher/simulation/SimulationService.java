@@ -40,6 +40,8 @@ public class SimulationService {
     private final WatcherProperties watcher;
     private final dev.hugo.watcher.ai.AiSimulationClassifier classifier;
     private final dev.hugo.watcher.notification.DecisionActionProducer producer;
+    private dev.hugo.watcher.OperationalState operational;
+    @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     @Autowired
@@ -168,11 +170,9 @@ public class SimulationService {
 
     private DecisionPolicy loadDecisionPolicy(Batch batch) {
         List<Settings> settings = jdbc.query("""
-                select ai_classification_enabled,intelligent_alerts_enabled,auto_reply_enabled,kill_switch_enabled,
-                       simulation_cooldown_seconds,real_cooldown_seconds
+                select simulation_cooldown_seconds,real_cooldown_seconds
                   from automation_settings where singleton_id=1
-                """, (rs, row) -> new Settings(rs.getBoolean(1), rs.getBoolean(2), rs.getBoolean(3), rs.getBoolean(4),
-                rs.getInt(5), rs.getInt(6)));
+                """, (rs, row) -> new Settings(rs.getInt(1), rs.getInt(2)));
         if (settings.isEmpty()) return DecisionPolicy.disabled();
         Settings current = settings.getFirst();
         EnumMap<Situation, ResponseTemplate> templates = new EnumMap<>(Situation.class);
@@ -194,8 +194,8 @@ public class SimulationService {
                 """, (rs, row) -> new Cooldowns(rs.getTimestamp(1) == null ? null : rs.getTimestamp(1).toInstant(),
                 rs.getTimestamp(2) == null ? null : rs.getTimestamp(2).toInstant()), batch.chatJid(), "");
         Cooldowns last = cooldowns.isEmpty() ? new Cooldowns(null, null) : cooldowns.getFirst();
-        return new DecisionPolicy(current.aiClassificationEnabled(), current.intelligentAlertsEnabled(), current.autoReplyEnabled(),
-                current.killSwitchEnabled(), templates.keySet(), templates, Duration.ofSeconds(current.simulationCooldownSeconds()),
+        return new DecisionPolicy(operational != null && operational.classification(), operational != null && operational.alerts(),
+                operational != null && operational.replies(), operational == null || operational.killSwitch(), templates.keySet(), templates, Duration.ofSeconds(current.simulationCooldownSeconds()),
                 Duration.ofSeconds(current.realCooldownSeconds()), last.simulationAt(), last.realAt());
     }
 
@@ -217,7 +217,6 @@ public class SimulationService {
     }
 
     private record Scope(ArchiveMode mode, Boolean archived, boolean synchronizedSnapshot) { }
-    private record Settings(boolean aiClassificationEnabled, boolean intelligentAlertsEnabled, boolean autoReplyEnabled,
-                            boolean killSwitchEnabled, int simulationCooldownSeconds, int realCooldownSeconds) { }
+    private record Settings(int simulationCooldownSeconds, int realCooldownSeconds) { }
     private record Cooldowns(Instant simulationAt, Instant realAt) { }
 }
