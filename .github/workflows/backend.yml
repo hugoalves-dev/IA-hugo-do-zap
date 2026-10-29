@@ -117,12 +117,7 @@ jobs:
       group: watcher-vps-deploy
       cancel-in-progress: false
     env:
-      SSH_KEY: ${{ secrets.SSH_KEY }}
-      SSH_PORT: ${{ secrets.SSH_PORT }}
-      VPS_IP: ${{ secrets.VPS_IP }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
-      VPS_DEPLOY_DIR: ${{ vars.VPS_DEPLOY_DIR }}
+      VPS_DEPLOY_DIR: ${{ vars.VPS_DEPLOY_DIR || '/docker/ia-hugo-do-zap' }}
       IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}
       DEPLOY: ${{ inputs.deploy }}
       BOOTSTRAP: ${{ inputs.bootstrap }}
@@ -134,9 +129,15 @@ jobs:
         id: compose
         run: echo "sha256=$(sha256sum compose.yaml | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy watcher by immutable image digest
+      - name: Validate SSH settings and derive host fingerprint
+        id: ssh
         shell: bash
         env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          VPS_IP: ${{ secrets.VPS_IP }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
           COMPOSE_SHA256: ${{ steps.compose.outputs.sha256 }}
         run: |
           set -euo pipefail
@@ -153,6 +154,16 @@ jobs:
             exit 1
           fi
 
+          if [[ ! "$VPS_DEPLOY_DIR" =~ ^/[A-Za-z0-9._/-]+$ || "$VPS_DEPLOY_DIR" == / || "$VPS_DEPLOY_DIR" == */ || "$VPS_DEPLOY_DIR" == *//* || "$VPS_DEPLOY_DIR" == */../* || "$VPS_DEPLOY_DIR" == */./* || "$VPS_DEPLOY_DIR" == */.. || "$VPS_DEPLOY_DIR" == */. ]]; then
+            echo "VPS_DEPLOY_DIR must be a safe, normalized absolute path." >&2
+            exit 1
+          fi
+
+          if [[ ! "$IMAGE_REF" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ || ! "$COMPOSE_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "IMAGE_REF and COMPOSE_SHA256 must be immutable SHA-256 values." >&2
+            exit 1
+          fi
+
           if [[ "$DEPLOY" == true && "$BOOTSTRAP" == true ]]; then
             echo "Select either deploy or bootstrap, not both." >&2
             exit 1
@@ -166,26 +177,52 @@ jobs:
           fi
 
           known_hosts_file="$RUNNER_TEMP/vps_known_hosts"
-          deploy_key_file="$RUNNER_TEMP/vps_deploy_key"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$known_hosts_file"
-          printf '%s\n' "$SSH_KEY" > "$deploy_key_file"
-          chmod 600 "$known_hosts_file" "$deploy_key_file"
+          chmod 600 "$known_hosts_file"
+          trap 'rm -f -- "$known_hosts_file"' EXIT
 
           known_host="$VPS_IP"
           if [[ "$SSH_PORT" != 22 ]]; then
             known_host="[$VPS_IP]:$SSH_PORT"
           fi
-          ssh-keygen -F "$known_host" -f "$known_hosts_file" >/dev/null
+          known_host_entries="$(ssh-keygen -F "$known_host" -f "$known_hosts_file")" || {
+            echo "VPS_KNOWN_HOSTS does not contain the configured VPS host and port." >&2
+            exit 1
+          }
+          mapfile -t host_keys < <(printf '%s\n' "$known_host_entries" | awk '!/^#/ && NF >= 3 { if ($1 ~ /^@/) print $3, $4; else print $2, $3 }' | sort -u)
+          if (( ${#host_keys[@]} != 1 )); then
+            echo "VPS_KNOWN_HOSTS must resolve to exactly one verified host public key." >&2
+            exit 1
+          fi
+          host_key_file="$RUNNER_TEMP/vps_host_key.pub"
+          printf '%s\n' "${host_keys[0]}" > "$host_key_file"
+          fingerprint="$(ssh-keygen -lf "$host_key_file" -E sha256 | awk '{print $2}')"
+          rm -f -- "$host_key_file"
+          [[ "$fingerprint" =~ ^SHA256:[A-Za-z0-9+/]+$ ]] || {
+            echo "Could not derive a valid SHA-256 host fingerprint." >&2
+            exit 1
+          }
 
           deploy_dir_b64="$(printf '%s' "$VPS_DEPLOY_DIR" | base64 --wrap=0)"
           image_ref_b64="$(printf '%s' "$IMAGE_REF" | base64 --wrap=0)"
+          printf 'VPS_DEPLOY_DIR_B64=%s\nIMAGE_REF_B64=%s\nCOMPOSE_SHA256=%s\nDEPLOY_MODE=%s\n' \
+            "$deploy_dir_b64" "$image_ref_b64" "$COMPOSE_SHA256" "$MODE" >> "$GITHUB_ENV"
+          printf 'fingerprint=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
 
-          ssh -p "$SSH_PORT" \
-            -i "$deploy_key_file" \
-            -o BatchMode=yes \
-            -o ConnectTimeout=30 \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$known_hosts_file" \
-            "$VPS_USER@$VPS_IP" \
-            "bash -s -- $deploy_dir_b64 $image_ref_b64 $COMPOSE_SHA256 $MODE" \
-            < scripts/deploy-vps.sh
+      - name: Deploy watcher by immutable image digest
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f
+        env:
+          VPS_DEPLOY_DIR_B64: ${{ env.VPS_DEPLOY_DIR_B64 }}
+          IMAGE_REF_B64: ${{ env.IMAGE_REF_B64 }}
+          COMPOSE_SHA256: ${{ env.COMPOSE_SHA256 }}
+          DEPLOY_MODE: ${{ env.DEPLOY_MODE }}
+        with:
+          host: ${{ secrets.VPS_IP }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          fingerprint: ${{ steps.ssh.outputs.fingerprint }}
+          version: 1.8.1
+          command_timeout: 15m
+          envs: VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_SHA256,DEPLOY_MODE
+          script_path: scripts/deploy-vps.sh

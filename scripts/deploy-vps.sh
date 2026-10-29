@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 set -euo pipefail
 
 die() {
@@ -6,18 +7,17 @@ die() {
   exit 1
 }
 
-if (( $# != 4 )); then
-  die "Expected encoded deploy directory, image digest, Compose SHA-256, and mode."
-fi
+deploy_dir_b64="${VPS_DEPLOY_DIR_B64:?VPS_DEPLOY_DIR_B64 is required.}"
+image_ref_b64="${IMAGE_REF_B64:?IMAGE_REF_B64 is required.}"
+expected_compose_sha256="${COMPOSE_SHA256:?COMPOSE_SHA256 is required.}"
+mode="${DEPLOY_MODE:?DEPLOY_MODE is required.}"
 
-deploy_dir="$(printf '%s' "$1" | base64 -d)"
-image_ref="$(printf '%s' "$2" | base64 -d)"
-expected_compose_sha256="$3"
-mode="$4"
+deploy_dir="$(printf '%s' "$deploy_dir_b64" | base64 -d)"
+image_ref="$(printf '%s' "$image_ref_b64" | base64 -d)"
 image_pattern='^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$'
 
-if [[ "$deploy_dir" != /* || "$deploy_dir" == / ]]; then
-  die "VPS_DEPLOY_DIR must be a non-root absolute path."
+if [[ ! "$deploy_dir" =~ ^/[A-Za-z0-9._/-]+$ || "$deploy_dir" == / || "$deploy_dir" == */ || "$deploy_dir" == *//* || "$deploy_dir" == */../* || "$deploy_dir" == */./* || "$deploy_dir" == */.. || "$deploy_dir" == */. ]]; then
+  die "VPS_DEPLOY_DIR must be a safe, normalized absolute path."
 fi
 if [[ ! "$image_ref" =~ $image_pattern ]]; then
   die "IMAGE_REF must be a GHCR image pinned by SHA-256 digest."

@@ -1,10 +1,21 @@
 from pathlib import Path
+import base64
+import os
 import re
+import shutil
+import subprocess
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "backend.yml"
+BASH_PATH = shutil.which("bash") or "bash"
+if os.name == "nt":
+    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+    if not git_bash.exists():
+        git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git" / "bin" / "bash.exe"
+    if git_bash.exists():
+        BASH_PATH = str(git_bash)
 
 
 class BackendWorkflowContractTest(unittest.TestCase):
@@ -51,7 +62,8 @@ class BackendWorkflowContractTest(unittest.TestCase):
         self.assertIn("inputs.deploy == true", deploy)
         self.assertIn("BOOTSTRAP", deploy)
         self.assertIn('if [[ "$DEPLOY" == true && "$BOOTSTRAP" == true ]]', deploy)
-        self.assertIn("$COMPOSE_SHA256 $MODE", deploy)
+        self.assertIn("COMPOSE_SHA256: ${{ env.COMPOSE_SHA256 }}", deploy)
+        self.assertIn("DEPLOY_MODE: ${{ env.DEPLOY_MODE }}", deploy)
         self.assertRegex(
             self.workflow,
             r"(?ms)^      bootstrap:\s*\n\s+description:.*\n\s+required: true\n\s+type: boolean\n\s+default: false",
@@ -71,9 +83,69 @@ class BackendWorkflowContractTest(unittest.TestCase):
         deploy = self.job("deploy-vps")
         for name in ("SSH_KEY", "SSH_PORT", "VPS_IP", "VPS_USER", "VPS_KNOWN_HOSTS"):
             self.assertIn(f"secrets.{name}", deploy)
-        self.assertIn("StrictHostKeyChecking=yes", deploy)
+        self.assertRegex(deploy, r"uses: appleboy/ssh-action@[0-9a-f]{40}")
+        self.assertIn("fingerprint:", deploy)
+        self.assertIn("version:", deploy)
+        self.assertIn("script_path: scripts/deploy-vps.sh", deploy)
+        action = deploy.split("uses: appleboy/ssh-action", maxsplit=1)[1]
+        self.assertNotIn("VPS_KNOWN_HOSTS", action)
+        self.assertNotIn("debug: true", action)
+        self.assertIn("!/^#/ && NF >= 3", deploy)
         self.assertNotIn("ssh-keyscan", deploy)
         self.assertNotIn("StrictHostKeyChecking=no", deploy)
+        self.assertNotIn("StrictHostKeyChecking=yes", deploy)
+
+    def test_deploy_script_uses_action_environment_and_fails_fast(self):
+        script = (ROOT / "scripts" / "deploy-vps.sh").read_text(encoding="utf-8")
+        self.assertTrue(script.startswith("#!/usr/bin/env bash\nset -e\nset -euo pipefail\n"))
+        self.assertIn('deploy_dir_b64="${VPS_DEPLOY_DIR_B64:?VPS_DEPLOY_DIR_B64 is required.}"', script)
+        self.assertIn('image_ref_b64="${IMAGE_REF_B64:?IMAGE_REF_B64 is required.}"', script)
+        self.assertIn('expected_compose_sha256="${COMPOSE_SHA256:?COMPOSE_SHA256 is required.}"', script)
+        self.assertIn('mode="${DEPLOY_MODE:?DEPLOY_MODE is required.}"', script)
+
+        completed = subprocess.run(
+            [BASH_PATH, "-s"],
+            input=script,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertNotIn("docker", completed.stderr)
+
+    def test_deploy_script_rejects_path_shell_metacharacters_before_remote_work(self):
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "VPS_DEPLOY_DIR_B64": base64.b64encode(b"/docker/app;touch-INJECTION-MUST-NOT-RUN").decode("ascii"),
+                "IMAGE_REF_B64": base64.b64encode(
+                    b"ghcr.io/hugoalves-dev/ia-hugo-do-zap@sha256:" + b"a" * 64
+                ).decode("ascii"),
+                "COMPOSE_SHA256": "b" * 64,
+                "DEPLOY_MODE": "deploy",
+            }
+        )
+        completed = subprocess.run(
+            [BASH_PATH, "-s"],
+            input=(ROOT / "scripts" / "deploy-vps.sh").read_text(encoding="utf-8"),
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("safe, normalized absolute path", completed.stderr)
+        self.assertNotIn("docker", completed.stderr)
+
+    def test_deploy_uses_base64_for_untrusted_directory_and_digest_values(self):
+        deploy = self.job("deploy-vps")
+        script = (ROOT / "scripts" / "deploy-vps.sh").read_text(encoding="utf-8")
+        self.assertIn("base64 --wrap=0", deploy)
+        self.assertIn("envs: VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_SHA256,DEPLOY_MODE", deploy)
+        self.assertIn("base64 -d", script)
+        self.assertIn("/docker/ia-hugo-do-zap", deploy)
+        self.assertIn("VPS_DEPLOY_DIR", deploy)
+        self.assertIn("..", script)
 
     def test_deploy_only_updates_watcher_without_global_cleanup(self):
         deploy = self.job("deploy-vps")

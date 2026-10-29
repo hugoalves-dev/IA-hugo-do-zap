@@ -55,9 +55,11 @@ Configure estes GitHub Actions repository secrets, sem valores padrão:
 - `SSH_PORT`: porta SSH da VPS.
 - `VPS_IP`: endereço usado na conexão SSH.
 - `VPS_USER`: conta SSH de deploy.
-- `VPS_KNOWN_HOSTS`: linha `known_hosts` correspondente a `VPS_IP` e `SSH_PORT`, com chave verificada por canal independente. Em porta diferente de 22, o host deve estar no formato `[VPS_IP]:SSH_PORT`.
+- `VPS_KNOWN_HOSTS`: uma linha `known_hosts` correspondente a `VPS_IP` e `SSH_PORT`, com chave verificada por canal independente. Em porta diferente de 22, o host deve estar no formato `[VPS_IP]:SSH_PORT`. O runner valida essa entrada e calcula o fingerprint SHA-256 enviado à `appleboy/ssh-action`; o conteúdo do secret não é passado à action nem impresso nos logs.
 
-Configure a repository variable `VPS_DEPLOY_DIR` com o caminho absoluto não raiz do diretório existente na VPS. Ele deve conter o `compose.yaml` byte a byte igual ao commit selecionado e o `.env` já configurado. O job exige ambos, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
+O diretório padrão é `/docker/ia-hugo-do-zap`. Opcionalmente, configure a repository variable `VPS_DEPLOY_DIR` para sobrescrevê-lo com outro caminho absoluto, normalizado e sem segmentos `.` ou `..`. O diretório precisa existir na VPS e conter o `compose.yaml` byte a byte igual ao commit selecionado e o `.env` já configurado. O job não cria diretórios, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
+
+O workflow envia `scripts/deploy-vps.sh` por `script_path` na [action oficial `appleboy/ssh-action`](https://github.com/appleboy/ssh-action), fixada por SHA de commit; `version: 1.8.1` fixa também o binário `drone-ssh`. Diretório e digest passam em variáveis base64 validadas no runner, reduzindo risco de injeção no transporte SSH. O script ativa `set -e` antes de `set -euo pipefail`, pois a action não oferece `script_stop`; um shell remoto incompatível falha fechado antes de acessar Docker.
 
 O digest aprovado fica em `compose.override.yaml`, separado do `.env`. O Compose carrega esse override automaticamente em comandos padrão como `docker compose up`; no diretório da VPS, não passe `-f compose.yaml` nem defina `COMPOSE_FILE` ou `COMPOSE_PROJECT_NAME`, pois esses valores podem ignorar o lock ou apontar a outro projeto. `pull_policy: never` faz os comandos padrão usarem o digest local aprovado e falharem, sem pull ou build alternativo, se ele não estiver em cache. No modo `deploy`, o operador fornece um lock para o digest saudável atual. No modo `bootstrap`, o destino não pode ter override; o workflow cria esse lock somente após o novo watcher ficar healthy.
 
