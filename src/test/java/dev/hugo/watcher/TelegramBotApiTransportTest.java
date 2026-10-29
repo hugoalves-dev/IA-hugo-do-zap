@@ -14,6 +14,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class TelegramBotApiTransportTest {
+    @Test void onlyLinkedNotificationsUseTelegramHtmlParseMode() {
+        var html = TelegramBotApiTransport.message(123L, "<a href=\"https://wa.me/5511999999999\">Contato</a>", true);
+        var plain = TelegramBotApiTransport.message(123L, "texto <sem markup>", false);
+        assertEquals(com.pengrad.telegrambot.model.request.ParseMode.HTML, html.getParameters().get("parse_mode"));
+        assertFalse(plain.getParameters().containsKey("parse_mode"));
+    }
     @Test void serverFailureDoesNotProveTheMessageWasRejected() {
         var transport=new TelegramBotApiTransport(123L,(chat,text)->failedResponse(500,null));
         assertNotEquals(TelegramDeliveryResult.failure(),transport.send("test"));

@@ -94,7 +94,7 @@ class NotificationServiceTest {
 
         notifications.flush(NOW);
 
-        assertTrue(receivedBody.get().contains("Mensagens arquivadas"));
+        assertTrue(receivedBody.get().contains("Novas mensagens"));
         assertTrue(receivedBody.get().contains("2 conversas · 5 mensagens"));
         assertTrue(receivedBody.get().contains("Ana"));
         assertTrue(receivedBody.get().contains("Oi, tudo bem?"));
@@ -504,6 +504,89 @@ class NotificationServiceTest {
         assertTrue(receivedBody.get().contains("Atual"));
         assertFalse(receivedBody.get().contains("Antigo"));
         assertEquals(List.of(removed), jdbc.queryForList("select chat_jid from pending_notification", String.class));
+    }
+
+    @Test void oversizedTelegramBatchOnlyAcknowledgesConversationsActuallyShown() {
+        for (int i=0; i<8; i++) {
+            String jid="55119999999" + String.format("%02d",i) + "@s.whatsapp.net";
+            seed(jid, "Contato"+i+"<".repeat(200), false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "&".repeat(180), NOW);
+        }
+        notifications.flush(NOW);
+        String body=receivedBody.get();
+        int remaining=jdbc.queryForObject("select count(*) from pending_notification",Integer.class);
+        assertTrue(remaining > 0, "an oversized batch must leave unshown conversations pending");
+        for (int i=0; i<8; i++) {
+            String jid="55119999999" + String.format("%02d",i) + "@s.whatsapp.net";
+            int pending=jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?",Integer.class,jid);
+            assertEquals(body.contains("Contato"+i) ? 0 : 1, pending, "only visible conversations may be acknowledged");
+        }
+        for (int i=0; i<8 && remaining>0; i++) {
+            clock.advance(Duration.ofSeconds(2)); notifications.flush(clock.instant());
+            remaining=jdbc.queryForObject("select count(*) from pending_notification",Integer.class);
+        }
+        assertEquals(0,remaining);
+    }
+
+    @Test void archivedNotificationsSelectHtmlWhileOtherMessagesStayPlain() {
+        var selected = new AtomicReference<String>();
+        TelegramTransport fake = new TelegramTransport() {
+            public TelegramDeliveryResult send(String text) { selected.set("plain"); return TelegramDeliveryResult.success(); }
+            public TelegramDeliveryResult sendHtml(String text) { selected.set("html"); return TelegramDeliveryResult.success(); }
+        };
+        var service = new NotificationService(jdbc, manager, outbox, fake,
+                new TelegramMessageFormatter(properties), properties, clock, archiveModes);
+        outbox.enqueue("admin:format", "telegram_admin_reply", "{\"eventType\":\"telegram_admin_reply\",\"text\":\"<texto>\"}", "[]", NOW, NOW.plusSeconds(7 * 86400));
+        service.flush(NOW); assertEquals("plain", selected.get());
+        seed("5511999999999@s.whatsapp.net", "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        service.flush(NOW); assertEquals("html", selected.get());
+    }
+
+    @Test void retryRemovesStalePhoneWhenLidAssociationIsRevoked() {
+        String phone="5511999999999@s.whatsapp.net";
+        seed(phone, "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        jdbc.update("update pending_notification set chat_jid='1001@lid' where chat_jid=?", phone);
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values ('1001@lid',true,?,null,false,true)", Timestamp.from(NOW));
+        responseStatus.set(503); notifications.flush(NOW);
+        assertTrue(receivedBody.get().contains("https://wa.me/5511999999999"));
+        jdbc.update("delete from identity_aliases where alias='1001@lid'");
+        responseStatus.set(200); clock.advance(Duration.ofSeconds(20)); makePendingOutboxDue(); notifications.flush(clock.instant());
+        assertFalse(receivedBody.get().contains("wa.me")); assertTrue(receivedBody.get().contains("Conversa"));
+    }
+
+    @Test void retryUsesCurrentScopeForTitleWithoutChangingEligibility() {
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        responseStatus.set(503);
+        seed("5511999999999@s.whatsapp.net", "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        notifications.flush(NOW);
+        assertTrue(receivedBody.get().contains("Mensagens arquivadas"));
+        archiveModes.setMode(ArchiveMode.ALL); responseStatus.set(200); clock.advance(Duration.ofSeconds(20));
+        makePendingOutboxDue(); notifications.flush(clock.instant());
+        assertTrue(receivedBody.get().contains("Novas mensagens"));
+        assertTrue(receivedBody.get().contains("1 conversa · 1 mensagem"));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void verifiedLidUsesLinkedPhoneAndUnlinkedLidAndGroupsNeverBecomeLinks() {
+        String phone="5511999999999@s.whatsapp.net";
+        seed(phone, "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "<oi & você>", NOW);
+        jdbc.update("update pending_notification set chat_jid='1001@lid' where chat_jid=?", phone);
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values ('1001@lid',true,?,null,false,true)", Timestamp.from(NOW));
+        seed("123456789@lid", "123456789@lid", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        seed("111222333@g.us", "111222333@g.us", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "[Sticker]", NOW);
+        notifications.flush(NOW);
+        String text=receivedBody.get();
+        assertTrue(text.contains("<a href=\"https://wa.me/5511999999999\">Ana</a>"));
+        assertTrue(text.contains("&lt;oi &amp; você&gt;"));
+        assertTrue(text.contains("• Conversa —")); assertTrue(text.contains("• Grupo —"));
+        assertFalse(text.contains("@lid")); assertFalse(text.contains("@g.us"));
+        assertEquals(1, text.split("<a href=", -1).length - 1);
+    }
+
+    @Test void identityWithoutNameFallsBackToVerifiedPhone() {
+        seed("5511999999999@s.whatsapp.net", "5511999999999@s.whatsapp.net", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        notifications.flush(NOW);
+        assertTrue(receivedBody.get().contains("<a href=\"https://wa.me/5511999999999\">+5511999999999</a>"));
     }
 
     @Test void unarchivedOnlyModeDeliversOnlySynchronizedUnarchivedChats() throws Exception {
