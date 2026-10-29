@@ -54,6 +54,23 @@ O Manager e a API só ficam acessíveis localmente em `127.0.0.1:8080`. Em VPS, 
 
 Configure `WATCHER_TELEGRAM_BOT_TOKEN` com o token fornecido pelo BotFather e `WATCHER_TELEGRAM_CHAT_ID` com o ID da conversa privada autorizada. Mantenha o token somente no ambiente de execução; ele não entra no PostgreSQL nem nos logs. O bot envia resumos legíveis de mensagens arquivadas e alertas de perda de conexão.
 
+### Comandos administrativos no Telegram
+
+O polling vem desligado e não afeta as notificações. O destino atual é uma conversa privada: IDs de grupo não são aceitos pela configuração. O User ID identifica a pessoa autorizada; não é o token do bot e pode ser diferente do Chat ID. O bot exige ambos os IDs e tipo `private` para aceitar comandos e confirmações.
+
+Na VPS, obtenha o User ID e o Chat ID por um método confiável, sem divulgar o token. Edite o arquivo privado com `vim .env`:
+
+```dotenv
+WATCHER_TELEGRAM_ADMIN_POLLING_ENABLED=true
+WATCHER_TELEGRAM_ADMIN_USER_ID=123456789
+```
+
+Substitua o exemplo pelo User ID real e mantenha `WATCHER_TELEGRAM_CHAT_ID` como a conversa privada correspondente. Um ID ausente, inválido ou não positivo impede a inicialização quando o polling está ligado. Antes de ativar, remova qualquer webhook e pare outros consumidores `getUpdates` do mesmo bot. O lock e offset no PostgreSQL coordenam instâncias deste watcher, não consumidores externos.
+
+Recrie somente o watcher: `docker compose --env-file .env up -d --no-deps --force-recreate watcher`. Envie `/status` na conversa privada autorizada. Para diagnosticar, use `docker compose --env-file .env logs --tail=100 watcher`: uma falha de inicialização aponta validação de configuração; `Telegram admin polling failed` indica falha no polling ou banco; `Telegram admin update rejected` indica identidade ou chat não autorizado. Se o polling estiver desligado, não há serviço de polling nem mensagens desses diagnósticos. Não publique logs completos sem revisão.
+
+Verifique a entrega no banco consultando somente estados, sem payload: `SELECT status, count(*) FROM outbox_actions WHERE action_type = 'telegram_admin_reply' GROUP BY status;`. `ACKNOWLEDGED` confirma aceitação pelo transporte, não leitura pelo usuário. `/emergencia` e `/recuperar` conservam suas confirmações e travas persistentes. Esta configuração não ativa IA, alertas inteligentes nem envio real de WhatsApp.
+
 ## Modos de simulação e ações reais
 
 Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`. A captura e o agendador ficam desligados quando o produtor real também está desligado. Com `WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=true`, a avaliação real continua mesmo com shadow desligado. O administrador pode pausar avaliações shadow com `/simulacao off` e remover a pausa com `/simulacao on` (confirmado); o ambiente continua sendo a fonte de habilitação e a pausa não bloqueia o produtor real. Com shadow e produtor real desligados, não há captura, avaliação nem novas ações.
