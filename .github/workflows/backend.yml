@@ -118,7 +118,6 @@ jobs:
       cancel-in-progress: false
     env:
       VPS_DEPLOY_DIR: ${{ vars.VPS_DEPLOY_DIR || '/docker/ia-hugo-do-zap' }}
-      IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}
       DEPLOY: ${{ inputs.deploy }}
       BOOTSTRAP: ${{ inputs.bootstrap }}
     steps:
@@ -139,6 +138,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
           COMPOSE_SHA256: ${{ steps.compose.outputs.sha256 }}
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}
         run: |
           set -euo pipefail
 

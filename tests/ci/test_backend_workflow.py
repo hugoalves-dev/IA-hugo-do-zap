@@ -81,6 +81,16 @@ class BackendWorkflowContractTest(unittest.TestCase):
         self.assertIn("needs.publish-image.outputs.digest", deploy)
         self.assertRegex(deploy, r"IMAGE_REF:\s*.*@\$\{\{\s*needs\.publish-image\.outputs\.digest\s*\}\}")
 
+    def test_job_level_environment_does_not_reference_env_context(self):
+        deploy = self.job("deploy-vps")
+        job_environment = re.search(r"(?ms)^    env:\s*\n(.*?)(?=^    steps:\s*$)", deploy).group(1)
+        self.assertNotIn("IMAGE_REF:", job_environment)
+        validation_step = re.search(
+            r"(?ms)^      - name: Validate SSH settings.*?^        env:\s*\n(.*?)(?=^        run:)",
+            deploy,
+        ).group(1)
+        self.assertIn("IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}", validation_step)
+
     def test_ssh_requires_pinned_host_keys_and_strict_checking(self):
         deploy = self.job("deploy-vps")
         for name in ("SSH_KEY", "SSH_PORT", "VPS_IP", "VPS_USER", "VPS_KNOWN_HOSTS"):
