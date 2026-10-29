@@ -111,4 +111,11 @@ class EnvironmentAiIntegrationTest {
         assertFalse(state.simulation());
     }
 
+    @Test void legacyDatabaseCannotEnableClassificationWhenEnvironmentDisablesIt() {
+        jdbc.update("update automation_settings set ai_classification_enabled=true,kill_switch_enabled=false");
+        var cfg=new AiClassificationProperties(true,null,null,"fake","model",10,Duration.ofSeconds(1),null,false,true,false,false);
+        assertFalse(classifier(cfg,false).classify(batch(Map.of("conversation","Oi"))).available());
+        assertEquals(0,calls.get());
+    }
+
 }

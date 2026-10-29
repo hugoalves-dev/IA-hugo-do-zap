@@ -5,4 +5,7 @@ create table operational_restrictions (
     simulation_paused boolean not null default false,
     updated_at timestamptz not null default now()
 );
-insert into operational_restrictions(singleton_id) values (1);
+-- A previously audited emergency remains restrictive even if legacy settings were
+-- edited later. Recovery requires the new confirmed administrative command.
+insert into operational_restrictions(singleton_id, emergency_latched)
+select 1, exists(select 1 from telegram_admin_audit where action='emergencia' and outcome='APPLIED');
