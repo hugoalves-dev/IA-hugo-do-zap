@@ -116,11 +116,11 @@ Uma execução local autorizada pode usar `docker compose --env-file .env up -d`
 
 Configure estes GitHub Actions repository secrets, sem valores padrão:
 
-- `SSH_KEY`: chave privada de deploy para a conta restrita da VPS.
+- `SSH_KEY`: chave privada de deploy para a conta restrita da VPS (única credencial de autenticação SSH; sem senha).
 - `SSH_PORT`: porta SSH da VPS.
 - `VPS_IP`: endereço usado na conexão SSH.
 - `VPS_USER`: conta SSH de deploy.
-- `VPS_KNOWN_HOSTS`: uma linha `known_hosts` correspondente a `VPS_IP` e `SSH_PORT`, com chave verificada por canal independente. Em porta diferente de 22, o host deve estar no formato `[VPS_IP]:SSH_PORT`. O runner valida essa entrada e calcula o fingerprint SHA-256 enviado à `appleboy/ssh-action`; o conteúdo do secret não é passado à action nem impresso nos logs.
+A conexão usa somente `SSH_KEY` para autenticação, mas **não verifica o fingerprint da chave pública do servidor**. Esta simplificação, solicitada para o deploy, reduz a proteção contra ataques man-in-the-middle. Para recuperar essa proteção futuramente, configure a validação explícita do fingerprint da VPS usando a chave verificada pelo console do provedor.
 
 O diretório padrão é `/docker/ia-hugo-do-zap`. Opcionalmente, configure a repository variable `VPS_DEPLOY_DIR` para sobrescrevê-lo com outro caminho absoluto, normalizado e sem segmentos `.` ou `..`. O diretório precisa existir na VPS e conter o `compose.yaml` byte a byte igual ao commit selecionado e o `.env` já configurado. O job não cria diretórios, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
 

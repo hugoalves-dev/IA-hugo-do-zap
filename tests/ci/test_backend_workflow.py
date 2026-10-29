@@ -93,25 +93,19 @@ class BackendWorkflowContractTest(unittest.TestCase):
         ).group(1)
         self.assertIn("IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}", validation_step)
 
-    def test_ssh_requires_pinned_host_keys_and_strict_checking(self):
+    def test_ssh_uses_only_private_key_authentication_without_host_fingerprint(self):
         deploy = self.job("deploy-vps")
-        for name in ("SSH_KEY", "SSH_PORT", "VPS_IP", "VPS_USER", "VPS_KNOWN_HOSTS"):
+        for name in ("SSH_KEY", "SSH_PORT", "VPS_IP", "VPS_USER"):
             self.assertIn(f"secrets.{name}", deploy)
+        self.assertNotIn("VPS_KNOWN_HOSTS", deploy)
         self.assertRegex(deploy, r"uses: appleboy/ssh-action@[0-9a-f]{40}")
-        self.assertIn("fingerprint:", deploy)
-        self.assertIn("DRONE_SSH_VERSION: 1.8.1", deploy)
-        self.assertIn("script_path: scripts/deploy-vps-action.sh", deploy)
         action = deploy.split("uses: appleboy/ssh-action", maxsplit=1)[1]
-        self.assertNotIn("VPS_KNOWN_HOSTS", action)
+        self.assertIn("key: ${{ secrets.SSH_KEY }}", action)
+        self.assertIn("DRONE_SSH_VERSION: 1.8.1", action)
+        self.assertIn("script_path: scripts/deploy-vps-action.sh", action)
+        self.assertNotRegex(action, r"(?m)^\s*(?:password|fingerprint):")
         self.assertNotIn("debug: true", action)
-        self.assertIn("!/^#/ && NF >= 3", deploy)
-        self.assertIn("VPS_KNOWN_HOSTS entries marked with @ are not supported", deploy)
-        marker_rejection = "awk '!/^#/ && $1 ~ /^@/ { marked = 1 } END { exit !marked }'"
-        self.assertIn(marker_rejection, deploy)
-        self.assertLess(deploy.index(marker_rejection), deploy.index("mapfile -t host_keys"))
         self.assertNotIn("ssh-keyscan", deploy)
-        self.assertNotIn("StrictHostKeyChecking=no", deploy)
-        self.assertNotIn("StrictHostKeyChecking=yes", deploy)
 
     def test_ssh_action_pins_drone_ssh_through_environment(self):
         deploy = self.job("deploy-vps")
@@ -120,32 +114,6 @@ class BackendWorkflowContractTest(unittest.TestCase):
         self.assertNotRegex(action, r"(?m)^\s+version:")
         self.assertIn("DEPLOY_SCRIPT_B64: ${{ env.DEPLOY_SCRIPT_B64 }}", action)
         self.assertIn("DEPLOY_SCRIPT_B64,VPS_DEPLOY_DIR_B64", action)
-
-    def test_known_hosts_markers_are_rejected_before_fingerprint_extraction(self):
-        deploy = self.job("deploy-vps")
-        marker_program = re.search(r"awk '([^']*marked = 1[^']*)'", deploy).group(1)
-        for entry in (
-            "@revoked 192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample",
-            "@cert-authority 192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample",
-        ):
-            with self.subTest(marker=entry.split(maxsplit=1)[0]):
-                completed = subprocess.run(
-                    [BASH_PATH, "-c", f"awk '{marker_program}'"],
-                    input=entry + "\n",
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-
-        unmarked = subprocess.run(
-            [BASH_PATH, "-c", f"awk '{marker_program}'"],
-            input="192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample\n",
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(unmarked.returncode, 1, unmarked.stderr)
 
     def test_action_wrapper_runs_bash_and_propagates_its_failure_from_sh(self):
         wrapper = ROOT / "scripts" / "deploy-vps-action.sh"
