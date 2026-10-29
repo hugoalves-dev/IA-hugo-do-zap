@@ -20,11 +20,14 @@ public final class DecisionRuntimeGate {
     private final Clock clock;
     private final WatcherProperties watcher;
     private final String ownerJid;
+    private dev.hugo.watcher.OperationalState operational;
+    @org.springframework.beans.factory.annotation.Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
     public DecisionRuntimeGate(JdbcTemplate jdbc, Clock clock, WatcherProperties watcher,
                                @Value("${watcher.whatsapp-actions.owner-jid:}") String ownerJid) {
         this.jdbc=jdbc; this.clock=clock; this.watcher=watcher; this.ownerJid=ownerJid;
     }
     public boolean allows(UUID id, boolean alert) {
+        if (operational == null || !operational.classification() || (alert ? !operational.alerts() : !operational.replies())) return false;
         var now=clock.instant();
         var rows=jdbc.query("""
                 select b.chat_jid,e.result::text,d.classification_urgency,d.classification_status,
@@ -36,7 +39,7 @@ public final class DecisionRuntimeGate {
                 left join decision_cooldowns cooldown on cooldown.chat_jid=b.chat_jid and cooldown.participant_jid=''
                 where d.batch_id=? and b.expires_at>? and d.metadata_expires_at>?
                   and b.status in ('CLAIMED','COMPLETED') and a.singleton_id=1 and s.singleton_id=1
-                  and a.ai_classification_enabled and not a.kill_switch_enabled and d.real_action_allowed
+                  and d.real_action_allowed
                   and d.production_mode and d.decision_state='WOULD_ACT' and d.classification_status='CLASSIFIED'
                   and d.classification_confidence>=0.65 and e.result is not null
                   and (cooldown.last_real_action_at is null or cooldown.last_real_decision_id=d.batch_id
@@ -60,7 +63,7 @@ public final class DecisionRuntimeGate {
             boolean criticalPurpose=false;
             for(var purpose:purposes) {
                 String situation=purpose.asString("");
-                if(!Boolean.TRUE.equals(jdbc.queryForObject("""
+                if(operational.requireChatConsent() && !Boolean.TRUE.equals(jdbc.queryForObject("""
                         select exists(select 1 from ai_data_consents where chat_jid=? and provider=?
                         and situation=? and privacy_approved and expires_at>?)
                         """,Boolean.class,c.chat(),provider,situation,Timestamp.from(now)))) return false;

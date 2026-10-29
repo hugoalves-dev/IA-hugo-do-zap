@@ -17,6 +17,8 @@ public class SimulationScheduler {
     private final Clock clock;
     private final JdbcTemplate jdbc;
     private final boolean realModeEnabled;
+    private dev.hugo.watcher.OperationalState operational;
+    @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
     @Autowired
     public SimulationScheduler(DebounceService debounce, SimulationService simulations, Clock clock, JdbcTemplate jdbc,
@@ -34,8 +36,7 @@ public class SimulationScheduler {
     @Scheduled(fixedDelayString = "${watcher.simulation.poll-delay:PT1S}")
     public void processReady() {
         if (!realModeEnabled) {
-            Boolean enabled = jdbc.queryForObject("select simulation_enabled from telegram_admin_settings where singleton_id=1", Boolean.class);
-            if (!Boolean.TRUE.equals(enabled)) return;
+            if (operational == null || !operational.simulation()) return;
         }
         for (Batch batch : debounce.claimReady(clock.instant())) simulations.evaluate(batch);
     }

@@ -108,7 +108,7 @@ public class WhatsAppActionService {
         List<Authorization> rows = jdbc.query("""
                 select b.chat_jid,b.participant_jid,t.situation,t.template_id,t.version,t.body,
                        d.decision_state,d.real_action_allowed,d.would_reply,d.would_alert,
-                       s.kill_switch_enabled,s.auto_reply_enabled,s.intelligent_alerts_enabled,s.real_cooldown_seconds,
+                       s.real_cooldown_seconds,
                        t.enabled,t.identifies_automation,
                        c.last_real_action_at
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
@@ -119,16 +119,14 @@ public class WhatsAppActionService {
                 """, (rs, row) -> new Authorization(rs.getString("chat_jid"), rs.getString("participant_jid"),
                 rs.getString("situation"), rs.getString("template_id"), rs.getInt("version"), rs.getString("body"),
                 rs.getString("decision_state"), rs.getBoolean("real_action_allowed"), rs.getBoolean("would_reply"),
-                rs.getBoolean("would_alert"), rs.getBoolean("kill_switch_enabled"), rs.getBoolean("auto_reply_enabled"),
-                rs.getBoolean("intelligent_alerts_enabled"), rs.getInt("real_cooldown_seconds"),
+                rs.getBoolean("would_alert"), rs.getInt("real_cooldown_seconds"),
                 rs.getTimestamp("last_real_action_at") == null ? null : rs.getTimestamp("last_real_action_at").toInstant(),
                 rs.getBoolean("enabled"), rs.getBoolean("identifies_automation")), decisionId);
         if (rows.isEmpty()) return null;
         Authorization a = rows.getFirst();
-        if (!a.realActionAllowed() || !"WOULD_ACT".equals(a.decisionState()) || a.killSwitchEnabled()
+        if (!a.realActionAllowed() || !"WOULD_ACT".equals(a.decisionState())
                 || !a.templateEnabled() || !a.identifiesAutomation()) return null;
         if (!a.wouldReply()) return null;
-        if (!a.autoReplyEnabled()) return null;
         if (!a.body().stripLeading().toLowerCase(java.util.Locale.ROOT).startsWith("resposta automática:")) return null;
         Integer optedIn = jdbc.queryForObject("""
                 select count(*) from chat_automation_authorizations
@@ -144,8 +142,7 @@ public class WhatsAppActionService {
                           String templateId, int templateVersion) { }
     private record Authorization(String chatJid, String participantJid, String situation, String templateId,
                                  int templateVersion, String body, String decisionState, boolean realActionAllowed,
-                                 boolean wouldReply, boolean wouldAlert, boolean killSwitchEnabled,
-                                 boolean autoReplyEnabled, boolean intelligentAlertsEnabled, int cooldownSeconds,
+                                 boolean wouldReply, boolean wouldAlert, int cooldownSeconds,
                                  Instant lastRealActionAt, boolean templateEnabled, boolean identifiesAutomation) {
     }
 }
