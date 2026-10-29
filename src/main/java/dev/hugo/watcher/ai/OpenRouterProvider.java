@@ -35,7 +35,6 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
                 "model", model,
                 "messages", List.of(Map.of("role", "system", "content", SYSTEM_PROMPT),
                         Map.of("role", "user", "content", userPayload(input))),
-                "temperature", 0,
                 "max_tokens", 300,
                 "provider", Map.of("zdr", true, "data_collection", "deny", "allow_fallbacks", false,
                         "require_parameters", true),

@@ -23,9 +23,41 @@ class OpenRouterProviderTest {
         assertTrue(body.contains("\"zdr\":true"));
         assertTrue(body.contains("\"data_collection\":\"deny\""));
         assertTrue(body.contains("\"allow_fallbacks\":false"));
+        assertFalse(body.contains("\"temperature\""));
+        assertTrue(body.contains("\"require_parameters\":true"));
+        assertTrue(body.contains("\"max_tokens\":300"));
         assertTrue(body.contains("untrusted"));
         assertFalse(body.contains("+55 (11) 98765-4321"));
         assertFalse(body.contains("person.test@example.com"));
+    }
+
+
+    /** Regression: Haiku 5.5 endpoints support strict JSON Schema and ZDR, but not temperature. */
+    @Test void haiku55OmitsTemperatureWhileKeepingPrivateStructuredRouting() {
+        var transport = new FakeProviderTransport(request -> {
+            if (FakeProviderTransport.requestBody(request).contains("\"temperature\""))
+                return FakeProviderTransport.response(404, "No endpoints found that can handle the requested parameters");
+            return FakeProviderTransport.response(200, "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"CONTACT_REQUEST\\\",\\\"requestDetected\\\":true,\\\"urgency\\\":\\\"NORMAL\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.91}\"}}]}");
+        });
+        var provider = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
+                "anthropic/claude-haiku-5.5", "fake-key", transport, (name, input) -> true,
+                Duration.ofSeconds(2));
+
+        var result = provider.classify(new ClassificationInput(List.of("Preciso conversar sobre um assunto importante.")));
+
+        assertEquals(ClassificationResult.Status.CLASSIFIED, result.status());
+        assertEquals(1, transport.requests().size());
+        String body = FakeProviderTransport.requestBody(transport.requests().getFirst());
+        assertTrue(body.contains("\"model\":\"anthropic/claude-haiku-5.5\""));
+        assertFalse(body.contains("\"temperature\""));
+        assertTrue(body.contains("\"max_tokens\":300"));
+        assertTrue(body.contains("\"zdr\":true"));
+        assertTrue(body.contains("\"data_collection\":\"deny\""));
+        assertTrue(body.contains("\"allow_fallbacks\":false"));
+        assertTrue(body.contains("\"require_parameters\":true"));
+        assertTrue(body.contains("\"response_format\""));
+        assertTrue(body.contains("\"json_schema\""));
+        assertTrue(body.contains("\"strict\":true"));
     }
 
     @Test void unavailablePrivateRouteFailsClosedWithoutRetry() {
