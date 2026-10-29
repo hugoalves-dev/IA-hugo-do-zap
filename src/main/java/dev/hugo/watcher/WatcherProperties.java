@@ -33,7 +33,7 @@ public class WatcherProperties {
     private List<@NotNull TimeWindow> notificationWindows = List.of(
             new TimeWindow(LocalTime.of(8, 0), LocalTime.of(12, 0)),
             new TimeWindow(LocalTime.of(13, 30), LocalTime.of(17, 30)));
-    @NotEmpty
+    // Optional legacy allowlist; group inclusion is controlled by includeGroups and chat metadata.
     @Size(max = 500)
     private List<@NotBlank String> groupJids = List.of();
     @NotBlank

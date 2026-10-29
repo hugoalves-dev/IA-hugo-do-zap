@@ -19,6 +19,12 @@ class WatcherPropertiesTest {
         assertTrue(validator.validate(properties).stream().anyMatch(v -> v.getPropertyPath().toString().equals("telegramChatId")));
     }
 
+    @Test void emptyGroupJidsIsValidByDefault() {
+        var properties = validProperties();
+        assertTrue(properties.getGroupJids().isEmpty());
+        assertTrue(validator.validate(properties).isEmpty());
+    }
+
     @Test void rejectsNonPositiveTelegramChatIds() {
         var properties = validProperties();
         properties.setTelegramChatId(0L);
@@ -48,7 +54,6 @@ class WatcherPropertiesTest {
         properties.setTimezone("America/Sao_Paulo");
         properties.setNotificationDays(Set.of(1, 2, 3, 4, 5));
         properties.setNotificationWindows(List.of(new WatcherProperties.TimeWindow(LocalTime.of(8, 0), LocalTime.NOON)));
-        properties.setGroupJids(List.of("120363000000000000@g.us"));
         properties.setAllowedNameRegex(".*");
         properties.setMaxBatchSize(100);
         properties.setRetentionDays(7);
