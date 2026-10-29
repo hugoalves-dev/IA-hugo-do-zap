@@ -22,6 +22,54 @@ class TelegramMessageFormatterTest {
         assertTrue(text.contains("Oi, tudo bem?"));
     }
 
+    @Test void usesModeLocalizedDateEscapedTextAndValidatedPhoneLink() {
+        String text = formatter.format(new OutboxAction(8, "archive", "archived_messages", """
+                {"eventType":"archived_messages","archiveMode":"ALL","totalChats":1,"totalMessages":1,"chats":[
+                 {"displayName":"Maria <Silva> & Cia","phoneJid":"5514998496595@s.whatsapp.net","isGroup":false,
+                  "messageCount":1,"lastMessageAt":"2026-10-29T19:53:14Z","lastMessagePreview":"<b>oi & tchau</b>"}]}
+                """, "[]", 1, null, null, null));
+        assertTrue(text.contains("📬 Novas mensagens"));
+        assertTrue(text.contains("1 conversa · 1 mensagem"));
+        assertTrue(text.contains("<a href=\"https://wa.me/5514998496595\">Maria &lt;Silva&gt; &amp; Cia</a>"));
+        assertTrue(text.contains("29/10/2026 - 16:53:14"));
+        assertTrue(text.contains("&lt;b&gt;oi &amp; tchau&lt;/b&gt;"));
+    }
+
+    @Test void unarchivedModeNeverLinksLidsGroupsOrInvalidNumbersAndOmitsInvalidDates() {
+        String text = formatter.format(new OutboxAction(9, "archive", "archived_messages", """
+                {"eventType":"archived_messages","archiveMode":"UNARCHIVED_ONLY","totalChats":3,"totalMessages":3,"chats":[
+                 {"displayName":"Conversa","phoneJid":"123456789@lid","messageCount":1,"lastMessageAt":"not-a-date"},
+                 {"displayName":"Grupo","phoneJid":"5511999999999@s.whatsapp.net","isGroup":true,"messageCount":1},
+                 {"displayName":"Contato","phoneJid":"123@s.whatsapp.net","messageCount":1}]}
+                """, "[]", 1, null, null, null));
+        assertTrue(text.contains("📬 Mensagens não arquivadas"));
+        assertFalse(text.contains("<a "));
+        assertFalse(text.contains("not-a-date"));
+    }
+
+    @Test void convertsOffsetTimestampIntoConfiguredTimezoneOnlyOnce() {
+        WatcherProperties properties = new WatcherProperties(); properties.setTimezone("Europe/Lisbon");
+        String text = new TelegramMessageFormatter(properties).format(new OutboxAction(10, "archive", "archived_messages", """
+                {"eventType":"archived_messages","archiveMode":"ALL","totalChats":1,"totalMessages":1,"chats":[
+                 {"displayName":"Ana","messageCount":1,"lastMessageAt":"2026-10-29T16:53:14-03:00"}]}
+                """, "[]", 1, null, null, null));
+        assertTrue(text.contains("29/10/2026 - 19:53:14"));
+    }
+
+    @Test void truncationKeepsHtmlEntitiesAndLinksWellFormed() throws Exception {
+        String name = "<&\"😀".repeat(500);
+        var json = tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(java.util.Map.of(
+                "eventType", "archived_messages", "archiveMode", "ALL", "totalChats", 2, "totalMessages", 2,
+                "chats", java.util.List.of(java.util.Map.of("displayName",name,"messageCount",1,
+                "phoneJid","5511999999999@s.whatsapp.net","lastMessagePreview",name),
+                java.util.Map.of("displayName",name,"messageCount",1,"phoneJid","5511888888888@s.whatsapp.net"))));
+        String text = formatter.format(new OutboxAction(11, "archive", "archived_messages", json, "[]", 1, null, null, null));
+        assertTrue(text.length() <= TelegramMessageFormatter.MAX_MESSAGE_LENGTH);
+        assertWellFormedUtf16(text);
+        var document = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder();
+        document.parse(new org.xml.sax.InputSource(new java.io.StringReader("<root>" + text + "</root>")));
+    }
+
     @Test void formatsConnectionLossWithManualPairingInstructions() {
         String text = formatter.format(new OutboxAction(2, "connection", "whatsapp_connection_lost", """
                 {"eventType":"whatsapp_connection_lost","reason":"device_removed","manualPairingRequired":true}
@@ -69,10 +117,7 @@ class TelegramMessageFormatterTest {
     }
 
     @Test void truncationKeepsBothHalvesWhenBoundaryEndsOnLowSurrogate() {
-        String prefix = formatter.format(archivedWithName("x"));
-        int nameStart = prefix.indexOf("x — 1 mensagem");
-        int highIndex = TelegramMessageFormatter.MAX_MESSAGE_LENGTH - 3;
-        String name = "a".repeat(highIndex - nameStart) + "😀" + "z".repeat(100);
+        String name = "a".repeat(237) + "😀" + "z".repeat(100);
 
         String text = formatter.format(archivedWithName(name));
 
@@ -81,10 +126,7 @@ class TelegramMessageFormatterTest {
     }
 
     @Test void truncationDropsWholePairWhenBoundaryWouldEndOnHighSurrogate() {
-        String prefix = formatter.format(archivedWithName("x"));
-        int nameStart = prefix.indexOf("x — 1 mensagem");
-        int highIndex = TelegramMessageFormatter.MAX_MESSAGE_LENGTH - 2;
-        String name = "a".repeat(highIndex - nameStart) + "😀" + "z".repeat(100);
+        String name = "a".repeat(238) + "😀" + "z".repeat(100);
 
         String text = formatter.format(archivedWithName(name));
 

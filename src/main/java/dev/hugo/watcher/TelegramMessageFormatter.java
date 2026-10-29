@@ -4,12 +4,21 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import java.util.List;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /** Converts durable outbox payloads into short, readable Telegram messages. */
 @Component
 public class TelegramMessageFormatter {
     static final int MAX_MESSAGE_LENGTH = 3500;
     private static final int MAX_PREVIEW_LENGTH = 180;
+    private static final int MAX_NAME_LENGTH = 240;
+    private static final DateTimeFormatter LOCAL_DATE = DateTimeFormatter.ofPattern("dd/MM/uuuu - HH:mm:ss");
+    private final ZoneId timezone;
+    @Autowired public TelegramMessageFormatter(WatcherProperties properties) { this.timezone = ZoneId.of(properties.getTimezone()); }
+    public TelegramMessageFormatter() { this(new WatcherProperties()); }
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     public String format(OutboxAction action) {
@@ -17,7 +26,7 @@ public class TelegramMessageFormatter {
             JsonNode payload = JSON.readTree(action.payload());
             return switch (payload.path("eventType").asString("")) {
                 case "telegram_admin_reply" -> limit(clean(payload.path("text").asString("")), MAX_MESSAGE_LENGTH);
-                case NotificationService.ARCHIVED_MESSAGES -> archived(payload);
+                case NotificationService.ARCHIVED_MESSAGES -> archived(payload).text();
                 case ConnectionService.ACTION_TYPE -> connection(payload);
                 case "simulation_daily_summary" -> dailySummary(payload);
                 case "intelligent_alert" -> intelligentAlert(payload);
@@ -28,25 +37,54 @@ public class TelegramMessageFormatter {
         }
     }
 
-    private String archived(JsonNode payload) {
-        StringBuilder text = new StringBuilder("📬 Mensagens arquivadas\n")
-                .append(payload.path("totalChats").asInt(0)).append(" conversas · ")
-                .append(payload.path("totalMessages").asInt(0)).append(" mensagens");
+    int includedArchivedChats(String payload) {
+        return archived(JSON.readTree(payload)).includedChats();
+    }
+
+    private ArchivedRendering archived(JsonNode payload) {
+        String title = switch (payload.path("archiveMode").asString("ARCHIVED_ONLY")) {
+            case "ALL" -> "📬 Novas mensagens";
+            case "UNARCHIVED_ONLY" -> "📬 Mensagens não arquivadas";
+            default -> "📬 Mensagens arquivadas";
+        };
+        int totalChats = payload.path("totalChats").asInt(0);
+        int totalMessages = payload.path("totalMessages").asInt(0);
+        StringBuilder text = new StringBuilder(title).append("\n").append(totalChats)
+                .append(totalChats == 1 ? " conversa · " : " conversas · ").append(totalMessages)
+                .append(totalMessages == 1 ? " mensagem" : " mensagens");
+        int includedChats = 0;
         JsonNode chats = payload.path("chats");
-        if (chats.isArray()) {
-            for (JsonNode chat : chats) {
-                String name = clean(chat.path("displayName").asString("Conversa"));
-                int count = chat.path("messageCount").asInt(0);
-                String last = clean(chat.path("lastMessageAt").asString(""));
-                String preview = clean(chat.path("lastMessagePreview").asString(""));
-                text.append("\n• ").append(name).append(" — ").append(count)
-                        .append(count == 1 ? " mensagem" : " mensagens");
-                if (!last.isEmpty()) text.append(" · última: ").append(last);
-                if (!preview.isEmpty()) text.append("\n  ").append(limit(preview, MAX_PREVIEW_LENGTH));
-                if (text.length() >= MAX_MESSAGE_LENGTH) break;
+        if (chats.isArray()) for (JsonNode chat : chats) {
+            String name = escape(limit(clean(chat.path("displayName").asString("Conversa")), MAX_NAME_LENGTH));
+            if (name.isBlank()) name = "Conversa";
+            String phoneJid = chat.path("phoneJid").asString("");
+            String phone = phoneJid.matches("(?i)^[1-9][0-9]{7,14}(?::[0-9]+)?@s\\.whatsapp\\.net$")
+                    ? phoneJid.substring(0, phoneJid.indexOf('@')).split(":", 2)[0] : null;
+            if (!chat.path("isGroup").asBoolean(false) && phone != null)
+                name = "<a href=\"https://wa.me/" + phone + "\">" + name + "</a>";
+            int count = chat.path("messageCount").asInt(0);
+            StringBuilder line = new StringBuilder("\n• ").append(name).append(" — ").append(count)
+                    .append(count == 1 ? " mensagem" : " mensagens");
+            try {
+                Instant last = Instant.parse(chat.path("lastMessageAt").asString(""));
+                line.append("\n  Última: ").append(LOCAL_DATE.withZone(timezone).format(last));
+            } catch (RuntimeException ignored) { }
+            String preview = clean(chat.path("lastMessagePreview").asString(""));
+            if (!preview.isEmpty()) line.append("\n  ").append(escape(limit(preview, MAX_PREVIEW_LENGTH)));
+            if (text.length() + line.length() > MAX_MESSAGE_LENGTH) {
+                if (text.length() < MAX_MESSAGE_LENGTH) text.append("…");
+                break;
             }
+            text.append(line);
+            includedChats++;
         }
-        return limit(text.toString(), MAX_MESSAGE_LENGTH);
+        return new ArchivedRendering(text.toString(), includedChats);
+    }
+
+    private record ArchivedRendering(String text, int includedChats) { }
+
+    private static String escape(String value) {
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
 
     private String connection(JsonNode payload) {

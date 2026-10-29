@@ -119,6 +119,8 @@ public class NotificationService {
                     } else {
                         OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());
                         TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
+                                : ARCHIVED_MESSAGES.equals(latest.actionType())
+                                ? telegram.sendHtml(telegramFormatter.format(latest))
                                 : telegram.send(telegramFormatter.format(latest));
                         if (result.delivered()) outbox.acknowledge(latest, clock.instant());
                         else if (latest == null) outbox.suppress(action, clock.instant());
@@ -147,8 +149,9 @@ public class NotificationService {
 
             ZoneId zone = ZoneId.of(properties.getTimezone());
             boolean inWindow = inWorkWindow(now, zone);
+            ArchiveMode mode = archiveModes.getMode();
             Map<String, PendingRow> current = new LinkedHashMap<>();
-            for (PendingRow row : readPending(now)) current.put(row.chatJid(), row);
+            for (PendingRow row : readPending(now, mode)) current.put(row.chatJid(), row);
 
             List<Map<String, Object>> allowedChats = new ArrayList<>();
             List<Map<String, Object>> allowedSnapshots = new ArrayList<>();
@@ -165,7 +168,9 @@ public class NotificationService {
                 if ("WORK_ONLY".equals(policy) && !inWindow) continue;
 
                 Map<String, Object> chat = new LinkedHashMap<>(chats.get(i));
-                chat.put("displayName", displayName);
+                chat.put("displayName", displayNameForTelegram(row));
+                chat.remove("phoneJid");
+                if (!row.group() && validatedPhone(row.phoneJid()) != null) chat.put("phoneJid", row.phoneJid());
                 chat.put("isGroup", row.group());
                 chat.put("policy", policy);
                 allowedChats.add(chat);
@@ -174,9 +179,19 @@ public class NotificationService {
             }
             if (allowedChats.isEmpty()) return null;
 
+            payload.put("archiveMode", mode.name());
             payload.put("chats", allowedChats);
             payload.put("totalChats", allowedChats.size());
             payload.put("totalMessages", totalMessages);
+            int included = telegramFormatter.includedArchivedChats(writeJson(payload));
+            if (included < 1) return null;
+            if (included < allowedChats.size()) {
+                allowedChats = new ArrayList<>(allowedChats.subList(0, included));
+                allowedSnapshots = new ArrayList<>(allowedSnapshots.subList(0, included));
+                payload.put("chats", allowedChats);
+                payload.put("totalChats", included);
+                payload.put("totalMessages", allowedChats.stream().mapToInt(chat -> integer(chat.get("messageCount"))).sum());
+            }
             return new OutboxAction(action.id(), action.actionKey(), action.actionType(), writeJson(payload),
                     writeJson(allowedSnapshots), action.attempts(), action.createdAt(),
                     action.sensitiveExpiresAt(), action.leaseToken());
@@ -212,7 +227,8 @@ public class NotificationService {
         if (outbox.hasActiveAction(ARCHIVED_MESSAGES, now)) return;
         ZoneId zone = ZoneId.of(properties.getTimezone());
         boolean inWorkWindow = inWorkWindow(now, zone);
-        List<PendingRow> pending = readPending(now);
+        ArchiveMode mode = archiveModes.getMode();
+        List<PendingRow> pending = readPending(now, mode);
         List<LegacyChat> chats = new ArrayList<>();
         List<Map<String, Object>> snapshots = new ArrayList<>();
         Instant sensitiveExpiry = now.plusSeconds(Math.min(MAX_RETENTION_SECONDS,
@@ -249,6 +265,7 @@ public class NotificationService {
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("eventType", ARCHIVED_MESSAGES);
+        payload.put("archiveMode", mode.name());
         payload.put("generatedAt", localIso(now, zone));
         payload.put("totalChats", chats.size());
         payload.put("totalMessages", chats.stream().mapToInt(LegacyChat::messageCount).sum());
@@ -258,14 +275,14 @@ public class NotificationService {
         String snapshotJson = writeJson(snapshots);
         Map<String, Object> stablePayload = new LinkedHashMap<>(payload);
         stablePayload.remove("generatedAt");
-        outbox.enqueue(ARCHIVED_MESSAGES + ":" + sha256(archiveModes.getMode().name() + "\n" + snapshotJson
+        outbox.enqueue(ARCHIVED_MESSAGES + ":" + sha256(mode.name() + "\n" + snapshotJson
                         + "\n" + writeJson(stablePayload)), ARCHIVED_MESSAGES,
                 payloadJson, snapshotJson, now, sensitiveExpiry);
         LOG.log(System.Logger.Level.INFO, "Archived notification queued: chats={0}, messages={1}",
                 chats.size(), chats.stream().mapToInt(LegacyChat::messageCount).sum());
     }
 
-    private List<PendingRow> readPending(Instant now) {
+    private List<PendingRow> readPending(Instant now, ArchiveMode mode) {
         List<PendingRow> rows = jdbc.query("""
                 select p.chat_jid, p.generation::text as pending_generation, p.payload::text as payload, p.updated_at, p.expires_at,
                        s.archived, coalesce(s.synchronized_snapshot, false) as synchronized_snapshot,
@@ -303,14 +320,13 @@ public class NotificationService {
                 rs.getTimestamp("expires_at").toInstant(), rs.getString("pending_generation"),
                 (Boolean) rs.getObject("archived"), rs.getBoolean("synchronized_snapshot"));
         }, Timestamp.from(now), Timestamp.from(now));
-        ArchiveMode mode = archiveModes.getMode();
         return rows.stream().filter(row -> mode.accepts(row.archived(), row.synchronizedSnapshot())).toList();
     }
 
     private LegacyChat toLegacyChat(PendingRow row, String displayName, String policy, ZoneId zone, Instant now) {
         Map<String, Object> chat = new LinkedHashMap<>();
         chat.put("jid", row.canonicalJid());
-        chat.put("displayName", displayName);
+        chat.put("displayName", displayNameForTelegram(row));
         if (row.phoneJid() != null) {
             chat.put("phoneJid", row.phoneJid());
             chat.put("phoneNumber", phoneNumber(row.phoneJid()));
@@ -355,6 +371,18 @@ public class NotificationService {
         if (row.username() != null) return row.username();
         if (row.phoneJid() != null) return "+" + phoneNumber(row.phoneJid());
         return row.canonicalJid();
+    }
+
+    private static String displayNameForTelegram(PendingRow row) {
+        String name = row.group() ? row.chatName() : (validName(row.identityName()) ? row.identityName() : row.chatName());
+        if (validName(name) && !name.trim().matches("^\\+?\\d{7,}$")) return name.trim();
+        String phone = row.group() ? null : validatedPhone(row.phoneJid());
+        return phone == null ? (row.group() ? "Grupo" : "Conversa") : "+" + phone;
+    }
+
+    private static String validatedPhone(String jid) {
+        if (jid == null || !jid.matches("(?i)^[1-9][0-9]{7,14}(?::[0-9]+)?@s\\.whatsapp\\.net$")) return null;
+        return phoneNumber(jid);
     }
 
     private static boolean validName(String name) {
