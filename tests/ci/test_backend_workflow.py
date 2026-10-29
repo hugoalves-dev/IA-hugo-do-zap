@@ -109,6 +109,32 @@ class BackendWorkflowContractTest(unittest.TestCase):
         self.assertIn("DEPLOY_SCRIPT_B64: ${{ env.DEPLOY_SCRIPT_B64 }}", action)
         self.assertIn("DEPLOY_SCRIPT_B64,VPS_DEPLOY_DIR_B64", action)
 
+    def test_known_hosts_markers_are_rejected_before_fingerprint_extraction(self):
+        deploy = self.job("deploy-vps")
+        marker_program = re.search(r"awk '([^']*marked = 1[^']*)'", deploy).group(1)
+        for entry in (
+            "@revoked 192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample",
+            "@cert-authority 192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample",
+        ):
+            with self.subTest(marker=entry.split(maxsplit=1)[0]):
+                completed = subprocess.run(
+                    [BASH_PATH, "-c", f"awk '{marker_program}'"],
+                    input=entry + "\n",
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+        unmarked = subprocess.run(
+            [BASH_PATH, "-c", f"awk '{marker_program}'"],
+            input="192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(unmarked.returncode, 1, unmarked.stderr)
+
     def test_action_wrapper_runs_bash_and_propagates_its_failure_from_sh(self):
         wrapper = ROOT / "scripts" / "deploy-vps-action.sh"
         self.assertTrue(wrapper.exists(), "missing POSIX wrapper for explicit Bash execution")
