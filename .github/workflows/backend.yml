@@ -2,19 +2,10 @@ name: Backend CI/CD
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: Deploy the selected main branch commit to the configured VPS
-        required: true
-        type: boolean
-        default: false
-      bootstrap:
-        description: Install the isolated watcher into an empty VPS project
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -105,12 +96,11 @@ jobs:
           create-storage-record: false
 
   deploy-vps:
-    name: Deploy selected main commit to VPS
+    name: Auto-deploy watcher to VPS
     needs: publish-image
     if: >-
-      ${{ github.event_name == 'workflow_dispatch' &&
-          github.ref == 'refs/heads/main' &&
-          (inputs.deploy == true || inputs.bootstrap == true) }}
+      ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
@@ -118,82 +108,54 @@ jobs:
       cancel-in-progress: false
     env:
       VPS_DEPLOY_DIR: ${{ vars.VPS_DEPLOY_DIR || '/docker/ia-hugo-do-zap' }}
-      DEPLOY: ${{ inputs.deploy }}
-      BOOTSTRAP: ${{ inputs.bootstrap }}
     steps:
       - name: Checkout deployment files
         uses: actions/checkout@v4
 
-      - name: Compute Compose file identity
-        id: compose
-        run: echo "sha256=$(sha256sum compose.yaml | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
-
-      - name: Validate SSH settings
+      - name: Validate and package deployment
         shell: bash
         env:
           SSH_KEY: ${{ secrets.SSH_KEY }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           VPS_IP: ${{ secrets.VPS_IP }}
           VPS_USER: ${{ secrets.VPS_USER }}
-          COMPOSE_SHA256: ${{ steps.compose.outputs.sha256 }}
           IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.digest }}
         run: |
           set -euo pipefail
-
-          for name in SSH_KEY SSH_PORT VPS_IP VPS_USER VPS_DEPLOY_DIR IMAGE_REF COMPOSE_SHA256; do
+          for name in SSH_KEY SSH_PORT VPS_IP VPS_USER VPS_DEPLOY_DIR IMAGE_REF; do
             if [[ -z "${!name}" ]]; then
-              echo "Missing required deployment setting: $name" >&2
+              echo "Missing deployment setting: $name" >&2
               exit 1
             fi
           done
-
           if [[ ! "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$SSH_PORT < 1 || 10#$SSH_PORT > 65535 )); then
-            echo "SSH_PORT must be between 1 and 65535" >&2
+            echo "Invalid SSH_PORT" >&2
             exit 1
           fi
-
-          if [[ ! "$VPS_DEPLOY_DIR" =~ ^/[A-Za-z0-9._/-]+$ || "$VPS_DEPLOY_DIR" == / || "$VPS_DEPLOY_DIR" == */ || "$VPS_DEPLOY_DIR" == *//* || "$VPS_DEPLOY_DIR" == */../* || "$VPS_DEPLOY_DIR" == */./* || "$VPS_DEPLOY_DIR" == */.. || "$VPS_DEPLOY_DIR" == */. ]]; then
-            echo "VPS_DEPLOY_DIR must be a safe, normalized absolute path." >&2
+          if [[ ! "$IMAGE_REF" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ ]]; then
+            echo "Invalid immutable GHCR image reference" >&2
             exit 1
           fi
+          echo "DEPLOY_SCRIPT_B64=$(base64 --wrap=0 scripts/deploy-vps.sh)" >> "$GITHUB_ENV"
+          echo "VPS_DEPLOY_DIR_B64=$(printf '%s' "$VPS_DEPLOY_DIR" | base64 --wrap=0)" >> "$GITHUB_ENV"
+          echo "IMAGE_REF_B64=$(printf '%s' "$IMAGE_REF" | base64 --wrap=0)" >> "$GITHUB_ENV"
+          echo "COMPOSE_CONTENT_B64=$(base64 --wrap=0 compose.yaml)" >> "$GITHUB_ENV"
+          echo "COMPOSE_SHA256=$(sha256sum compose.yaml | cut -d ' ' -f1)" >> "$GITHUB_ENV"
 
-          if [[ ! "$IMAGE_REF" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ || ! "$COMPOSE_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-            echo "IMAGE_REF and COMPOSE_SHA256 must be immutable SHA-256 values." >&2
-            exit 1
-          fi
-
-          if [[ "$DEPLOY" == true && "$BOOTSTRAP" == true ]]; then
-            echo "Select either deploy or bootstrap, not both." >&2
-            exit 1
-          elif [[ "$BOOTSTRAP" == true ]]; then
-            MODE=bootstrap
-          elif [[ "$DEPLOY" == true ]]; then
-            MODE=deploy
-          else
-            echo "Select deploy or bootstrap for this manual run." >&2
-            exit 1
-          fi
-
-          deploy_dir_b64="$(printf '%s' "$VPS_DEPLOY_DIR" | base64 --wrap=0)"
-          image_ref_b64="$(printf '%s' "$IMAGE_REF" | base64 --wrap=0)"
-          deploy_script_b64="$(base64 --wrap=0 scripts/deploy-vps.sh)"
-          printf 'DEPLOY_SCRIPT_B64=%s\nVPS_DEPLOY_DIR_B64=%s\nIMAGE_REF_B64=%s\nCOMPOSE_SHA256=%s\nDEPLOY_MODE=%s\n' \
-            "$deploy_script_b64" "$deploy_dir_b64" "$image_ref_b64" "$COMPOSE_SHA256" "$MODE" >> "$GITHUB_ENV"
-
-      - name: Deploy watcher by immutable image digest
+      - name: Update watcher and verify health
         uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f
         env:
           DRONE_SSH_VERSION: 1.8.1
           DEPLOY_SCRIPT_B64: ${{ env.DEPLOY_SCRIPT_B64 }}
           VPS_DEPLOY_DIR_B64: ${{ env.VPS_DEPLOY_DIR_B64 }}
           IMAGE_REF_B64: ${{ env.IMAGE_REF_B64 }}
+          COMPOSE_CONTENT_B64: ${{ env.COMPOSE_CONTENT_B64 }}
           COMPOSE_SHA256: ${{ env.COMPOSE_SHA256 }}
-          DEPLOY_MODE: ${{ env.DEPLOY_MODE }}
         with:
           host: ${{ secrets.VPS_IP }}
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_KEY }}
           command_timeout: 15m
-          envs: DEPLOY_SCRIPT_B64,VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_SHA256,DEPLOY_MODE
+          envs: DEPLOY_SCRIPT_B64,VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_CONTENT_B64,COMPOSE_SHA256
           script_path: scripts/deploy-vps-action.sh

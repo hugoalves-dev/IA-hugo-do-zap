@@ -110,67 +110,21 @@ docker compose --env-file .env config --services # evolution-api e watcher
 
 Uma execução local autorizada pode usar `docker compose --env-file .env up -d`. Para construir a imagem localmente em vez de baixar a publicada, use `docker build -t ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest .` antes. Para implantação na VPS, siga o fluxo controlado abaixo.
 
-## CI/CD e deploy controlado
+## CI/CD e deploy automático
 
-`.github/workflows/backend.yml` executa `mvn verify` e os checks de CI/CD em pushes e pull requests usando Java 25. Pull requests não publicam imagem nem fazem deploy. Push em `main` publica a imagem com tag do commit e attestation de proveniência, mas não atualiza a VPS. Para operação manual, abra **Actions → Backend CI/CD → Run workflow**, selecione `main` e marque exatamente uma opção: `deploy` para uma instalação existente ou `bootstrap` para um VPS vazio. O job consome o digest da imagem produzida nessa execução. O script remoto vem do mesmo commit; antes de agir, compara o SHA-256 de `compose.yaml` na VPS com o arquivo validado pelo workflow.
+O deploy segue o padrão do Applywell: **push em `main` → `mvn verify` (Java 25) → imagem GHCR por digest → atualização automática do watcher por SSH → healthcheck**. Pull requests apenas executam testes. O botão *Run workflow* é opcional para reexecutar o pipeline, não é necessário para implantar uma alteração.
 
-Configure estes GitHub Actions repository secrets, sem valores padrão:
+O deploy usa os secrets `SSH_KEY`, `SSH_PORT`, `VPS_IP` e `VPS_USER`; `VPS_DEPLOY_DIR` é opcional e vale `/docker/ia-hugo-do-zap`. Não grava tokens ou senhas no repositório. A conta SSH precisa ter acesso ao diretório de deploy e ao Docker. As imagens são publicadas como `latest` e `sha-<commit>`, mas a implantação é fixada ao digest imutável produzido pelo workflow.
 
-- `SSH_KEY`: chave privada de deploy para a conta restrita da VPS (única credencial de autenticação SSH; sem senha).
-- `SSH_PORT`: porta SSH da VPS.
-- `VPS_IP`: endereço usado na conexão SSH.
-- `VPS_USER`: conta SSH de deploy.
-A conexão usa somente `SSH_KEY` para autenticação, mas **não verifica o fingerprint da chave pública do servidor**. Esta simplificação, solicitada para o deploy, reduz a proteção contra ataques man-in-the-middle. Para recuperar essa proteção futuramente, configure a validação explícita do fingerprint da VPS usando a chave verificada pelo console do provedor.
+A ação de deploy altera **apenas** o serviço `watcher` usando `docker compose up -d --no-deps --wait --wait-timeout 240 watcher`. Nunca executa `down`, `--remove-orphans`, prune, migrações SQL manuais nem reinicia Evolution. Arquivos `.env`, banco PostgreSQL, volumes e instâncias existentes são preservados. Os envios reais de WhatsApp continuam sujeitos às flags de opt-in, que o deploy não modifica.
 
-O diretório padrão é `/docker/ia-hugo-do-zap`. Opcionalmente, configure a repository variable `VPS_DEPLOY_DIR` para sobrescrevê-lo com outro caminho absoluto, normalizado e sem segmentos `.` ou `..`. O diretório precisa existir na VPS e conter o `compose.yaml` byte a byte igual ao commit selecionado e o `.env` já configurado. O job não cria diretórios, não grava nem substitui `.env`, não remove containers órfãos e não apaga imagens ou volumes.
+Após um deploy bem-sucedido, `compose.override.yaml` contém a imagem por digest, e `.watcher-deployed-compose.sha256` registra a versão aprovada do `compose.yaml`. Futuras alterações ao Compose no GitHub também são sincronizadas automaticamente, desde que o arquivo da VPS não tenha sido modificado fora do workflow. Se o healthcheck falhar, a configuração anterior é restaurada e, quando havia um watcher saudável, o serviço é reiniciado com a imagem anterior. O workflow falha e registra o erro, sem fingir sucesso.
 
-O workflow usa a [action oficial `appleboy/ssh-action`](https://github.com/appleboy/ssh-action), fixada por SHA de commit. O `DRONE_SSH_VERSION=1.8.1` no ambiente fixa o binário `drone-ssh` sem depender de um input não declarado pela action. `scripts/deploy-vps-action.sh` é um wrapper POSIX enviado por `script_path`; ele decodifica o conteúdo base64 de `scripts/deploy-vps.sh` para um arquivo temporário privado e chama `bash` explicitamente. O wrapper retorna o status do deploy e remove o arquivo temporário. Script, diretório e digest passam codificados, sem interpolação de shell. O deploy ativa `set -euo pipefail`; o wrapper também falha fechado se Bash ou decodificação falhar.
+**Recuperação do bootstrap antigo:** a primeira execução automática reconhece `.watcher-bootstrap.journal` e `.compose.override.yaml.candidate` de uma implantação inicial anterior. Verifica formato, projeto e referência imutável antes de prosseguir. Somente após um watcher saudável move os arquivos legados para uma pasta privada `.watcher-legacy-recovered.*`, sem apagá-los. Journals anteriores inválidos ou incompletos são bloqueados para revisão, não descartados. O novo fluxo não cria journals persistentes que bloqueiem a próxima atualização.
 
-O digest aprovado fica em `compose.override.yaml`, separado do `.env`. O Compose carrega esse override automaticamente em comandos padrão como `docker compose up`; no diretório da VPS, não passe `-f compose.yaml` nem defina `COMPOSE_FILE` ou `COMPOSE_PROJECT_NAME`, pois esses valores podem ignorar o lock ou apontar a outro projeto. `pull_policy: never` faz os comandos padrão usarem o digest local aprovado e falharem, sem pull ou build alternativo, se ele não estiver em cache. No modo `deploy`, o operador fornece um lock para o digest saudável atual. No modo `bootstrap`, o destino não pode ter override; o workflow cria esse lock somente após o novo watcher ficar healthy.
+**Instalação inicial:** o diretório `/docker/ia-hugo-do-zap` já precisa ter `.env` e `compose.yaml`; o PostgreSQL externo, as roles dedicadas e a rede `infra_network` devem existir. A primeira implantação exige que o `compose.yaml` da VPS corresponda ao repositório (para não sobrescrever configurações desconhecidas). A partir do primeiro sucesso, o workflow gerencia atualizações futuras do Compose de forma automática e detecta alterações manuais concorrentes. Para inspecionar o watcher: `cd /docker/ia-hugo-do-zap && docker compose ps watcher && docker compose logs --tail=100 watcher`.
 
-Para `deploy` numa instalação existente, prepare `compose.override.yaml` com o digest saudável já presente no cache Docker:
-
-```yaml
-# Managed by backend deploy workflow; do not edit.
-services:
-  watcher:
-    image: ghcr.io/hugoalves-dev/ia-hugo-do-zap@sha256:<digest-atual-verificado>
-    pull_policy: never
-```
-
-`bootstrap` exige um diretório, `.env` e `compose.yaml` isolados, sem serviço watcher, projeto Compose, volume do projeto, override ou journal anterior. Um lock vazio deixado por uma tentativa que falhou antes de iniciar containers pode ser reutilizado; locks ocupados/não vazios bloqueiam. O nome do diretório precisa ser um project name Docker válido e exclusivo. O job valida os três flags de envio real desligados e exige que Spring e Evolution usem o mesmo hostname/porta PostgreSQL normalizado (porta padrão `5432`), mas bancos e roles distintos. Ele rejeita query parameters, percent-encoding e caracteres não ASCII nesses identificadores, e hostnames diferentes; não faz conexão SQL de identidade. Se as URLs usam aliases DNS diferentes, o bootstrap falha fechado porque não prova que apontam ao mesmo servidor; configure o mesmo host canônico ou resolva a identidade externamente. Ele também exige a rede externa `infra_network`. O bootstrap inicia somente `watcher`, sem iniciar Evolution, e não remove recursos. Após readiness, salva o primeiro digest em `compose.override.yaml`.
-
-Falha antes de iniciar o serviço remove apenas o journal/candidato temporários e permite novo `bootstrap`. Falha depois do start preserva o container, `.compose.override.yaml.candidate` e `.watcher-bootstrap.journal`; outras execuções ficam bloqueadas para revisão. Inspecione o estado sem remover recursos, por exemplo com `docker compose --env-file .env -p <nome-do-diretório> -f compose.yaml -f .compose.override.yaml.candidate ps watcher`. Se o candidato estiver healthy e aprovado pelo operador, promova-o e limpe o journal sob o lock:
-
-```sh
-flock -n .watcher-deploy.lock bash -euo pipefail -c 'mv .compose.override.yaml.candidate compose.override.yaml && rm .watcher-bootstrap.journal'
-```
-
-Se `.compose.override.yaml.candidate` não existir, o processo pode ter parado depois de promover o lock. Não sobrescreva `compose.override.yaml` nem `.env`. Sob o mesmo lock, compare a imagem padrão com o digest do journal, confirme container running/healthy e limpe apenas o journal:
-
-```sh
-set -euo pipefail
-exec 9>>.watcher-deploy.lock
-flock -n 9
-test ! -e .compose.override.yaml.candidate
-grep -Eq '^phase=(promoting|committed)$' .watcher-bootstrap.journal
-candidate_image="$(sed -n 's/^candidate_image=//p' .watcher-bootstrap.journal)"
-current_image="$(docker compose --env-file .env -p "$(basename "$PWD")" config --images watcher)"
-test "$current_image" = "$candidate_image"
-container_id="$(docker compose --env-file .env -p "$(basename "$PWD")" ps -q watcher)"
-test -n "$container_id"
-test "$(docker inspect --format '{{.State.Running}}' "$container_id")" = true
-test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id")" = healthy
-rm -f -- .watcher-bootstrap.journal
-```
-
-Não use `compose down`, prune ou remoção de volumes para recuperar bootstrap.
-
-O workflow falha sem substituir overrides de operador. Para `deploy`, verifica que a imagem anterior está local antes de começar; falha ou timeout restaura esse digest com `--pull never`, sem depender do GHCR. O timeout de readiness é 180 segundos.
-
-Deploys usam o lock exclusivo `.watcher-deploy.lock` via `flock`. Para coordenar comandos Compose manuais que alterem containers, use o mesmo lock, por exemplo `flock -n .watcher-deploy.lock docker compose up -d watcher`. O journal `.watcher-deploy.journal` guarda somente fase, SHA do Compose e digests. Se um deploy existente for interrompido, a próxima execução restaura e verifica o digest anterior, remove o journal e para com instrução para revisão operacional. O bootstrap também usa `.watcher-bootstrap.journal`; se falhar depois de iniciar o watcher, preserva o candidato e o journal, sem apagar containers, `.env` ou volumes. Inspecione com `docker compose -f compose.yaml -f .compose.override.yaml.candidate ps watcher` e os logs antes de resolver manualmente o estado. Journal inválido, Compose divergente ou digest anterior ausente bloqueiam a automação.
-
-Antes do primeiro deploy, a VPS precisa ter Bash, `flock`, `sha256sum`, Docker Compose com `up --wait --wait-timeout`, acesso ao `infra_network`, os bancos PostgreSQL acessíveis e permissões Docker para `VPS_USER`. Se o pacote GHCR não for público, autentique previamente o Docker da VPS com permissão de leitura do pacote. Mantenha o volume `evolution_instances` e a configuração operacional existente; o workflow não copia arquivos, remove serviços/volumes, faz pareamento, cutover ou ativa flags de envio real.
+A conexão SSH continua autenticada exclusivamente por `SSH_KEY`; esta implementação não acrescenta verificação explícita do fingerprint do host, conforme a configuração anterior. Para endurecer a segurança posteriormente, valide o fingerprint conhecido da VPS.
 
 ## Importação explícita de snapshot legado
 
