@@ -62,6 +62,31 @@ class BackendWorkflowContractTest(unittest.TestCase):
         for bad in ("docker compose down", "docker volume rm", "--remove-orphans", "docker image prune", "docker system prune"):
             self.assertNotIn(bad, SCRIPT + WORKFLOW)
 
+    def test_compose_passes_ai_controls_on_recreation(self):
+        names = {
+            "WATCHER_AI_CLASSIFICATION_ENABLED": "true",
+            "WATCHER_AI_DISABLE_LOCAL_BUDGET": "true",
+            "WATCHER_AI_REQUIRE_CHAT_CONSENT": "false",
+            "WATCHER_AUTOMATION_KILL_SWITCH_ENABLED": "false",
+            "WATCHER_AUTOMATION_INTELLIGENT_ALERTS_ENABLED": "false",
+            "WATCHER_AUTOMATION_AUTO_REPLY_ENABLED": "false",
+            "WATCHER_SIMULATION_ENABLED": "true",
+        }
+        env = os.environ.copy()
+        env.update(names)
+        result = subprocess.run(["docker", "compose", "--env-file", str(ROOT / ".env.example"),
+                                 "config", "--format", "json"], cwd=ROOT, env=env,
+                                text=True, capture_output=True, check=True)
+        watcher = json.loads(result.stdout)["services"]["watcher"]["environment"]
+        for name, value in names.items():
+            self.assertEqual(value, str(watcher[name]).lower(), name)
+        env["WATCHER_AI_CLASSIFICATION_ENABLED"] = "false"
+        second = subprocess.run(["docker", "compose", "--env-file", str(ROOT / ".env.example"),
+                                 "config", "--format", "json"], cwd=ROOT, env=env,
+                                text=True, capture_output=True, check=True)
+        self.assertEqual("false", str(json.loads(second.stdout)["services"]["watcher"]["environment"]
+                                      ["WATCHER_AI_CLASSIFICATION_ENABLED"]).lower())
+
     def test_shell_syntax_and_missing_arguments(self):
         self.assertEqual(0, subprocess.run([BASH, "-n"], input=SCRIPT, text=True, capture_output=True).returncode)
         result = subprocess.run([BASH, "-s"], input=SCRIPT, text=True, capture_output=True)
