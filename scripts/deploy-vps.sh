@@ -93,7 +93,7 @@ fi
 printf '# Managed by backend deploy workflow; do not edit.\nservices:\n  watcher:\n    image: %s\n    pull_policy: never\n' "$image" > "$new_override"
 # Pull first so a missing GHCR image cannot modify a running service.
 docker pull "$image" || fail "Could not pull approved image"
-if [[ "$current" != "$expected" ]]; then cp "$incoming" compose.yaml; fi
+if [[ "$current" != "$expected" ]]; then mv -f -- "$incoming" compose.yaml; fi
 mv -f -- "$new_override" compose.override.yaml
 
 if ! (docker compose --env-file .env config --quiet &&
