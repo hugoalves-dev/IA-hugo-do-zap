@@ -189,7 +189,11 @@ jobs:
             echo "VPS_KNOWN_HOSTS does not contain the configured VPS host and port." >&2
             exit 1
           }
-          mapfile -t host_keys < <(printf '%s\n' "$known_host_entries" | awk '!/^#/ && NF >= 3 { if ($1 ~ /^@/) print $3, $4; else print $2, $3 }' | sort -u)
+          if printf '%s\n' "$known_host_entries" | awk '!/^#/ && $1 ~ /^@/ { marked = 1 } END { exit !marked }'; then
+            echo "VPS_KNOWN_HOSTS entries marked with @ are not supported." >&2
+            exit 1
+          fi
+          mapfile -t host_keys < <(printf '%s\n' "$known_host_entries" | awk '!/^#/ && NF >= 3 && $1 !~ /^@/ { print $2, $3 }' | sort -u)
           if (( ${#host_keys[@]} != 1 )); then
             echo "VPS_KNOWN_HOSTS must resolve to exactly one verified host public key." >&2
             exit 1
@@ -205,13 +209,16 @@ jobs:
 
           deploy_dir_b64="$(printf '%s' "$VPS_DEPLOY_DIR" | base64 --wrap=0)"
           image_ref_b64="$(printf '%s' "$IMAGE_REF" | base64 --wrap=0)"
-          printf 'VPS_DEPLOY_DIR_B64=%s\nIMAGE_REF_B64=%s\nCOMPOSE_SHA256=%s\nDEPLOY_MODE=%s\n' \
-            "$deploy_dir_b64" "$image_ref_b64" "$COMPOSE_SHA256" "$MODE" >> "$GITHUB_ENV"
+          deploy_script_b64="$(base64 --wrap=0 scripts/deploy-vps.sh)"
+          printf 'DEPLOY_SCRIPT_B64=%s\nVPS_DEPLOY_DIR_B64=%s\nIMAGE_REF_B64=%s\nCOMPOSE_SHA256=%s\nDEPLOY_MODE=%s\n' \
+            "$deploy_script_b64" "$deploy_dir_b64" "$image_ref_b64" "$COMPOSE_SHA256" "$MODE" >> "$GITHUB_ENV"
           printf 'fingerprint=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
 
       - name: Deploy watcher by immutable image digest
         uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f
         env:
+          DRONE_SSH_VERSION: 1.8.1
+          DEPLOY_SCRIPT_B64: ${{ env.DEPLOY_SCRIPT_B64 }}
           VPS_DEPLOY_DIR_B64: ${{ env.VPS_DEPLOY_DIR_B64 }}
           IMAGE_REF_B64: ${{ env.IMAGE_REF_B64 }}
           COMPOSE_SHA256: ${{ env.COMPOSE_SHA256 }}
@@ -222,7 +229,6 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_KEY }}
           fingerprint: ${{ steps.ssh.outputs.fingerprint }}
-          version: 1.8.1
           command_timeout: 15m
-          envs: VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_SHA256,DEPLOY_MODE
-          script_path: scripts/deploy-vps.sh
+          envs: DEPLOY_SCRIPT_B64,VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_SHA256,DEPLOY_MODE
+          script_path: scripts/deploy-vps-action.sh

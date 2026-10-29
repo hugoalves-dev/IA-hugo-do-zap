@@ -10,12 +10,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "backend.yml"
 BASH_PATH = shutil.which("bash") or "bash"
+SH_PATH = shutil.which("sh") or "sh"
 if os.name == "nt":
     git_bash = Path("C:/Program Files/Git/bin/bash.exe")
     if not git_bash.exists():
         git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git" / "bin" / "bash.exe"
     if git_bash.exists():
         BASH_PATH = str(git_bash)
+        SH_PATH = str(git_bash.with_name("sh.exe"))
 
 
 class BackendWorkflowContractTest(unittest.TestCase):
@@ -85,15 +87,47 @@ class BackendWorkflowContractTest(unittest.TestCase):
             self.assertIn(f"secrets.{name}", deploy)
         self.assertRegex(deploy, r"uses: appleboy/ssh-action@[0-9a-f]{40}")
         self.assertIn("fingerprint:", deploy)
-        self.assertIn("version:", deploy)
-        self.assertIn("script_path: scripts/deploy-vps.sh", deploy)
+        self.assertIn("DRONE_SSH_VERSION: 1.8.1", deploy)
+        self.assertIn("script_path: scripts/deploy-vps-action.sh", deploy)
         action = deploy.split("uses: appleboy/ssh-action", maxsplit=1)[1]
         self.assertNotIn("VPS_KNOWN_HOSTS", action)
         self.assertNotIn("debug: true", action)
         self.assertIn("!/^#/ && NF >= 3", deploy)
+        self.assertIn("VPS_KNOWN_HOSTS entries marked with @ are not supported", deploy)
+        marker_rejection = "awk '!/^#/ && $1 ~ /^@/ { marked = 1 } END { exit !marked }'"
+        self.assertIn(marker_rejection, deploy)
+        self.assertLess(deploy.index(marker_rejection), deploy.index("mapfile -t host_keys"))
         self.assertNotIn("ssh-keyscan", deploy)
         self.assertNotIn("StrictHostKeyChecking=no", deploy)
         self.assertNotIn("StrictHostKeyChecking=yes", deploy)
+
+    def test_ssh_action_pins_drone_ssh_through_environment(self):
+        deploy = self.job("deploy-vps")
+        action = deploy.split("uses: appleboy/ssh-action", maxsplit=1)[1]
+        self.assertIn("DRONE_SSH_VERSION: 1.8.1", action)
+        self.assertNotRegex(action, r"(?m)^\s+version:")
+        self.assertIn("DEPLOY_SCRIPT_B64: ${{ env.DEPLOY_SCRIPT_B64 }}", action)
+        self.assertIn("DEPLOY_SCRIPT_B64,VPS_DEPLOY_DIR_B64", action)
+
+    def test_action_wrapper_runs_bash_and_propagates_its_failure_from_sh(self):
+        wrapper = ROOT / "scripts" / "deploy-vps-action.sh"
+        self.assertTrue(wrapper.exists(), "missing POSIX wrapper for explicit Bash execution")
+        wrapper_text = wrapper.read_text(encoding="utf-8")
+        self.assertTrue(wrapper_text.startswith("#!/bin/sh\nset -eu\n"))
+        self.assertIn('printf \'%s\' "$DEPLOY_SCRIPT_B64" | base64 -d > "$script_file"', wrapper_text)
+        self.assertIn('bash "$script_file"', wrapper_text)
+        environment = os.environ.copy()
+        environment["DEPLOY_SCRIPT_B64"] = base64.b64encode(
+            b'test -n "$BASH_VERSION" || exit 98\nexit 37\n'
+        ).decode("ascii")
+        completed = subprocess.run(
+            [SH_PATH, str(wrapper)],
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 37, completed.stderr)
 
     def test_deploy_script_uses_action_environment_and_fails_fast(self):
         script = (ROOT / "scripts" / "deploy-vps.sh").read_text(encoding="utf-8")
@@ -141,7 +175,8 @@ class BackendWorkflowContractTest(unittest.TestCase):
         deploy = self.job("deploy-vps")
         script = (ROOT / "scripts" / "deploy-vps.sh").read_text(encoding="utf-8")
         self.assertIn("base64 --wrap=0", deploy)
-        self.assertIn("envs: VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_SHA256,DEPLOY_MODE", deploy)
+        self.assertIn('deploy_script_b64="$(base64 --wrap=0 scripts/deploy-vps.sh)"', deploy)
+        self.assertIn("envs: DEPLOY_SCRIPT_B64,VPS_DEPLOY_DIR_B64,IMAGE_REF_B64,COMPOSE_SHA256,DEPLOY_MODE", deploy)
         self.assertIn("base64 -d", script)
         self.assertIn("/docker/ia-hugo-do-zap", deploy)
         self.assertIn("VPS_DEPLOY_DIR", deploy)
