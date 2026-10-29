@@ -1,9 +1,11 @@
 from pathlib import Path
 import base64
+import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 
@@ -227,6 +229,95 @@ class BackendWorkflowContractTest(unittest.TestCase):
         self.assertIn("[[ -f .env ]]", script)
         for destructive in ("docker image prune", "--remove-orphans", "docker compose down", "docker volume rm"):
             self.assertNotIn(destructive, deploy + script)
+
+    def test_compose_default_and_local_postgres_profiles_are_isolated_and_documented(self):
+        compose = ROOT / "compose.yaml"
+        env_values = {
+            "SPRING_DATASOURCE_URL": "jdbc:postgresql://postgres.synthetic.invalid:5432/watcher",
+            "SPRING_DATASOURCE_USERNAME": "watcher_app",
+            "SPRING_DATASOURCE_PASSWORD": "synthetic-watcher-password",
+            "EVOLUTION_DATABASE_URL": "postgresql://evolution_app:synthetic-evolution-password@postgres.synthetic.invalid:5432/evolution",
+            "WATCHER_TELEGRAM_BOT_TOKEN": "synthetic-token",
+            "WATCHER_TELEGRAM_CHAT_ID": "123456789",
+            "WATCHER_EVOLUTION_WEBHOOK_TOKEN": "synthetic-webhook-token",
+            "EVOLUTION_API_KEY": "synthetic-evolution-api-key",
+            "EVOLUTION_IMAGE": "evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339",
+            "REDIS_IMAGE": "redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952",
+            "WATCHER_AI_ENABLED": "true",
+            "WATCHER_AI_GEMINIAPIKEY": "synthetic-gemini-key",
+            "WATCHER_AI_GEMINIMODEL": "synthetic-gemini-model",
+            "WATCHER_AI_OPENROUTERAPIKEY": "synthetic-openrouter-key",
+            "WATCHER_AI_OPENROUTERMODEL": "synthetic/openrouter-model",
+            "WATCHER_AI_ATTEMPTHOLDMICROS": "250000",
+            "WATCHER_AI_TIMEOUT": "15s",
+            "LOCAL_POSTGRES_IMAGE": "postgres:17.11-alpine3.23@sha256:01ea903aa65deb58eb49d6e09d859ecff63a6bb7d61feca55f2abad71d08f72a",
+            "LOCAL_WATCHER_DB_NAME": "synthetic_watcher",
+            "LOCAL_WATCHER_DB_USER": "synthetic_watcher_role",
+            "LOCAL_WATCHER_DB_PASSWORD": "synthetic-only-watcher-password",
+            "LOCAL_EVOLUTION_DB_NAME": "synthetic_evolution",
+            "LOCAL_EVOLUTION_DB_USER": "synthetic_evolution_role",
+            "LOCAL_EVOLUTION_DB_PASSWORD": "synthetic-only-evolution-password",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text("".join(f"{key}={value}\n" for key, value in env_values.items()), encoding="utf-8")
+
+            def config(*profiles):
+                command = ["docker", "compose", "--env-file", str(env_file), "-f", str(compose)]
+                for profile in profiles:
+                    command.extend(("--profile", profile))
+                command.extend(("config", "--format", "json"))
+                result = subprocess.run(command, capture_output=True, text=True, check=False)
+                self.assertEqual(0, result.returncode, result.stderr)
+                return json.loads(result.stdout)
+
+            default = config()
+            self.assertEqual({"watcher", "evolution-api", "redis"}, set(default["services"]))
+            self.assertEqual("evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339", default["services"]["evolution-api"]["image"])
+            self.assertEqual("redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952", default["services"]["redis"]["image"])
+            self.assertNotIn("ports", default["services"]["redis"])
+            self.assertEqual("service_healthy", default["services"]["evolution-api"]["depends_on"]["redis"]["condition"])
+            self.assertEqual("127.0.0.1", default["services"]["evolution-api"]["ports"][0]["host_ip"])
+            self.assertIn("postgres.synthetic.invalid", default["services"]["watcher"]["environment"]["SPRING_DATASOURCE_URL"])
+            watcher_env = default["services"]["watcher"]["environment"]
+            for name in ("WATCHER_AI_ENABLED", "WATCHER_AI_GEMINIAPIKEY", "WATCHER_AI_GEMINIMODEL",
+                         "WATCHER_AI_OPENROUTERAPIKEY", "WATCHER_AI_OPENROUTERMODEL",
+                         "WATCHER_AI_ATTEMPTHOLDMICROS", "WATCHER_AI_TIMEOUT"):
+                self.assertEqual(env_values[name], watcher_env[name])
+
+            local = config("local-db")
+            self.assertEqual({"postgres-local-watcher", "postgres-local-evolution"}, set(local["services"]) - set(default["services"]))
+            watcher_db = local["services"]["postgres-local-watcher"]
+            evolution_db = local["services"]["postgres-local-evolution"]
+            self.assertEqual("postgres:17.11-alpine3.23@sha256:01ea903aa65deb58eb49d6e09d859ecff63a6bb7d61feca55f2abad71d08f72a", watcher_db["image"])
+            self.assertEqual(watcher_db["image"], evolution_db["image"])
+            self.assertTrue(watcher_db["healthcheck"])
+            self.assertTrue(evolution_db["healthcheck"])
+            self.assertNotIn("ports", watcher_db)
+            self.assertNotIn("ports", evolution_db)
+            self.assertNotEqual(watcher_db["environment"]["POSTGRES_DB"], evolution_db["environment"]["POSTGRES_DB"])
+            self.assertNotEqual(watcher_db["environment"]["POSTGRES_USER"], evolution_db["environment"]["POSTGRES_USER"])
+            self.assertNotEqual(watcher_db["volumes"][0], evolution_db["volumes"][0])
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for required_text in (
+            "TypeScript legado",
+            "opção de rollback até o cutover ser validado",
+            "--profile local-db",
+            "POST /instance/create",
+            "GET /instance/connect/watcher-evolution",
+            "WhatsApp → Aparelhos conectados",
+            "localhost:8080",
+            "Nunca publique, envie em chat ou registre captura do QR Code",
+            "WATCHER_AI_GEMINIAPIKEY",
+            "WATCHER_AI_OPENROUTERAPIKEY",
+            "WATCHER_AI_ENABLED",
+            "ai_data_consents",
+            "As migrações deixam o gate de classificação desligado, não criam consentimentos e não inserem limites",
+            "só é chamado após uma falha técnica do Gemini",
+            "Não há atualmente comando ou tela suportados para ligar `ai_classification_enabled`",
+        ):
+            self.assertIn(required_text, readme)
 
 
 if __name__ == "__main__":
