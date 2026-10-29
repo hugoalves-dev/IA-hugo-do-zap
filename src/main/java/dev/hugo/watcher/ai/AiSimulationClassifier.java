@@ -38,7 +38,7 @@ public final class AiSimulationClassifier {
         if (TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("provider calls must run outside SQL transactions");
         if (!properties.configured() || !eligible(batch)) return Classification.unavailable();
-        Set<Situation> purposes = consents(batch.chatJid(), "gemini");
+        Set<Situation> purposes = consents(batch.chatJid(), "openrouter");
         purposes = contextualPurposes(batch, purposes);
         if (purposes.isEmpty()) return Classification.unavailable();
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
@@ -58,16 +58,16 @@ public final class AiSimulationClassifier {
             return Classification.unavailable(); // crashed/ambiguous claim is never redispatched automatically
         }
         ProviderTransport http = transport == null ? new JdkProviderTransport() : transport;
-        var usedProvider = new java.util.concurrent.atomic.AtomicReference<>("gemini");
-        // Transport owns the authoritative gate directly before every HTTP attempt.
-        var gemini = new GeminiProvider(URI.create("https://generativelanguage.googleapis.com/v1beta/models"),
-                properties.geminiModel(), properties.geminiApiKey(), guarded(http, batch, "gemini", approvedPurposes, usedProvider),
-                (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
-        ClassificationProvider fallback = null;
-        if (properties.fallbackConfigured()) fallback = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
+        var usedProvider = new java.util.concurrent.atomic.AtomicReference<>("openrouter");
+        // Revalidate authorization and reserve a separate budget for each HTTP attempt.
+        var primary = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                 properties.openRouterModel(), properties.openRouterApiKey(), guarded(http, batch, "openrouter", approvedPurposes, usedProvider),
                 (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
-        ClassificationResult result = new ClassificationService(gemini, fallback).classify(input);
+        ClassificationProvider fallback = null;
+        if (properties.fallbackConfigured()) fallback = new GeminiProvider(URI.create("https://generativelanguage.googleapis.com/v1beta/models"),
+                properties.geminiModel(), properties.geminiApiKey(), guarded(http, batch, "gemini", approvedPurposes, usedProvider),
+                (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
+        ClassificationResult result = new ClassificationService(primary, fallback).classify(input);
         Classification classification = authorized(batch, usedProvider.get(), purposes) ? convert(batch, result, purposes) : Classification.unavailable();
         int saved = jdbc.update("update simulation_ai_evaluations set result=?::jsonb where batch_id=? and lease_token=? and expires_at>?",
                 encode(classification, usedProvider.get(), purposes), batch.id(), token, Timestamp.from(clock.instant()));

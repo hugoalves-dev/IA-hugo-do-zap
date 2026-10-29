@@ -10,13 +10,13 @@ public record AiClassificationProperties(boolean enabled, String geminiApiKey, S
                                          long attemptHoldMicros, Duration timeout, String ownJid) {
     @Override public String toString() { return "AiClassificationProperties[credentials=REDACTED,enabled=" + enabled + "]"; }
     public boolean configured() {
-        return enabled && geminiApiKey != null && !geminiApiKey.isBlank()
-                && geminiModel != null && geminiModel.matches("[A-Za-z0-9._-]+")
+        return enabled && openRouterApiKey != null && !openRouterApiKey.isBlank()
+                && openRouterModel != null && openRouterModel.matches("[A-Za-z0-9._/-]+")
                 && attemptHoldMicros > 0 && timeout != null && !timeout.isNegative() && !timeout.isZero()
                 && timeout.compareTo(Duration.ofSeconds(30)) <= 0;
     }
     public boolean fallbackConfigured() {
-        return openRouterApiKey != null && !openRouterApiKey.isBlank()
-                && openRouterModel != null && openRouterModel.matches("[A-Za-z0-9._/-]+");
+        return geminiApiKey != null && !geminiApiKey.isBlank()
+                && geminiModel != null && geminiModel.matches("[A-Za-z0-9._-]+");
     }
 }

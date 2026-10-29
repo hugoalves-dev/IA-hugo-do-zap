@@ -17,13 +17,13 @@ class ClassificationServiceTest {
     @Test void authorizationDenialStopsBeforeFallback() {
         AtomicInteger fallbackCalls = new AtomicInteger();
         ClassificationProvider primary = new ClassificationProvider() {
-            @Override public String name() { return "gemini"; }
+            @Override public String name() { return "openrouter"; }
             @Override public ClassificationResult classify(ClassificationInput input) {
-                throw ClassificationProviderException.authorizationDenied("gemini");
+                throw ClassificationProviderException.authorizationDenied("openrouter");
             }
         };
         ClassificationProvider fallback = new ClassificationProvider() {
-            @Override public String name() { return "openrouter"; }
+            @Override public String name() { return "gemini"; }
             @Override public ClassificationResult classify(ClassificationInput input) {
                 fallbackCalls.incrementAndGet();
                 return ClassificationResult.classified(ClassificationResult.Intent.CONTACT_REQUEST,
@@ -40,14 +40,14 @@ class ClassificationServiceTest {
     @Test void technicalFailureUsesFallbackButPromptCannotCarryIdentifiers() {
         AtomicInteger fallbackCalls = new AtomicInteger();
         ClassificationProvider primary = new ClassificationProvider() {
-            @Override public String name() { return "gemini"; }
+            @Override public String name() { return "openrouter"; }
             @Override public ClassificationResult classify(ClassificationInput input) {
                 assertEquals(List.of("hello"), input.messages());
-                throw ClassificationProviderException.technical("gemini");
+                throw ClassificationProviderException.technical("openrouter");
             }
         };
         ClassificationProvider fallback = new ClassificationProvider() {
-            @Override public String name() { return "openrouter"; }
+            @Override public String name() { return "gemini"; }
             @Override public ClassificationResult classify(ClassificationInput input) {
                 fallbackCalls.incrementAndGet();
                 return ClassificationResult.classified(ClassificationResult.Intent.CONTACT_REQUEST,
@@ -63,7 +63,7 @@ class ClassificationServiceTest {
 
     @Test void uncertainProviderResultStaysUncertain() {
         ClassificationProvider provider = new ClassificationProvider() {
-            @Override public String name() { return "gemini"; }
+            @Override public String name() { return "openrouter"; }
             @Override public ClassificationResult classify(ClassificationInput input) {
                 return ClassificationResult.classified(ClassificationResult.Intent.CONTACT_REQUEST,
                         true, ClassificationResult.Urgency.NORMAL, List.of(), 0.2);
@@ -77,13 +77,13 @@ class ClassificationServiceTest {
     @Test void invalidResponseDoesNotTriggerProviderFallback() {
         AtomicInteger fallbackCalls = new AtomicInteger();
         ClassificationProvider primary = new ClassificationProvider() {
-            @Override public String name() { return "gemini"; }
+            @Override public String name() { return "openrouter"; }
             @Override public ClassificationResult classify(ClassificationInput input) {
                 throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE);
             }
         };
         ClassificationProvider fallback = new ClassificationProvider() {
-            @Override public String name() { return "openrouter"; }
+            @Override public String name() { return "gemini"; }
             @Override public ClassificationResult classify(ClassificationInput input) {
                 fallbackCalls.incrementAndGet();
                 return ClassificationResult.uncertain();

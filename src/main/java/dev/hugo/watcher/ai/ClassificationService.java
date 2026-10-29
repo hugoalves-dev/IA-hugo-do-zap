@@ -4,7 +4,7 @@ import dev.hugo.watcher.simulation.Batch;
 
 import java.util.Objects;
 
-/** Gemini is primary. OpenRouter is used only after a technical Gemini failure. */
+/** OpenRouter is primary; optional Gemini fallback runs only on technical failures. */
 public final class ClassificationService {
     private final ClassificationProvider primary;
     private final ClassificationProvider fallback;

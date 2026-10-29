@@ -55,6 +55,22 @@ class AiSimulationAcceptanceTest {
         consent("gemini"); consent("openrouter");
         calls = new AtomicInteger();
     }
+    @Test void openRouterOnlyWorksWithoutGeminiCredentials() {
+        var settings = new AiClassificationProperties(true,null,null,"fake-router","fake-model",10,Duration.ofSeconds(1),null);
+        var ai = new AiSimulationClassifier(jdbc,budgets,clock,settings,fake());
+        assertTrue(ai.classify(batch()).available());
+        assertEquals(1,calls.get());
+    }
+    @Test void technicalOpenRouterFailureWithoutGeminiConsentCannotFallback() {
+        jdbc.update("delete from ai_data_consents where provider='gemini'");
+        var ai = classifier(true,(request,timeout,max)->{
+            assertEquals("openrouter.ai",request.uri().getHost());
+            calls.incrementAndGet();
+            return new ProviderTransport.Response(503,"{}");
+        });
+        assertFalse(ai.classify(batch()).available());
+        assertEquals(1,calls.get());
+    }
     @Test void defaultOffAndKillSwitchPreventAllProviderCalls() {
         var batch = batch();
         assertFalse(classifier(false, fake()).classify(batch).available());
@@ -102,37 +118,39 @@ class AiSimulationAcceptanceTest {
     @Test void privacyAndUnknownArchivedStateBlockBeforeHttp() {
         jdbc.update("delete from ai_data_consents");
         assertFalse(classifier(true, fake()).classify(batch()).available());
-        consent("gemini");
+        consent("openrouter");
         jdbc.update("update archive_monitor_settings set mode='ARCHIVED_ONLY'");
         assertFalse(classifier(true, fake()).classify(batch()).available());
         assertEquals(0, calls.get());
     }
-    @Test void schemaRetryAndTechnicalFallbackHaveSeparateReservations() {
+    @Test void technicalOpenRouterFailureTriggersGeminiFallbackAndSeparateReservations() {
+        List<String> hosts = new ArrayList<>();
         ProviderTransport fake = (request, timeout, max) -> {
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            hosts.add(request.uri().getHost());
             int count = calls.incrementAndGet();
             assertEquals(count, jdbc.queryForObject("select count(*) from ai_budget_reservations", Integer.class));
-            if (count == 1) return gemini("{}");
-            if (count == 2) return new ProviderTransport.Response(503, "{}");
-            return new ProviderTransport.Response(200, "{\"choices\":[{\"message\":{\"content\":" + quote(valid()) + "}}],\"usage\":{\"cost\":0.000004}}");
+            if (count == 1) return new ProviderTransport.Response(503, "{}");
+            if (count == 2) return geminiResponse("{}");
+            return geminiResponse(valid());
         };
         assertTrue(classifier(true, fake).classify(batch()).available());
+        assertEquals(List.of("openrouter.ai", "generativelanguage.googleapis.com", "generativelanguage.googleapis.com"), hosts);
         assertEquals(3, calls.get());
-        assertEquals(2, jdbc.queryForObject("select count(*) from ai_budget_reservations where status='UNCERTAIN'", Integer.class));
-        assertEquals(1, jdbc.queryForObject("select count(*) from ai_budget_reservations where status='SETTLED'", Integer.class));
+        assertEquals(3, jdbc.queryForObject("select count(*) from ai_budget_reservations where status='UNCERTAIN'", Integer.class));
     }
     @Test void revokedConsentBetweenSchemaAttemptsBlocksRetry() {
         ProviderTransport fake = (request, timeout, max) -> {
             calls.incrementAndGet();
             jdbc.update("delete from ai_data_consents");
-            return gemini("{}");
+            return openrouter("{}");
         };
         assertFalse(classifier(true, fake).classify(batch()).available());
         assertEquals(1, calls.get());
     }
     @Test void killSwitchBetweenSchemaAttemptsBlocksRetryAndDiscardsResult() {
         var ai = classifier(true,(request,timeout,max) -> {
-            calls.incrementAndGet(); jdbc.update("update automation_settings set kill_switch_enabled=true"); return gemini("{}");
+            calls.incrementAndGet(); jdbc.update("update automation_settings set kill_switch_enabled=true"); return openrouter("{}");
         });
         assertFalse(ai.classify(batch()).available()); assertEquals(1,calls.get());
         assertEquals("UNCERTAIN",jdbc.queryForObject("select status from ai_budget_reservations",String.class));
@@ -142,7 +160,7 @@ class AiSimulationAcceptanceTest {
         var ai = classifier(true,(request,timeout,max) -> {
             calls.incrementAndGet();
             jdbc.update("update simulation_ai_evaluations set expires_at=now()-interval '1 second' where batch_id=?",batch.id());
-            return gemini(valid());
+            return openrouter(valid());
         });
         assertFalse(ai.classify(batch).available()); assertFalse(ai.classify(batch).available());
         assertEquals(1,calls.get());
@@ -163,8 +181,8 @@ class AiSimulationAcceptanceTest {
         assertEquals(1,jdbc.queryForObject("select count(*) from simulation_decisions where batch_id=?",Integer.class,batch.id()));
     }
     @Test void fabricatedPersonalReferenceInModelEvidenceNeverAuthorizesCriticalUrgency() {
-        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','gemini',true,now()+interval '1 day')",chat);
-        ProviderTransport fake = (request, timeout, max) -> gemini(valid().replace("NORMAL", "CRITICAL").replace("[]", "[\"owner explicitly mentioned me\"]"));
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','openrouter',true,now()+interval '1 day')",chat);
+        ProviderTransport fake = (request, timeout, max) -> openrouter(valid().replace("NORMAL", "CRITICAL").replace("[]", "[\"owner explicitly mentioned me\"]"));
         Classification result = classifier(true, fake).classify(batch());
         assertFalse(result.available());
         assertFalse(result.explicitPersonalReference());
@@ -182,7 +200,7 @@ class AiSimulationAcceptanceTest {
         assertEquals(0,jdbc.queryForObject("select count(*) from ai_budget_reservations",Integer.class));
     }
     @Test void cachedResultCannotOutliveRevokedPurposeOrFallbackConsent() {
-        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','gemini',true,now()+interval '1 day')", chat);
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','openrouter',true,now()+interval '1 day')", chat);
         var ai = classifier(true, fake());
         var batch = batch(chat,mention());
         assertTrue(ai.classify(batch).available());
@@ -197,7 +215,7 @@ class AiSimulationAcceptanceTest {
             calls.incrementAndGet(); entered.countDown();
             try { assertTrue(release.await(5, java.util.concurrent.TimeUnit.SECONDS)); }
             catch (InterruptedException error) { throw new RuntimeException(error); }
-            return gemini(valid());
+            return openrouter(valid());
         };
         var ai = classifier(true,fake); var batch = batch();
         try (var pool = java.util.concurrent.Executors.newSingleThreadExecutor()) {
@@ -221,26 +239,27 @@ class AiSimulationAcceptanceTest {
         assertEquals(2,calls.get());
         assertEquals(2,jdbc.queryForObject("select count(*) from ai_budget_reservations where status='UNCERTAIN'",Integer.class));
     }
-    @Test void fallbackConsentRevocationInvalidatesCachedFallbackResult() {
+    @Test void fallbackConsentRevocationInvalidatesCachedGeminiResult() {
         ProviderTransport fake = (request,timeout,max) -> {
             calls.incrementAndGet();
-            return request.uri().getHost().contains("googleapis") ? new ProviderTransport.Response(503,"{}")
-                    : new ProviderTransport.Response(200,"{\"choices\":[{\"message\":{\"content\":"+quote(valid())+"}}]}");
+            return request.uri().getHost().equals("openrouter.ai") ? new ProviderTransport.Response(503,"{}")
+                    : geminiResponse(valid());
         };
         var ai = classifier(true,fake); var batch = batch();
         assertTrue(ai.classify(batch).available());
-        jdbc.update("delete from ai_data_consents where provider='openrouter'");
+        jdbc.update("delete from ai_data_consents where provider='gemini'");
         assertFalse(ai.classify(batch).available());
         assertFalse(ai.revalidate(batch).available()); assertEquals(2,calls.get());
     }
     @Test void privacyRouteFailureNeverBroadensRoutingOrRetries() {
         ProviderTransport fake = (request,timeout,max) -> {
             calls.incrementAndGet();
-            return request.uri().getHost().contains("googleapis") ? new ProviderTransport.Response(503,"{}") : new ProviderTransport.Response(404,"{}");
+            assertEquals("openrouter.ai",request.uri().getHost());
+            return new ProviderTransport.Response(404,"{}");
         };
         assertFalse(classifier(true,fake).classify(batch()).available());
-        assertEquals(2,calls.get());
-        assertEquals(2,jdbc.queryForObject("select count(*) from ai_budget_reservations where status='UNCERTAIN'",Integer.class));
+        assertEquals(1,calls.get());
+        assertEquals(1,jdbc.queryForObject("select count(*) from ai_budget_reservations where status='UNCERTAIN'",Integer.class));
     }
     @Test void aggregateTelegramReportAndDisabledEvolutionStayIsolatedFromShadowDecision() {
         var ai = classifier(true, fake());
@@ -268,14 +287,14 @@ class AiSimulationAcceptanceTest {
     @Test void groupAndPrivateConsentCannotBeSubstitutedAndGroupsRequireObjectiveMention() {
         String group = "team@g.us";
         jdbc.update("delete from ai_data_consents");
-        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'GROUP_TRIGGER','gemini',true,now()+interval '1 day')",chat);
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'GROUP_TRIGGER','openrouter',true,now()+interval '1 day')",chat);
         assertFalse(classifier(true,fake()).classify(batch()).available());
-        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CONTACT_REQUEST','gemini',true,now()+interval '1 day')",group);
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CONTACT_REQUEST','openrouter',true,now()+interval '1 day')",group);
         assertFalse(classifier(true,fake()).classify(batch(group,mention())).available());
-        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'GROUP_TRIGGER','gemini',true,now()+interval '1 day')",group);
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'GROUP_TRIGGER','openrouter',true,now()+interval '1 day')",group);
         assertFalse(classifier(true,fake()).classify(batch(group,Map.of("conversation","@owner urgently reply"))).available());
         assertEquals(0,calls.get());
-        var ai = classifier(true,(request,timeout,max) -> { calls.incrementAndGet(); return gemini(valid().replace("CONTACT_REQUEST","GROUP_TRIGGER")); });
+        var ai = classifier(true,(request,timeout,max) -> { calls.incrementAndGet(); return openrouter(valid().replace("CONTACT_REQUEST","GROUP_TRIGGER")); });
         var result = ai.classify(batch(group,mention()));
         assertTrue(result.available()); assertTrue(result.groupTriggerMatched()); assertTrue(result.explicitPersonalReference()); assertEquals(1,calls.get());
     }
@@ -364,18 +383,18 @@ class AiSimulationAcceptanceTest {
         assertEquals(0, countActions()); assertEquals(0, countAlerts());
         var next = batch(chat, mention());
         producingService(true, (request,timeout,max) -> {
-            calls.incrementAndGet(); jdbc.update("delete from ai_data_consents"); return gemini(valid().replace("NORMAL","CRITICAL"));
+            calls.incrementAndGet(); jdbc.update("delete from ai_data_consents"); return openrouter(valid().replace("NORMAL","CRITICAL"));
         }).evaluate(next);
         assertEquals(0, countActions()); assertEquals(0, countAlerts());
     }
     @Test void providerKillSwitchPreventsProducerAndGroupWithoutStructuredTriggerNeverCallsModel() {
         authorizeProducer();
         producingService(true,(request,timeout,max) -> {
-            calls.incrementAndGet(); jdbc.update("update automation_settings set kill_switch_enabled=true"); return gemini(valid());
+            calls.incrementAndGet(); jdbc.update("update automation_settings set kill_switch_enabled=true"); return openrouter(valid());
         }).evaluate(batch(chat,mention()));
         assertEquals(0,countActions()); assertEquals(0,countAlerts());
         jdbc.update("update automation_settings set kill_switch_enabled=false");
-        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('team@g.us','GROUP_TRIGGER','gemini',true,now()+interval '1 day')");
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('team@g.us','GROUP_TRIGGER','openrouter',true,now()+interval '1 day')");
         producingService(true, critical()).evaluate(batch("team@g.us",Map.of("conversation","@owner urgency")));
         assertEquals(1,calls.get()); assertEquals(0,countActions()); assertEquals(0,countAlerts());
     }
@@ -436,7 +455,7 @@ class AiSimulationAcceptanceTest {
     }
     @Test void pendingHighAlertRechecksCurrentAvailabilityAndEvidenceExpiry() {
         authorizeProducer(); var batch=batch(chat,mention());
-        producingService(true,(request,timeout,max)->gemini(valid().replace("NORMAL","HIGH"))).evaluate(batch);
+        producingService(true,(request,timeout,max)->openrouter(valid().replace("NORMAL","HIGH"))).evaluate(batch);
         var alerts=new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager),clock,true,"owner@s.whatsapp.net");
         var action=alerts.enqueue(batch.id()).action();
         jdbc.update("update outbox_actions set status='PROCESSING'");
@@ -611,9 +630,9 @@ class AiSimulationAcceptanceTest {
         jdbc.update("update automation_settings set auto_reply_enabled=true,intelligent_alerts_enabled=true,simulation_cooldown_seconds=0,real_cooldown_seconds=0");
         jdbc.update("update response_templates set body='Resposta automática: retorno em breve.',enabled=true,identifies_automation=true");
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1),(?,'CRITICAL_URGENCY','critical_urgency',1)",chat,chat);
-        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','gemini',true,now()+interval '1 day')",chat);
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','openrouter',true,now()+interval '1 day')",chat);
     }
-    private ProviderTransport critical() { return (request,timeout,max) -> { calls.incrementAndGet(); return gemini(valid().replace("NORMAL","CRITICAL")); }; }
+    private ProviderTransport critical() { return (request,timeout,max) -> { calls.incrementAndGet(); return openrouter(valid().replace("NORMAL","CRITICAL")); }; }
     private SimulationService producingService(boolean real, ProviderTransport transport) {
         var alerts = new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager),clock,true,"owner@s.whatsapp.net");
         var actions = new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
@@ -628,7 +647,7 @@ class AiSimulationAcceptanceTest {
                 new AiClassificationProperties(enabled,"fake-gemini","fake-model","fake-router","fake-model",10,Duration.ofSeconds(1),"owner@s.whatsapp.net"), fake);
     }
     private ProviderTransport fake() { return (request, timeout, max) -> {
-        assertFalse(TransactionSynchronizationManager.isActualTransactionActive()); calls.incrementAndGet(); return gemini(valid());
+        assertFalse(TransactionSynchronizationManager.isActualTransactionActive()); calls.incrementAndGet(); return openrouter(valid());
     }; }
     private void consent(String provider) { jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CONTACT_REQUEST',?,true,now()+interval '1 day')", chat, provider); }
     private Batch batch() {
@@ -645,5 +664,8 @@ class AiSimulationAcceptanceTest {
     }
     private static String valid() { return "{\"intent\":\"CONTACT_REQUEST\",\"requestDetected\":true,\"urgency\":\"NORMAL\",\"evidence\":[],\"confidence\":0.9}"; }
     private static String quote(String value) { return tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(value); }
-    private static ProviderTransport.Response gemini(String value) { return new ProviderTransport.Response(200,"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":"+quote(value)+"}]}}]}"); }
+    private static ProviderTransport.Response geminiResponse(String value) {
+        return new ProviderTransport.Response(200,"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":"+quote(value)+"}]}}]}");
+    }
+    private static ProviderTransport.Response openrouter(String value) { return new ProviderTransport.Response(200,"{\"choices\":[{\"message\":{\"content\":"+quote(value)+"}}]}"); }
 }
