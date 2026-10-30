@@ -2,7 +2,7 @@ package dev.hugo.watcher.ai;
 
 public final class ClassificationProviderException extends RuntimeException {
     public enum Kind { TECHNICAL_FAILURE, TIMEOUT, INVALID_RESPONSE, RESPONSE_TOO_LARGE, AUTHORIZATION_DENIED,
-        PRIVACY_ROUTE_UNAVAILABLE, CONFIGURATION_ERROR }
+        PRIVACY_ROUTE_UNAVAILABLE, CONFIGURATION_ERROR, OUTPUT_TRUNCATED }
 
     private final Kind kind;
 

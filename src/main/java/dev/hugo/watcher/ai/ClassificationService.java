@@ -8,10 +8,16 @@ import java.util.Objects;
 public final class ClassificationService {
     private final ClassificationProvider primary;
     private final ClassificationProvider fallback;
+    private final ShadowMetrics metrics;
 
     public ClassificationService(ClassificationProvider primary, ClassificationProvider fallback) {
+        this(primary, fallback, null);
+    }
+
+    public ClassificationService(ClassificationProvider primary, ClassificationProvider fallback, ShadowMetrics metrics) {
         this.primary = Objects.requireNonNull(primary, "primary");
         this.fallback = fallback;
+        this.metrics = metrics;
     }
 
     public ClassificationResult classify(Batch batch) {
@@ -22,10 +28,13 @@ public final class ClassificationService {
         try {
             return primary.classify(input);
         } catch (ClassificationProviderException error) {
+            if (metrics != null) metrics.providerFailure(primary.name(), error.kind());
             if (!error.isTechnicalFailure() || fallback == null || causedByBudget(error)) return ClassificationResult.unavailable(reason(error));
             try {
                 return fallback.classify(input);
             } catch (RuntimeException failure) {
+                if (metrics != null && failure instanceof ClassificationProviderException error)
+                    metrics.providerFailure(fallback.name(), error.kind());
                 return ClassificationResult.unavailable(reason(failure));
             }
         } catch (RuntimeException failure) {
@@ -47,6 +56,7 @@ public final class ClassificationService {
                     case PRIVACY_ROUTE_UNAVAILABLE: return "privacy_route_unavailable";
                     case CONFIGURATION_ERROR: return "configuration_invalid";
                     case TIMEOUT: return "provider_timeout";
+                    case OUTPUT_TRUNCATED: return "output_truncated";
                     case INVALID_RESPONSE, RESPONSE_TOO_LARGE: return "result_invalid";
                     default: break;
                 }

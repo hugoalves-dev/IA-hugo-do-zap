@@ -94,11 +94,23 @@ public class SimulationService {
 
     public SimulationDecision evaluate(Batch batch) {
         Objects.requireNonNull(batch, "batch");
-        // Provider requests run without a database transaction or advisory lock held.
-        boolean existing = Boolean.TRUE.equals(jdbc.queryForObject(
-                "select exists(select 1 from simulation_decisions where batch_id=?)", Boolean.class, batch.id()));
-        Classification classification = classifier == null || existing ? Classification.unavailable() : classifier.classify(batch);
-        return Objects.requireNonNull(transactions.execute(status -> evaluateTransaction(batch, classification, clock.instant())));
+        long started = System.nanoTime();
+        try {
+            // Provider requests run without a database transaction or advisory lock held.
+            boolean existing = Boolean.TRUE.equals(jdbc.queryForObject(
+                    "select exists(select 1 from simulation_decisions where batch_id=?)", Boolean.class, batch.id()));
+            Classification classification = classifier == null || existing ? Classification.unavailable() : classifier.classify(batch);
+            long persistStarted = System.nanoTime();
+            try {
+                return Objects.requireNonNull(transactions.execute(
+                        status -> evaluateTransaction(batch, classification, clock.instant())));
+            } finally {
+                if (metrics != null)
+                    metrics.persistenceLatency(Duration.ofNanos(System.nanoTime() - persistStarted));
+            }
+        } finally {
+            if (metrics != null) metrics.decisionLatency(Duration.ofNanos(System.nanoTime() - started));
+        }
     }
 
     private SimulationDecision evaluateTransaction(Batch batch, Classification classification, Instant now) {

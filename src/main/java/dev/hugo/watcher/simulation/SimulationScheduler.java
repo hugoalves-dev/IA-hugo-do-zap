@@ -17,6 +17,8 @@ public class SimulationScheduler {
     private final Clock clock;
     private final JdbcTemplate jdbc;
     private final boolean realModeEnabled;
+    private dev.hugo.watcher.ai.ShadowMetrics metrics;
+    @Autowired(required = false) public void configureMetrics(dev.hugo.watcher.ai.ShadowMetrics value) { this.metrics = value; }
     private dev.hugo.watcher.OperationalState operational;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
@@ -38,6 +40,20 @@ public class SimulationScheduler {
         if (!realModeEnabled) {
             if (operational == null || !operational.simulation()) return;
         }
-        for (Batch batch : debounce.claimReady(clock.instant())) simulations.evaluate(batch);
+        for (Batch batch : debounce.claimReady(clock.instant())) {
+            if (metrics != null) {
+                // Queue time covers the READY deadline and sequential backlog, including the
+                // time claimed batches spend waiting their turn; never query message content.
+                try {
+                    java.sql.Timestamp due = jdbc.queryForObject(
+                            "select due_at from simulation_batches where batch_id=?", java.sql.Timestamp.class, batch.id());
+                    if (due != null && !clock.instant().isBefore(due.toInstant()))
+                        metrics.queueWait(java.time.Duration.between(due.toInstant(), clock.instant()));
+                } catch (RuntimeException ignored) {
+                    // Observability must never prevent evaluation of a claimed batch.
+                }
+            }
+            simulations.evaluate(batch);
+        }
     }
 }

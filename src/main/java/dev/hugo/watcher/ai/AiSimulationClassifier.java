@@ -45,6 +45,8 @@ public final class AiSimulationClassifier {
     }
 
     public Classification classify(Batch batch) {
+        long started = System.nanoTime();
+        try {
         if (TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("provider calls must run outside SQL transactions");
         if (!properties.configured()) return unavailable("configuration_invalid");
@@ -75,18 +77,23 @@ public final class AiSimulationClassifier {
         // Revalidate authorization and reserve a separate budget for each HTTP attempt.
         var primary = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                 properties.openRouterModel(), properties.openRouterApiKey(), guarded(http, batch, "openrouter", approvedPurposes, usedProvider),
-                (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
+                (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout(),
+                properties.openRouterMaxTokens(), properties.openRouterReasoningEnabled());
         ClassificationProvider fallback = null;
         if (properties.fallbackConfigured()) fallback = new GeminiProvider(URI.create("https://generativelanguage.googleapis.com/v1beta/models"),
                 properties.geminiModel(), properties.geminiApiKey(), guarded(http, batch, "gemini", approvedPurposes, usedProvider),
                 (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
-        ClassificationResult result = new ClassificationService(primary, fallback).classify(input);
+        ClassificationResult result = new ClassificationService(primary, fallback, metrics).classify(input);
         Classification classification = authorized(batch, usedProvider.get(), purposes) ? convert(batch, result, purposes) : Classification.unavailable();
         int saved = jdbc.update("update simulation_ai_evaluations set result=?::jsonb where batch_id=? and lease_token=? and expires_at>?",
                 encode(classification, usedProvider.get(), purposes, input.contextEntries().size(), contextWindowHours), batch.id(), token, Timestamp.from(clock.instant()));
         Classification finalResult = saved == 1 ? classification : Classification.unavailable();
         if (metrics != null) metrics.classification(finalResult.status());
         return finalResult;
+        } finally {
+            if (metrics != null)
+                metrics.classificationLatency(java.time.Duration.ofNanos(System.nanoTime() - started));
+        }
     }
 
     private Classification unavailable(String reason) {

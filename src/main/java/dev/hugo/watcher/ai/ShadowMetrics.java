@@ -24,7 +24,7 @@ public final class ShadowMetrics {
             "consent_missing", "context_insufficient", "feature_disabled",
             "group_trigger_missing", "kill_switch_enabled", "no_eligible_text",
             "no_request_detected", "privacy_route_unavailable", "provider_timeout",
-            "provider_unavailable", "result_invalid", "state_or_scope_ineligible",
+            "provider_unavailable", "result_invalid", "output_truncated", "state_or_scope_ineligible",
             "template_missing", "cooldown_active", "not_available", "no_action",
             "simulation_only"
     );
@@ -64,8 +64,44 @@ public final class ShadowMetrics {
         if (duration != null && !duration.isNegative()) {
             Timer.builder("watcher.shadow.provider.latency")
                     .tag("provider", safeProvider).tag("status", safeStatus)
+                    .publishPercentileHistogram()
                     .register(registry).record(duration);
         }
+    }
+
+    /** Only bounded telemetry values: never tag untrusted model or chat identifiers. */
+    public void providerFailure(String provider, ClassificationProviderException.Kind kind) {
+        registry.counter("watcher.shadow.provider.failures", "provider", provider(provider),
+                "reason", kind == null ? "other" : switch (kind) {
+                    case OUTPUT_TRUNCATED -> "output_truncated";
+                    case INVALID_RESPONSE, RESPONSE_TOO_LARGE -> "schema_invalid";
+                    case TIMEOUT -> "timeout";
+                    case TECHNICAL_FAILURE -> "technical";
+                    case PRIVACY_ROUTE_UNAVAILABLE -> "privacy_route_unavailable";
+                    case CONFIGURATION_ERROR -> "configuration_invalid";
+                    case AUTHORIZATION_DENIED -> "authorization_denied";
+                }).increment();
+    }
+
+    public void classificationLatency(Duration duration) {
+        recordTimer("watcher.shadow.classification.latency", duration);
+    }
+
+    public void decisionLatency(Duration duration) {
+        recordTimer("watcher.shadow.decision.latency", duration);
+    }
+
+    public void persistenceLatency(Duration duration) {
+        recordTimer("watcher.shadow.persistence.latency", duration);
+    }
+
+    public void queueWait(Duration duration) {
+        recordTimer("watcher.shadow.queue.wait", duration);
+    }
+
+    private void recordTimer(String name, Duration duration) {
+        if (duration != null && !duration.isNegative())
+            Timer.builder(name).publishPercentileHistogram().register(registry).record(duration);
     }
 
     /**
@@ -80,9 +116,24 @@ public final class ShadowMetrics {
             Map<?, ?> root = JSON.readValue(responseBody, Map.class);
             if (root == null) return;
             if ("openrouter".equals(safeProvider)) {
+                if (root.get("choices") instanceof java.util.List<?> choices && !choices.isEmpty()
+                        && choices.getFirst() instanceof Map<?, ?> choice) {
+                    String finish = choice.get("finish_reason") instanceof String value ? switch (value) {
+                        case "stop", "length", "max_tokens", "content_filter", "tool_calls", "end_turn" -> value;
+                        default -> "other";
+                    } : "missing";
+                    registry.counter("watcher.shadow.provider.finish_reason",
+                            "provider", safeProvider, "reason", finish).increment();
+                    if ("length".equals(finish) || "max_tokens".equals(finish))
+                        registry.counter("watcher.shadow.provider.truncated", "provider", safeProvider).increment();
+                }
                 if (!(root.get("usage") instanceof Map<?, ?> usage)) return;
                 tokens(safeProvider, "input", usage.get("prompt_tokens"));
                 tokens(safeProvider, "output", usage.get("completion_tokens"));
+                if (usage.get("completion_tokens_details") instanceof Map<?, ?> details)
+                    tokens(safeProvider, "reasoning", details.get("reasoning_tokens"));
+                else if (usage.get("output_tokens") instanceof Map<?, ?> details)
+                    tokens(safeProvider, "reasoning", details.get("reasoning"));
                 cost(safeProvider, usage.get("cost"));
             } else if ("gemini".equals(safeProvider)) {
                 if (!(root.get("usageMetadata") instanceof Map<?, ?> usage)) return;
