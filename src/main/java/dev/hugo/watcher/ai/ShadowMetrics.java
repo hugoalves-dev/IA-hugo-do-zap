@@ -73,7 +73,7 @@ public final class ShadowMetrics {
     public void providerFailure(String provider, ClassificationProviderException.Kind kind) {
         registry.counter("watcher.shadow.provider.failures", "provider", provider(provider),
                 "reason", kind == null ? "other" : switch (kind) {
-                    case OUTPUT_TRUNCATED -> "output_truncated";
+                    case OUTPUT_TRUNCATED -> "provider_output_truncated";
                     case INVALID_RESPONSE, RESPONSE_TOO_LARGE -> "schema_invalid";
                     case TIMEOUT -> "timeout";
                     case TECHNICAL_FAILURE -> "technical";
