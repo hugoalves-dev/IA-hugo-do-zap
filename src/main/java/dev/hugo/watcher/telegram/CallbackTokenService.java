@@ -57,6 +57,15 @@ public class CallbackTokenService {
         return parseAction(actions.getFirst());
     }
 
+    /** Revoke the paired confirmation token on Cancel within the caller's transaction. */
+    public boolean invalidate(String token, long userId, long chatId) {
+        if (token == null || token.isBlank() || userId <= 0 || chatId <= 0) return false;
+        return jdbc.update("""
+                update telegram_admin_callback_tokens set consumed_at=?
+                where token_hash=? and user_id=? and chat_id=? and consumed_at is null
+                """, Timestamp.from(clock.instant()), hash(token), userId, chatId) == 1;
+    }
+
     private static String writeAction(CallbackAction action) {
         try { return JSON.writeValueAsString(Map.of("command", action.command(), "arguments", action.arguments())); }
         catch (RuntimeException ex) { throw new IllegalArgumentException("callback action cannot be encoded", ex); }
