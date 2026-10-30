@@ -24,7 +24,7 @@ public final class ShadowMetrics {
             "consent_missing", "context_insufficient", "feature_disabled",
             "group_trigger_missing", "kill_switch_enabled", "no_eligible_text",
             "no_request_detected", "privacy_route_unavailable", "provider_timeout",
-            "provider_unavailable", "result_invalid", "output_truncated", "state_or_scope_ineligible",
+            "provider_unavailable", "result_invalid", "provider_output_truncated", "state_or_scope_ineligible",
             "template_missing", "cooldown_active", "not_available", "no_action",
             "simulation_only"
     );
