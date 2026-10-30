@@ -26,7 +26,14 @@ public class OperationalState {
         return !Boolean.FALSE.equals(jdbc.queryForObject("select simulation_paused from operational_restrictions where singleton_id=1", Boolean.class));
     }
     public boolean killSwitch() { return automation.isKillSwitchEnabled() || emergency(); }
-    public boolean classification() { return ai.enabled() && ai.classificationEnabled() && !killSwitch() && (realMode || simulation()); }
+    /** The real-action kill switch does not prevent an explicitly enabled, consented Shadow Mode. */
+    public boolean classification() {
+        return ai.enabled() && ai.classificationEnabled() && !emergency()
+                && (simulation() || (realMode && !automation.isKillSwitchEnabled()));
+    }
+    /** These flags describe simulated eligibility, never permission to send real actions. */
+    public boolean simulatedAlerts() { return automation.isIntelligentAlertsEnabled() && !emergency(); }
+    public boolean simulatedReplies() { return automation.isAutoReplyEnabled() && !emergency(); }
     public boolean classificationConfigured() { return ai.configured(); }
     public boolean realModeEnabled() { return realMode; }
     public boolean alerts() { return automation.isIntelligentAlertsEnabled() && !killSwitch(); }
