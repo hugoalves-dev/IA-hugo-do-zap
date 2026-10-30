@@ -115,6 +115,27 @@ class ShadowMetricsTest {
                 .tag("provider", "openrouter").counter().count());
     }
 
+    @Test void reportsTruncationWhenLaterChoiceIsCutOff() {
+        var registry = new SimpleMeterRegistry();
+        var metrics = new ShadowMetrics(registry);
+        metrics.reportedUsage("openrouter", """
+                {"choices":[{"finish_reason":"stop"},{"finish_reason":"length"}]}
+                """);
+        assertEquals(1, registry.get("watcher.shadow.provider.truncated")
+                .tag("provider", "openrouter").counter().count());
+        assertEquals(1, registry.get("watcher.shadow.provider.finish_reason")
+                .tags("provider", "openrouter", "reason", "length").counter().count());
+    }
+
+    @Test void recordsOutputTruncationAsSafeDecisionDiagnosticLabel() {
+        var registry = new SimpleMeterRegistry();
+        var metrics = new ShadowMetrics(registry);
+        metrics.decision("classification_unavailable", "provider_output_truncated");
+        assertEquals(1, registry.get("watcher.shadow.decisions")
+                .tags("reason", "classification_unavailable", "diagnostic", "provider_output_truncated")
+                .counter().count());
+    }
+
     @Test void recordsBoundedFinishReasonAndReasoningUsage() {
         var registry = new SimpleMeterRegistry();
         var metrics = new ShadowMetrics(registry);
