@@ -148,6 +148,50 @@ class OpenRouterProviderTest {
         org.junit.jupiter.api.Assertions.assertTrue(prompt.contains("immediate emergency"));
     }
 
+
+    @Test void reasoningIsExplicitAndTokenBudgetIsConfigurable() {
+        var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+        for (boolean reasoning : new boolean[]{false,true}) {
+            var current = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
+                    "anthropic/claude-haiku-5.5", "fake-key", http, (name, input) -> true,
+                    Duration.ofSeconds(2), 512, reasoning);
+            assertEquals(ClassificationResult.Status.CLASSIFIED,
+                    current.classify(new ClassificationInput(List.of("Oi"))).status());
+            String payload = FakeProviderTransport.requestBody(http.requests().getLast());
+            assertTrue(payload.contains("\"max_tokens\":512"));
+            assertTrue(payload.contains("\"reasoning\":{\"enabled\":" + reasoning + "}"));
+            assertTrue(payload.contains("\"require_parameters\":true"));
+            assertTrue(payload.contains("\"zdr\":true"));
+            assertTrue(payload.contains("\"data_collection\":\"deny\""));
+            assertTrue(payload.contains("\"allow_fallbacks\":false"));
+        }
+    }
+
+    @Test void finishReasonLengthFailsClosedEvenWhenContentLooksValid() {
+        var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+        var error = assertThrows(ClassificationProviderException.class,
+                () -> provider(http, (name, input) -> true).classify(new ClassificationInput(List.of("Oi"))));
+        assertEquals(ClassificationProviderException.Kind.OUTPUT_TRUNCATED, error.kind());
+    }
+
+    @Test void reasoningCanConsumeAllTokensWithoutAuthorizingDecision() {
+        var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":null,\"reasoning\":\"internal\"}}]}"));
+        var error = assertThrows(ClassificationProviderException.class,
+                () -> provider(http, (name, input) -> true).classify(new ClassificationInput(List.of("Oi"))));
+        assertEquals(ClassificationProviderException.Kind.OUTPUT_TRUNCATED, error.kind());
+    }
+
+    @Test void unsupportedFinishReasonsNeverAuthorizeClassification() {
+        var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"finish_reason\":\"content_filter\",\"message\":{\"content\":\"{}\"}}]}"));
+        var error = assertThrows(ClassificationProviderException.class,
+                () -> provider(http, (name, input) -> true).classify(new ClassificationInput(List.of("Oi"))));
+        assertEquals(ClassificationProviderException.Kind.INVALID_RESPONSE, error.kind());
+    }
+
     private static OpenRouterProvider provider(ProviderTransport transport, ProviderAuthorization authorization) {
         return new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                 "test/model", "fake-key", transport, authorization, Duration.ofSeconds(2));

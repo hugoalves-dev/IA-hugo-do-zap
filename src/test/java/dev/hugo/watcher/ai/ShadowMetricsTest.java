@@ -87,4 +87,20 @@ class ShadowMetricsTest {
                     .tags("provider", "other", "status", "other").counter().count());
         }
     }
+    @Test void recordsBoundedFinishReasonAndReasoningUsage() {
+        var registry = new SimpleMeterRegistry();
+        var metrics = new ShadowMetrics(registry);
+        metrics.reportedUsage("openrouter", """
+                {"choices":[{"finish_reason":"length"}],
+                 "usage":{"completion_tokens":300,"completion_tokens_details":{"reasoning_tokens":290}}}
+                """);
+        assertEquals(1, registry.get("watcher.shadow.provider.finish_reason")
+                .tags("provider", "openrouter", "reason", "length").counter().count());
+        assertEquals(290, registry.get("watcher.shadow.provider.tokens")
+                .tags("provider", "openrouter", "direction", "reasoning").counter().count());
+        assertEquals(1, registry.get("watcher.shadow.provider.truncated")
+                .tag("provider", "openrouter").counter().count());
+    }
+
+
 }
