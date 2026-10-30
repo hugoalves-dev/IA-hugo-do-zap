@@ -78,6 +78,18 @@ class AdminCommandServiceTest {
         assertTrue(commands.execute(command("status", List.of(), false)).message().contains("emergência ligado"));
     }
 
+    @Test void statusShowsInvalidAiConfigurationWithoutSecrets() {
+        var flags = new dev.hugo.watcher.AutomationProperties();
+        flags.setKillSwitchEnabled(false);
+        var ai = new dev.hugo.watcher.ai.AiClassificationProperties(true, null, null, null, "model", 1,
+                java.time.Duration.ofSeconds(1), null, true, false, true, false);
+        commands.configureOperationalState(new dev.hugo.watcher.OperationalState(jdbc, flags, ai,
+                new dev.hugo.watcher.simulation.WatcherSimulationProperties(), true));
+        String status = commands.execute(command("status", List.of(), false)).message();
+        assertTrue(status.contains("configuration_invalid"));
+        assertFalse(status.contains("IA ligado"));
+    }
+
     @Test void menusExposePolicyTemplateHolidayAndBudgetControlsWithoutSecrets() {
         assertTrue(commands.execute(command("perfis", List.of(), false)).message().contains("/perfil"));
         assertTrue(commands.execute(command("templates", List.of(), false)).message().contains("/template"));

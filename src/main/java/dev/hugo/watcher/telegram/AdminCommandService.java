@@ -114,7 +114,9 @@ public class AdminCommandService {
         String override = state.overrideState() == null || state.overrideExpiresAt() == null
                 || !state.overrideExpiresAt().isAfter(clock.instant()) ? "sem override ativo"
                 : state.overrideState().toLowerCase() + " até " + state.overrideExpiresAt();
-        return "Estado: IA " + on(operational.classification()) + "; kill switch " + on(operational.killSwitch())
+        return "Estado: IA " + on(operational.classification() && operational.classificationConfigured())
+                + (operational.classification() && !operational.classificationConfigured() ? " (configuration_invalid)" : "")
+                + "; kill switch " + on(operational.killSwitch())
                 + "; emergência " + on(operational.emergency()) + "; alertas reais " + on(operational.alerts())
                 + "; respostas reais " + on(operational.replies()) + "; simulação " + on(operational.simulation())
                 + "; pausa de simulação " + on(operational.simulationPaused()) + "; " + override + ".";
