@@ -192,6 +192,30 @@ class OpenRouterProviderTest {
         assertEquals(ClassificationProviderException.Kind.INVALID_RESPONSE, error.kind());
     }
 
+    @Test void missingFinishReasonAndUsageWithValidJsonRemainsValidWithoutInventingTruncation() {
+        var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+        var result = provider(http, (name, input) -> true)
+                .classify(new ClassificationInput(List.of("Oi")));
+        assertEquals(ClassificationResult.Status.CLASSIFIED, result.status());
+    }
+
+    @Test void missingFinishReasonAndUsageCannotAuthorizeAbsentContent() {
+        var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"message\":{\"content\":null}}]}"));
+        var error = assertThrows(ClassificationProviderException.class,
+                () -> provider(http, (name, input) -> true).classify(new ClassificationInput(List.of("Oi"))));
+        assertEquals(ClassificationProviderException.Kind.INVALID_RESPONSE, error.kind());
+    }
+
+    @Test void anyTruncatedChoiceFailsClosedEvenIfFirstChoiceContainsValidJson() {
+        var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}},{\"finish_reason\":\"length\",\"message\":{\"content\":null}}]}"));
+        var error = assertThrows(ClassificationProviderException.class,
+                () -> provider(http, (name, input) -> true).classify(new ClassificationInput(List.of("Oi"))));
+        assertEquals(ClassificationProviderException.Kind.OUTPUT_TRUNCATED, error.kind());
+    }
+
     private static OpenRouterProvider provider(ProviderTransport transport, ProviderAuthorization authorization) {
         return new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                 "test/model", "fake-key", transport, authorization, Duration.ofSeconds(2));
