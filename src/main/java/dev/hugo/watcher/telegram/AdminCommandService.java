@@ -161,7 +161,7 @@ public class AdminCommandService {
 
     private String report() {
         if (reports != null) {
-            reports.schedule(LocalDate.now(clock.withZone(ADMIN_ZONE)));
+            reports.scheduleOnDemand(LocalDate.now(clock.withZone(ADMIN_ZONE)));
             return "Resumo diário de simulação enfileirado para entrega no Telegram.";
         }
         Integer decisions = jdbc.queryForObject("select count(*) from simulation_decisions where decided_at >= ?",
