@@ -61,6 +61,43 @@ class MessageServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
     }
 
+    @Test void outgoingDirectMessageIsStoredOnlyAsBoundedContext() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc, new WatcherSimulationProperties(), manager));
+        var sent = new IncomingMessage(Optional.of("owner-context"), "fixture@s.whatsapp.net", Optional.empty(), Optional.empty(),
+                Optional.empty(), true, "notify", false, Map.of("conversation", "Posso apagar?"), Instant.now());
+        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(sent));
+        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(sent));
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id='owner-context'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
+    }
+
+    @Test void outgoingGroupAndHistoryNeverEnterContext() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc, new WatcherSimulationProperties(), manager));
+        var group = new IncomingMessage(Optional.of("owner-group"), "fixture@g.us", Optional.empty(), Optional.empty(),
+                Optional.empty(), true, "notify", false, Map.of("conversation", "group"), Instant.now());
+        var history = new IncomingMessage(Optional.of("owner-history"), "fixture@s.whatsapp.net", Optional.empty(), Optional.empty(),
+                Optional.empty(), true, "notify", true, Map.of("conversation", "history"), Instant.now());
+        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(group));
+        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(history));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id in ('owner-group','owner-history')", Integer.class));
+    }
+
+    @Test void outgoingContextRespectsUnknownOrExcludedArchiveScope() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc, new WatcherSimulationProperties(), manager));
+        var sent = new IncomingMessage(Optional.of("owner-out-of-scope"), "scope@s.whatsapp.net", Optional.empty(), Optional.empty(),
+                Optional.empty(), true, "notify", false, Map.of("conversation", "test"), Instant.now());
+        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(sent));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id='owner-out-of-scope'", Integer.class));
+    }
+
     @Test void acceptedEvolutionMessageEntersSimulationQueueOnce() {
         var manager = new DataSourceTransactionManager(jdbc.getDataSource());
         var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,

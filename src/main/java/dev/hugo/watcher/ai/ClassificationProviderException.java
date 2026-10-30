@@ -1,7 +1,7 @@
 package dev.hugo.watcher.ai;
 
 public final class ClassificationProviderException extends RuntimeException {
-    public enum Kind { TECHNICAL_FAILURE, INVALID_RESPONSE, RESPONSE_TOO_LARGE, AUTHORIZATION_DENIED,
+    public enum Kind { TECHNICAL_FAILURE, TIMEOUT, INVALID_RESPONSE, RESPONSE_TOO_LARGE, AUTHORIZATION_DENIED,
         PRIVACY_ROUTE_UNAVAILABLE, CONFIGURATION_ERROR }
 
     private final Kind kind;
@@ -17,7 +17,7 @@ public final class ClassificationProviderException extends RuntimeException {
     }
 
     public Kind kind() { return kind; }
-    public boolean isTechnicalFailure() { return kind == Kind.TECHNICAL_FAILURE; }
+    public boolean isTechnicalFailure() { return kind == Kind.TECHNICAL_FAILURE || kind == Kind.TIMEOUT; }
 
     public static ClassificationProviderException technical(String provider) {
         return new ClassificationProviderException(Kind.TECHNICAL_FAILURE);

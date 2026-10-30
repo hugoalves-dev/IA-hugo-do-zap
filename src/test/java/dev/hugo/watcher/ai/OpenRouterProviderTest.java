@@ -10,6 +10,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 class OpenRouterProviderTest {
+    @Test void traceMetadataCarriesOnlyOpaqueBatchReference() {
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+        var id = java.util.UUID.randomUUID();
+        var message = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("private-message"), "private@s.whatsapp.net", java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), false, "notify", false, java.util.Map.of("conversation", "Olá"), java.time.Instant.EPOCH);
+        var input = ClassificationInput.fromBatch(new dev.hugo.watcher.simulation.Batch(id, "private@s.whatsapp.net", "", List.of(message)));
+        provider(transport, (name, in) -> true).classify(input);
+        String body = FakeProviderTransport.requestBody(transport.requests().getFirst());
+        assertTrue(body.contains(id.toString()));
+        assertFalse(body.contains("private@s.whatsapp.net"));
+        assertFalse(body.contains("private-message"));
+    }
     @Test void enforcesPrivateRoutingAndMinimizedPrompt() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
                 {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91}"}}]}

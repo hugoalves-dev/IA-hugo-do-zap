@@ -63,7 +63,8 @@ public class ReportService {
                            count(*) filter (where classification_urgency='HIGH') as high,
                            count(*) filter (where classification_urgency='CRITICAL') as critical,
                            count(*) filter (where classification_urgency='UNCERTAIN') as uncertain,
-                           count(*) filter (where classification_status='UNCERTAIN') as uncertain_count
+                           count(*) filter (where classification_status='UNCERTAIN') as uncertain_count,
+                           count(*) filter (where classification_status='UNAVAILABLE') as unavailable_count
                       from simulation_decisions where decided_at>=? and decided_at<?
                     """, Timestamp.from(start), Timestamp.from(end));
             Costs costs = jdbc.queryForObject("""
@@ -73,14 +74,15 @@ public class ReportService {
                     """, (rs, row) -> new Costs(rs.getLong("reserved"), rs.getLong("actual")),
                     Timestamp.from(start), Timestamp.from(end));
             Instant created = clock.instant();
-            String payload = JSON.writeValueAsString(Map.of(
-                    "eventType", "simulation_daily_summary", "date", date.toString(),
-                    "decisionCount", counts.decisions(), "predictedAlerts", counts.alerts(),
-                    "predictedReplies", counts.replies(), "blockedDecisions", counts.blocked(),
-                    "reservedCostMicros", costs.reserved(), "reportedActualCostMicros", costs.actual(),
-                    "urgencyDistribution", Map.of("LOW",distribution.get("low"), "NORMAL",distribution.get("normal"),
-                            "HIGH",distribution.get("high"), "CRITICAL",distribution.get("critical"), "UNCERTAIN",distribution.get("uncertain")),
-                    "uncertainCount", distribution.get("uncertain_count")));
+            String payload = JSON.writeValueAsString(Map.ofEntries(
+                    Map.entry("eventType", "simulation_daily_summary"), Map.entry("date", date.toString()),
+                    Map.entry("decisionCount", counts.decisions()), Map.entry("predictedAlerts", counts.alerts()),
+                    Map.entry("predictedReplies", counts.replies()), Map.entry("blockedDecisions", counts.blocked()),
+                    Map.entry("reservedCostMicros", costs.reserved()), Map.entry("reportedActualCostMicros", costs.actual()),
+                    Map.entry("urgencyDistribution", Map.of("LOW",distribution.get("low"), "NORMAL",distribution.get("normal"),
+                            "HIGH",distribution.get("high"), "CRITICAL",distribution.get("critical"), "UNCERTAIN",distribution.get("uncertain"))),
+                    Map.entry("uncertainCount", distribution.get("uncertain_count")),
+                    Map.entry("unavailableCount", distribution.get("unavailable_count"))));
             outbox.enqueue(key, "simulation_daily_summary", payload, "[]", created, created.plusSeconds(86_400));
             return jdbc.queryForObject("""
                     select id,action_key,action_type,payload::text,pending_snapshot::text,attempts,created_at,sensitive_expires_at

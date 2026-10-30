@@ -100,7 +100,7 @@ abstract class AbstractHttpClassificationProvider implements ClassificationProvi
     }
 
     final String userPayload(ClassificationInput input) {
-        try { return JSON.writeValueAsString(Map.of("target", input.target(), "context", input.context())); }
+        try { return JSON.writeValueAsString(Map.of("target", input.target(), "context", input.contextEntries())); }
         catch (JacksonException exception) { throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE, exception); }
     }
 
@@ -108,7 +108,8 @@ abstract class AbstractHttpClassificationProvider implements ClassificationProvi
         if (status >= 200 && status < 300) return;
         if (status == privacyUnavailableStatus)
             throw new ClassificationProviderException(ClassificationProviderException.Kind.PRIVACY_ROUTE_UNAVAILABLE);
-        if (status == 408 || status == 429 || status >= 500)
+        if (status == 408) throw new ClassificationProviderException(ClassificationProviderException.Kind.TIMEOUT);
+        if (status == 429 || status >= 500)
             throw new ClassificationProviderException(ClassificationProviderException.Kind.TECHNICAL_FAILURE);
         throw new ClassificationProviderException(ClassificationProviderException.Kind.CONFIGURATION_ERROR);
     }

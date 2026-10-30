@@ -7,7 +7,12 @@ public record Classification(Set<Situation> situations, boolean requestDetected,
                              boolean explicitPersonalReference, boolean groupTriggerMatched,
                              boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
                              double confidence, dev.hugo.watcher.ai.ClassificationResult.Status status,
-                             String personalReferenceHash) {
+                             String personalReferenceHash, String diagnostic) {
+    public Classification(Set<Situation> situations, boolean requestDetected, boolean explicitPersonalReference,
+                          boolean groupTriggerMatched, boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
+                          double confidence, dev.hugo.watcher.ai.ClassificationResult.Status status, String personalReferenceHash) {
+        this(situations, requestDetected, explicitPersonalReference, groupTriggerMatched, available, urgency, confidence, status, personalReferenceHash, null);
+    }
     public Classification(Set<Situation> situations, boolean requestDetected, boolean explicitPersonalReference,
                           boolean groupTriggerMatched, boolean available) {
         this(situations, requestDetected, explicitPersonalReference, groupTriggerMatched, available,
@@ -18,6 +23,9 @@ public record Classification(Set<Situation> situations, boolean requestDetected,
     public static Classification unavailable() { return new Classification(Set.of(), false, false, false, false,
             dev.hugo.watcher.ai.ClassificationResult.Urgency.UNCERTAIN, 0,
             dev.hugo.watcher.ai.ClassificationResult.Status.UNAVAILABLE, null); }
+    public static Classification unavailable(String diagnostic) { return new Classification(Set.of(), false, false, false, false,
+            dev.hugo.watcher.ai.ClassificationResult.Urgency.UNCERTAIN, 0,
+            dev.hugo.watcher.ai.ClassificationResult.Status.UNAVAILABLE, null, diagnostic); }
     public static Classification greeting() { return new Classification(Set.of(), false, false, false, true); }
     public static Classification contactRequest() { return new Classification(Set.of(Situation.CONTACT_REQUEST), true, false, false, true); }
     public static Classification groupTriggerCritical(boolean personalReference) {

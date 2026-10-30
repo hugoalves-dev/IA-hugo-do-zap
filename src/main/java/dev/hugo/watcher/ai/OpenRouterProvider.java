@@ -31,7 +31,7 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
     }
 
     private HttpRequest request(ClassificationInput input) {
-        Map<String, Object> body = Map.of(
+        Map<String, Object> body = new java.util.LinkedHashMap<>(Map.of(
                 "model", model,
                 "messages", List.of(Map.of("role", "system", "content", SYSTEM_PROMPT),
                         Map.of("role", "user", "content", userPayload(input))),
@@ -39,7 +39,8 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
                 "provider", Map.of("zdr", true, "data_collection", "deny", "allow_fallbacks", false,
                         "require_parameters", true),
                 "response_format", Map.of("type", "json_schema", "json_schema", Map.of(
-                        "name", "classification", "strict", true, "schema", SCHEMA)));
+                        "name", "classification", "strict", true, "schema", SCHEMA))));
+        if (input.batchId() != null) body.put("trace", Map.of("batch_id", input.batchId().toString()));
         try {
             return HttpRequest.newBuilder(endpoint).timeout(timeout)
                     .header("Content-Type", "application/json")

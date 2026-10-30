@@ -30,7 +30,7 @@ final class ConversationContextRepository {
             return target;
         Instant first = batch.messages().stream().map(IncomingMessage::receivedAt).filter(java.util.Objects::nonNull)
                 .min(Comparator.naturalOrder()).orElse(null);
-        Instant latest = batch.messages().stream().filter(m -> !m.fromMe() && !m.history())
+        Instant latest = batch.messages().stream().filter(m -> !m.fromMe() && !m.history() && !ClassificationInput.extractText(m.content()).isBlank())
                 .map(IncomingMessage::receivedAt).filter(java.util.Objects::nonNull).max(Comparator.naturalOrder()).orElse(null);
         if (first == null || latest == null) return ClassificationInput.fromBatch(batch);
         List<String> rows = jdbc.query("""
@@ -43,6 +43,16 @@ final class ConversationContextRepository {
                 Timestamp.from(first), Timestamp.from(latest.minus(window)), Timestamp.from(now));
         List<IncomingMessage> combined = new ArrayList<>();
         for (String row : rows) combined.add(JSON.readValue(row, IncomingMessage.class));
+        if (!batch.chatJid().endsWith("@g.us")) {
+            combined.addAll(jdbc.query("""
+                    select external_id,received_at,text from simulation_owner_context
+                     where chat_jid=? and received_at<? and received_at>=? and expires_at>?
+                     order by received_at desc,external_id desc limit 5
+                    """, (rs, row) -> new IncomingMessage(java.util.Optional.of(rs.getString(1)), batch.chatJid(),
+                    java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), true, "notify", false,
+                    java.util.Map.of("conversation", rs.getString(3)), rs.getTimestamp(2).toInstant()), batch.chatJid(),
+                    Timestamp.from(latest), Timestamp.from(latest.minus(window)), Timestamp.from(now)));
+        }
         combined.addAll(batch.messages());
         return ClassificationInput.fromBatch(new Batch(batch.id(), batch.chatJid(), batch.participantJid(), combined));
     }

@@ -8,41 +8,58 @@ import java.util.List;
 import java.util.Map;
 
 /** Bounded and deterministically minimized text passed to a classification provider. */
-public record ClassificationInput(List<String> messages) {
+public final class ClassificationInput {
     public static final int MAX_MESSAGES = 6;
     public static final int MAX_CHARS_PER_MESSAGE = 1_000;
+    public record ContextEntry(String role, String text) { }
+    private final List<ContextEntry> entries;
+    private final java.util.UUID batchId;
 
-    public ClassificationInput {
-        if (messages == null) messages = List.of();
-        messages = messages.stream().filter(java.util.Objects::nonNull)
-                .map(String::strip).filter(text -> !text.isEmpty())
-                .map(ClassificationInputMinimizer::minimize)
-                .map(text -> text.length() > MAX_CHARS_PER_MESSAGE ? text.substring(0, MAX_CHARS_PER_MESSAGE) : text)
-                .toList();
-        if (messages.size() > MAX_MESSAGES)
-            messages = List.copyOf(messages.subList(messages.size() - MAX_MESSAGES, messages.size()));
+    public ClassificationInput(List<String> messages) {
+        this(messages == null ? List.of() : messages.stream().filter(java.util.Objects::nonNull)
+                .map(text -> new ContextEntry("contact", text)).toList(), null);
     }
-
-    public String target() { return messages.isEmpty() ? "" : messages.getLast(); }
-    public List<String> context() { return messages.isEmpty() ? List.of() : messages.subList(0, messages.size() - 1); }
+    private ClassificationInput(List<ContextEntry> source, java.util.UUID batchId) {
+        var sanitized = source.stream().filter(e -> e.text() != null && !e.text().isBlank())
+                .map(e -> new ContextEntry(e.role(), sanitize(e.text()))).toList();
+        entries = List.copyOf(sanitized.subList(Math.max(0, sanitized.size() - MAX_MESSAGES), sanitized.size()));
+        this.batchId = batchId;
+    }
+    private static String sanitize(String value) {
+        String text = ClassificationInputMinimizer.minimize(value.strip());
+        return text.length() > MAX_CHARS_PER_MESSAGE ? text.substring(0, MAX_CHARS_PER_MESSAGE) : text;
+    }
+    public List<String> messages() { return entries.stream().map(ContextEntry::text).toList(); }
+    public String target() { return entries.isEmpty() ? "" : entries.getLast().text(); }
+    public List<String> context() { return contextEntries().stream().map(ContextEntry::text).toList(); }
+    public List<ContextEntry> contextEntries() { return entries.isEmpty() ? List.of() : entries.subList(0, entries.size() - 1); }
+    public java.util.UUID batchId() { return batchId; }
 
     public static ClassificationInput fromBatch(Batch batch) {
         if (batch == null || batch.messages() == null) return new ClassificationInput(List.of());
-        List<String> text = new ArrayList<>();
         var ordered = batch.messages().stream().filter(java.util.Objects::nonNull)
-                .filter(message -> !message.fromMe() && !message.history())
+                .filter(message -> !message.history())
                 .sorted(java.util.Comparator.comparing(IncomingMessage::receivedAt,
                         java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
                         .thenComparing(message -> message.externalId().orElse("")))
                 .toList();
-        for (IncomingMessage message : ordered) {
-            String extracted = extractText(message.content());
-            if (!extracted.isBlank()) text.add(extracted);
+        int targetIndex = -1;
+        for (int i = 0; i < ordered.size(); i++) {
+            IncomingMessage message = ordered.get(i);
+            if (!message.fromMe() && !extractText(message.content()).isBlank()) targetIndex = i;
         }
-        return new ClassificationInput(text);
+        if (targetIndex < 0) return new ClassificationInput(List.of());
+        List<ContextEntry> text = new ArrayList<>();
+        for (int i = 0; i <= targetIndex; i++) {
+            IncomingMessage message = ordered.get(i);
+            if (message.fromMe() && batch.chatJid().endsWith("@g.us")) continue;
+            String extracted = extractText(message.content());
+            if (!extracted.isBlank()) text.add(new ContextEntry(message.fromMe() ? "owner" : "contact", extracted));
+        }
+        return new ClassificationInput(text, batch.id());
     }
 
-    private static String extractText(Map<String, Object> content) {
+    public static String extractText(Map<String, Object> content) {
         Map<?, ?> current = content;
         for (int depth = 0; depth < 5 && current != null; depth++) {
             Object conversation = current.get("conversation");

@@ -25,6 +25,16 @@ class ClassificationInputMinimizerTest {
         assertEquals("pode", ClassificationInput.fromBatch(batch).target());
     }
 
+    @Test void ownerMessageIsContextOnlyAndCarriesRole() {
+        var owner = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("owner"), "fixture@s.whatsapp.net", java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), true, "notify", false, java.util.Map.of("conversation", "Posso apagar?"), java.time.Instant.parse("2026-10-30T00:00:01Z"));
+        var target = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("target"), "fixture@s.whatsapp.net", java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), false, "notify", false, java.util.Map.of("conversation", "pode"), java.time.Instant.parse("2026-10-30T00:00:02Z"));
+        var batch = new dev.hugo.watcher.simulation.Batch(java.util.UUID.randomUUID(), "fixture@s.whatsapp.net", "", List.of(target, owner));
+        var input = ClassificationInput.fromBatch(batch);
+        assertEquals("pode", input.target());
+        assertEquals("owner", input.contextEntries().getFirst().role());
+        assertEquals("Posso apagar?", input.contextEntries().getFirst().text());
+    }
+
     @Test void masksCommonContactAndIdentityTokensBeforeProviderInput() {
         String text = "Call +55 (11) 98765-4321 or 11987654321; email person.test@example.com; "
                 + "WhatsApp 5511987654321@s.whatsapp.net; CPF 123.456.789-09; "

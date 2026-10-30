@@ -21,6 +21,19 @@ class RetentionServiceTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
+    @Test void deletesExpiredOwnerContextAndKeepsUnexpiredContext() {
+        var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        Flyway.configure().dataSource(source).load().migrate();
+        var jdbc = new JdbcTemplate(source);
+        Instant now = Instant.parse("2026-10-30T12:00:00Z");
+        jdbc.update("insert into simulation_owner_context(chat_jid,external_id,received_at,captured_at,expires_at,text) values ('fixture@s.whatsapp.net','expired',?,?,?,'test'),('fixture@s.whatsapp.net','retained',?,?,?,'test')",
+                Timestamp.from(now.minusSeconds(100)), Timestamp.from(now.minusSeconds(100)), Timestamp.from(now.minusSeconds(1)),
+                Timestamp.from(now.minusSeconds(100)), Timestamp.from(now.minusSeconds(100)), Timestamp.from(now.plusSeconds(100)));
+        new RetentionService(jdbc, new DataSourceTransactionManager(source)).purge(now);
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id='expired'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id='retained'", Integer.class));
+    }
+
     @Test void purgesExpiredSnippetsAndKeepsRetainedDataWithinSevenDays() {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         Flyway.configure().dataSource(dataSource).load().migrate();

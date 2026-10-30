@@ -117,8 +117,8 @@ public class AdminCommandService {
         return "Estado: IA " + on(operational.classification() && operational.classificationConfigured())
                 + (operational.classification() && !operational.classificationConfigured() ? " (configuration_invalid)" : "")
                 + "; kill switch " + on(operational.killSwitch())
-                + "; emergência " + on(operational.emergency()) + "; alertas reais " + on(operational.alerts())
-                + "; respostas reais " + on(operational.replies()) + "; simulação " + on(operational.simulation())
+                + "; emergência " + on(operational.emergency()) + "; alertas reais " + on(operational.realModeEnabled() && operational.alerts())
+                + "; respostas reais " + on(operational.realModeEnabled() && operational.replies()) + "; simulação " + on(operational.simulation())
                 + "; pausa de simulação " + on(operational.simulationPaused()) + "; " + override + ".";
     }
 

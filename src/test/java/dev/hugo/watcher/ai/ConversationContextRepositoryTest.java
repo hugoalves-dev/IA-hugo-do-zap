@@ -43,6 +43,22 @@ class ConversationContextRepositoryTest {
         assertEquals("", new ConversationContextRepository(jdbc, Duration.ofHours(24)).input(emptyBatch, now.plusSeconds(21)).target());
     }
 
+    @Test void directChatIncludesPriorOwnerMessageWithRole() {
+        var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        Flyway.configure().dataSource(source).load().migrate();
+        var jdbc = new JdbcTemplate(source);
+        Instant now = Instant.parse("2026-10-30T12:00:00Z");
+        String chat = "direct-context@s.whatsapp.net";
+        jdbc.update("insert into simulation_owner_context(chat_jid,external_id,received_at,captured_at,expires_at,text) values (?,?,?,?,?,?)",
+                chat, "owner", java.sql.Timestamp.from(now.minusSeconds(20)), java.sql.Timestamp.from(now.minusSeconds(20)), java.sql.Timestamp.from(now.plusSeconds(300)), "Posso apagar?");
+        var target = new IncomingMessage(Optional.of("target"), chat, Optional.empty(), Optional.empty(), Optional.empty(), false,
+                "notify", false, Map.of("conversation", "pode"), now);
+        var batch = new Batch(java.util.UUID.randomUUID(), chat, "", List.of(target));
+        var input = new ConversationContextRepository(jdbc, Duration.ofHours(24)).input(batch, now.plusSeconds(1));
+        assertEquals("pode", input.target());
+        assertEquals(List.of(new ClassificationInput.ContextEntry("owner", "Posso apagar?")), input.contextEntries());
+    }
+
     private static void add(DebounceService service, String id, String chat, String participant, String text, Instant at) {
         service.enqueue(new IncomingMessage(Optional.of(id), chat, Optional.of(participant), Optional.empty(), Optional.empty(), false,
                 "notify", false, Map.of("conversation", text), at), at);

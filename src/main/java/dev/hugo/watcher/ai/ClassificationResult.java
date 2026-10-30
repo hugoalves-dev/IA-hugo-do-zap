@@ -3,7 +3,7 @@ package dev.hugo.watcher.ai;
 import java.util.List;
 
 public record ClassificationResult(Intent intent, boolean requestDetected, Urgency urgency,
-                                  List<String> evidence, double confidence, Status status) {
+                                  List<String> evidence, double confidence, Status status, String diagnostic) {
     public static final double MIN_CONFIDENCE = 0.65;
     private static final int MAX_EVIDENCE_ITEMS = 3;
     private static final int MAX_EVIDENCE_CHARS = 120;
@@ -11,6 +11,11 @@ public record ClassificationResult(Intent intent, boolean requestDetected, Urgen
     public enum Intent { NONE, CONTACT_REQUEST, GROUP_TRIGGER, UNCERTAIN }
     public enum Urgency { LOW, NORMAL, HIGH, CRITICAL, UNCERTAIN }
     public enum Status { CLASSIFIED, UNCERTAIN, UNAVAILABLE }
+
+    public ClassificationResult(Intent intent, boolean requestDetected, Urgency urgency,
+                                List<String> evidence, double confidence, Status status) {
+        this(intent, requestDetected, urgency, evidence, confidence, status, null);
+    }
 
     public ClassificationResult {
         if (intent == null || urgency == null || status == null
@@ -48,6 +53,9 @@ public record ClassificationResult(Intent intent, boolean requestDetected, Urgen
     }
 
     public static ClassificationResult unavailable() {
-        return new ClassificationResult(Intent.UNCERTAIN, false, Urgency.UNCERTAIN, List.of(), 0, Status.UNAVAILABLE);
+        return unavailable("provider_unavailable");
+    }
+    public static ClassificationResult unavailable(String reason) {
+        return new ClassificationResult(Intent.UNCERTAIN, false, Urgency.UNCERTAIN, List.of(), 0, Status.UNAVAILABLE, reason);
     }
 }
