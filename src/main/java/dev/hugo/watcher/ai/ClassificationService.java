@@ -56,7 +56,7 @@ public final class ClassificationService {
                     case PRIVACY_ROUTE_UNAVAILABLE: return "privacy_route_unavailable";
                     case CONFIGURATION_ERROR: return "configuration_invalid";
                     case TIMEOUT: return "provider_timeout";
-                    case OUTPUT_TRUNCATED: return "output_truncated";
+                    case OUTPUT_TRUNCATED: return "provider_output_truncated";
                     case INVALID_RESPONSE, RESPONSE_TOO_LARGE: return "result_invalid";
                     default: break;
                 }
