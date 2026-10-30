@@ -25,7 +25,7 @@ public class TelegramMessageFormatter {
         try {
             JsonNode payload = JSON.readTree(action.payload());
             return switch (payload.path("eventType").asString("")) {
-                case "telegram_admin_reply" -> limit(clean(payload.path("text").asString("")), MAX_MESSAGE_LENGTH);
+                case "telegram_admin_reply" -> limit(cleanAdmin(payload.path("text").asString("")), MAX_MESSAGE_LENGTH);
                 case NotificationService.ARCHIVED_MESSAGES -> archived(payload).text();
                 case ConnectionService.ACTION_TYPE -> connection(payload);
                 case "simulation_daily_summary" -> dailySummary(payload);
@@ -102,6 +102,14 @@ public class TelegramMessageFormatter {
                 + " · alertas previstos: " + payload.path("predictedAlerts").asLong(0)
                 + " · respostas previstas: " + payload.path("predictedReplies").asLong(0)
                 + " · bloqueadas: " + payload.path("blockedDecisions").asLong(0)
+                + "\nUrgência LOW/NORMAL/HIGH/CRITICAL/UNCERTAIN: "
+                + payload.path("urgencyDistribution").path("LOW").asLong(0) + "/"
+                + payload.path("urgencyDistribution").path("NORMAL").asLong(0) + "/"
+                + payload.path("urgencyDistribution").path("HIGH").asLong(0) + "/"
+                + payload.path("urgencyDistribution").path("CRITICAL").asLong(0) + "/"
+                + payload.path("urgencyDistribution").path("UNCERTAIN").asLong(0)
+                + " · classificações incertas: " + payload.path("uncertainCount").asLong(0)
+                + "/" + payload.path("decisionCount").asLong(0)
                 + "\nCusto reservado: " + payload.path("reservedCostMicros").asLong(0)
                 + " micros · informado: " + payload.path("reportedActualCostMicros").asLong(0)
                 + " micros. Sem conteúdo de conversas.";
@@ -114,6 +122,10 @@ public class TelegramMessageFormatter {
             return "⚠️ O watcher bloqueou um alerta sem classificação ou referência válida.";
         return "⚠️ Alerta inteligente — urgência " + urgency + "\nReferência da decisão: " + reference
                 + ". Sem conteúdo de conversa.";
+    }
+
+    private static String cleanAdmin(String value) {
+        return value == null ? "" : value.replaceAll("[\\p{Cntrl}&&[^\\n]]", " ").strip();
     }
 
     private static String clean(String value) {

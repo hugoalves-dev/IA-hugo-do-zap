@@ -56,6 +56,11 @@ Configure `WATCHER_TELEGRAM_BOT_TOKEN` com o token fornecido pelo BotFather e `W
 
 ### Comandos administrativos no Telegram
 
+`/ultimas [N]` lista até 10 decisões retidas (padrão 5), e `/decisao <id>` consulta o identificador mostrado. Se o prefixo for ambíguo, informe mais caracteres. O acesso exige o administrador e o chat privado configurados; as respostas usam o outbox e sua limitação de entrega. As consultas não reprocessam mensagens, não chamam provedores e não mudam gates. Dados expirados ou removidos não estão disponíveis. A prévia usa somente template atualmente habilitado, identificado como automático e autorizado para a conversa. Uma prévia hipotética não é uma decisão nem uma autorização de envio. O modo e a autorização real apresentados são registros históricos, sujeitos aos gates atuais. Nenhuma mensagem bruta é exibida.
+
+A urgência mede prazo e consequências: **LOW** para pedidos sem prazo iminente ou explicitamente não urgentes; **NORMAL** para demanda ordinária sem consequências imediatas; **HIGH** para prazo próximo, como necessidade ainda hoje com consequência relevante; **CRITICAL** para emergência imediata com dano grave; **UNCERTAIN** quando os dados são insuficientes. Exemplos de avaliação: “importante, responda quando estiver disponível” e “sem pressa” são LOW; “quando puder nesta semana” pode ser NORMAL; “preciso ainda hoje para evitar perder o prazo” é HIGH; “preciso de socorro agora, alguém está sem respirar” é CRITICAL. A palavra “importante” isolada não aumenta a urgência; “hoje” sem consequência relevante não implica emergência. Esses exemplos são metas de classificação, não garantias sobre respostas de um modelo. A confiança informada não é uma probabilidade estatisticamente calibrada. O relatório diário registra distribuição e contagem de classificações incertas, sem texto pessoal.
+
+
 O polling vem desligado e não afeta as notificações. O destino atual é uma conversa privada: IDs de grupo não são aceitos pela configuração. O User ID identifica a pessoa autorizada; não é o token do bot e pode ser diferente do Chat ID. O bot exige ambos os IDs e tipo `private` para aceitar comandos e confirmações.
 
 Na VPS, obtenha o User ID e o Chat ID por um método confiável, sem divulgar o token. Edite o arquivo privado com `vim .env`:

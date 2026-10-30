@@ -129,6 +129,13 @@ class OpenRouterProviderTest {
         assertEquals(1, transport.requests().size());
     }
 
+    @org.junit.jupiter.api.Test void urgencyRubricDistinguishesImportanceFromTimePressure() {
+        String prompt = AbstractHttpClassificationProvider.SYSTEM_PROMPT;
+        org.junit.jupiter.api.Assertions.assertTrue(prompt.contains("important alone"));
+        org.junit.jupiter.api.Assertions.assertTrue(prompt.contains("today"));
+        org.junit.jupiter.api.Assertions.assertTrue(prompt.contains("immediate emergency"));
+    }
+
     private static OpenRouterProvider provider(ProviderTransport transport, ProviderAuthorization authorization) {
         return new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                 "test/model", "fake-key", transport, authorization, Duration.ofSeconds(2));
