@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 public class WebhookBodyLimitFilter extends OncePerRequestFilter {
     private static final String WEBHOOK_PATH = "/internal/evolution/webhook";
     private static final String ARCHIVE_MODE_PATH = "/internal/archive-mode";
+    private static final String TELEGRAM_WEBHOOK_PATH = "/api/webhooks/telegram";
     private final EvolutionWebhookProperties properties;
 
     public WebhookBodyLimitFilter(EvolutionWebhookProperties properties) {
@@ -29,13 +30,15 @@ public class WebhookBodyLimitFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return !("POST".equals(request.getMethod()) && WEBHOOK_PATH.equals(request.getRequestURI())
-                || "PUT".equals(request.getMethod()) && ARCHIVE_MODE_PATH.equals(request.getRequestURI()));
+                || "PUT".equals(request.getMethod()) && ARCHIVE_MODE_PATH.equals(request.getRequestURI())
+                || "POST".equals(request.getMethod()) && TELEGRAM_WEBHOOK_PATH.equals(request.getRequestURI()));
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        int max = ARCHIVE_MODE_PATH.equals(request.getRequestURI()) ? 256 : properties.getMaxBodyBytes();
+        int max = ARCHIVE_MODE_PATH.equals(request.getRequestURI()) ? 256
+                : TELEGRAM_WEBHOOK_PATH.equals(request.getRequestURI()) ? 65_536 : properties.getMaxBodyBytes();
         if (request.getContentLengthLong() > max) {
             response.sendError(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE);
             return;
