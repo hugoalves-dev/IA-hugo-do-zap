@@ -58,6 +58,10 @@ public class EvolutionWebhookController {
             }
         }
         String externalId = externalId(payload);
+        if ("contacts.upsert".equals(eventType) || "contacts.update".equals(eventType)) {
+            // Evolution contact events have no stable event ID; every observation must remain replayable.
+            externalId = java.util.UUID.randomUUID().toString();
+        }
         if (eventType != null && eventType.startsWith("chats.")) {
             try {
                 inbox.quarantine("CHAT_STATE", null, "unverified_or_incomplete_state");
