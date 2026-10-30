@@ -69,11 +69,16 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
         Object choices = root.get("choices");
         if (!(choices instanceof List<?> list) || list.isEmpty() || !(list.getFirst() instanceof Map<?, ?> choice))
             throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE);
-        Object finish = choice.get("finish_reason");
-        if ("length".equals(finish) || "max_tokens".equals(finish))
-            throw new ClassificationProviderException(ClassificationProviderException.Kind.OUTPUT_TRUNCATED);
-        if (finish != null && !"stop".equals(finish) && !"end_turn".equals(finish))
-            throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE);
+        // A later choice must never hide a truncated response behind a valid first choice.
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> candidate))
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE);
+            Object finish = candidate.get("finish_reason");
+            if ("length".equals(finish) || "max_tokens".equals(finish))
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.OUTPUT_TRUNCATED);
+            if (finish != null && !"stop".equals(finish) && !"end_turn".equals(finish))
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE);
+        }
         if (!(choice.get("message") instanceof Map<?, ?> message)
                 || !(message.get("content") instanceof String text) || text.isBlank())
             throw new ClassificationProviderException(ClassificationProviderException.Kind.INVALID_RESPONSE);
