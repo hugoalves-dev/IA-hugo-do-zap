@@ -18,6 +18,13 @@ class ClassificationInputMinimizerTest {
         assertEquals(List.of("two", "three", "four", "five", "six"), input.context());
     }
 
+    @Test void unorderedBatchChoosesNewestEligibleTarget() {
+        var newer = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("new"), "fixture@s.whatsapp.net", java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), false, "notify", false, java.util.Map.of("conversation", "pode"), java.time.Instant.parse("2026-10-30T00:00:02Z"));
+        var older = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("old"), "fixture@s.whatsapp.net", java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), false, "notify", false, java.util.Map.of("conversation", "apaga"), java.time.Instant.parse("2026-10-30T00:00:01Z"));
+        var batch = new dev.hugo.watcher.simulation.Batch(java.util.UUID.randomUUID(), "fixture@s.whatsapp.net", "", List.of(newer, older));
+        assertEquals("pode", ClassificationInput.fromBatch(batch).target());
+    }
+
     @Test void masksCommonContactAndIdentityTokensBeforeProviderInput() {
         String text = "Call +55 (11) 98765-4321 or 11987654321; email person.test@example.com; "
                 + "WhatsApp 5511987654321@s.whatsapp.net; CPF 123.456.789-09; "

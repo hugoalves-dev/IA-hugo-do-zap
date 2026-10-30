@@ -29,8 +29,13 @@ public record ClassificationInput(List<String> messages) {
     public static ClassificationInput fromBatch(Batch batch) {
         if (batch == null || batch.messages() == null) return new ClassificationInput(List.of());
         List<String> text = new ArrayList<>();
-        for (IncomingMessage message : batch.messages()) {
-            if (message == null || message.fromMe() || message.history()) continue;
+        var ordered = batch.messages().stream().filter(java.util.Objects::nonNull)
+                .filter(message -> !message.fromMe() && !message.history())
+                .sorted(java.util.Comparator.comparing(IncomingMessage::receivedAt,
+                        java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                        .thenComparing(message -> message.externalId().orElse("")))
+                .toList();
+        for (IncomingMessage message : ordered) {
             String extracted = extractText(message.content());
             if (!extracted.isBlank()) text.add(extracted);
         }
