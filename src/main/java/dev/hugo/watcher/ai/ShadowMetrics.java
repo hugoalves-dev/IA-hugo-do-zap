@@ -116,12 +116,20 @@ public final class ShadowMetrics {
             Map<?, ?> root = JSON.readValue(responseBody, Map.class);
             if (root == null) return;
             if ("openrouter".equals(safeProvider)) {
-                if (root.get("choices") instanceof java.util.List<?> choices && !choices.isEmpty()
-                        && choices.getFirst() instanceof Map<?, ?> choice) {
-                    String finish = choice.get("finish_reason") instanceof String value ? switch (value) {
-                        case "stop", "length", "max_tokens", "content_filter", "tool_calls", "end_turn" -> value;
-                        default -> "other";
-                    } : "missing";
+                if (root.get("choices") instanceof java.util.List<?> choices && !choices.isEmpty()) {
+                    String finish = "missing";
+                    for (Object item : choices) {
+                        if (!(item instanceof Map<?, ?> choice)) continue;
+                        String current = choice.get("finish_reason") instanceof String value ? switch (value) {
+                            case "stop", "length", "max_tokens", "content_filter", "tool_calls", "end_turn" -> value;
+                            default -> "other";
+                        } : "missing";
+                        if ("missing".equals(finish)) finish = current;
+                        if ("length".equals(current) || "max_tokens".equals(current)) {
+                            finish = current;
+                            break;
+                        }
+                    }
                     registry.counter("watcher.shadow.provider.finish_reason",
                             "provider", safeProvider, "reason", finish).increment();
                     if ("length".equals(finish) || "max_tokens".equals(finish))
