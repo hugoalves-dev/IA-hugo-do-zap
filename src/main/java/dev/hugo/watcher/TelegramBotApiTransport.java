@@ -5,6 +5,7 @@ import com.pengrad.telegrambot.request.SendMessage;
 import com.pengrad.telegrambot.model.request.ParseMode;
 import com.pengrad.telegrambot.response.SendResponse;
 import com.pengrad.telegrambot.model.request.InlineKeyboardMarkup;
+import com.pengrad.telegrambot.model.WebAppInfo;
 import com.pengrad.telegrambot.model.request.InlineKeyboardButton;
 import com.pengrad.telegrambot.request.EditMessageText;
 import com.pengrad.telegrambot.response.BaseResponse;
@@ -104,10 +105,12 @@ public class TelegramBotApiTransport implements TelegramTransport {
                 String text = item.path("text").asString("");
                 String data = item.path("data").asString("");
                 String url = item.path("url").asString("");
+                String webAppUrl = item.path("webAppUrl").asString("");
                 if (text.isBlank()) continue;
                 InlineKeyboardButton button = new InlineKeyboardButton(text);
                 if (!data.isBlank() && data.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 64)
                     button.callbackData(data);
+                else if (webAppUrl.startsWith("https://")) button.webApp(new WebAppInfo(webAppUrl));
                 else if (url.startsWith("https://")) button.url(url);
                 else continue;
                 buttons.add(button);
