@@ -10,7 +10,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class ShadowMetricsTest {
     @Test
     void countsShadowDecisionsAndProviderFailuresWithBoundedTags() {
-        try (var registry = new SimpleMeterRegistry()) {
+        var registry = new SimpleMeterRegistry();
+        {
             var metrics = new ShadowMetrics(registry);
 
             metrics.eligibleBatch();
@@ -40,7 +41,8 @@ class ShadowMetricsTest {
 
     @Test
     void extractsProviderUsageWithoutLabelingMessageOrModelContent() {
-        try (var registry = new SimpleMeterRegistry()) {
+        var registry = new SimpleMeterRegistry();
+        {
             var metrics = new ShadowMetrics(registry);
 
             metrics.reportedUsage("openrouter", """
@@ -71,7 +73,8 @@ class ShadowMetricsTest {
 
     @Test
     void malformedOrMissingUsageNeverBreaksProviderHandling() {
-        try (var registry = new SimpleMeterRegistry()) {
+        var registry = new SimpleMeterRegistry();
+        {
             var metrics = new ShadowMetrics(registry);
             assertDoesNotThrow(() -> {
                 metrics.reportedUsage("openrouter", "not json");
