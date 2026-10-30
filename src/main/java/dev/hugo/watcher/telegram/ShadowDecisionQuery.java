@@ -42,7 +42,7 @@ final class ShadowDecisionQuery {
                     + " · " + name + "\n" + rs.getString("classification_status") + " / " + rs.getString("classification_urgency")
                     + " / " + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
                     + " · provedor=" + provider(rs.getString("provider"))
-                    + " · pedido=" + ("true".equals(rs.getString("request_detected")) ? "sim" : "não")
+                    + " · pedido=" + (rs.getString("request_detected") == null ? "indisponível" : "true".equals(rs.getString("request_detected")) ? "sim" : "não")
                     + " · Shadow " + rs.getString("decision_state") + " · alerta=" + rs.getBoolean("would_alert")
                     + " resposta=" + rs.getBoolean("would_reply") + " · bloqueio=" + code(rs.getString("blocked_reason"))
                     + (rs.getString("classification_diagnostic") == null ? "" : " · diagnóstico=" + code(rs.getString("classification_diagnostic")));
@@ -96,7 +96,7 @@ final class ShadowDecisionQuery {
                 var json=tools.jackson.databind.json.JsonMapper.builder().build().readTree(evaluation);
                 provider=escape(json.path("provider").asString("indisponível"));
                 situations=escape(json.path("situations").toString());
-                requestDetected=json.path("requestDetected").asBoolean(false) ? "sim" : "não";
+                requestDetected=json.has("requestDetected") ? (json.path("requestDetected").asBoolean(false) ? "sim" : "não") : "indisponível";
                 int count=json.path("contextCount").asInt(-1), hours=json.path("contextWindowHours").asInt(-1);
                 if (count >= 0 && count <= 5 && hours >= 1 && hours <= 168)
                     context="contexto: " + count + " mensagens; janela até " + hours + " h";
