@@ -78,13 +78,20 @@ public class AdminCommandService {
         return transactions.execute(status -> {
             String token = tokens.issue(command.userId(), command.chatId(),
                     new CallbackAction(command.name(), command.arguments()), clock.instant().plus(CONFIRMATION_TTL));
-            String cancel = tokens.issue(command.userId(), command.chatId(),
-                    new CallbackAction("cancel", List.of(token)), clock.instant().plus(CONFIRMATION_TTL));
-            String message = "Confirme a operação /" + command.name() + " em até 5 minutos."
-                    + "\nFallback: /confirm " + token;
-            enqueueReply(message, command, List.of(List.of(
-                    Map.of("text", "✅ Confirmar", "data", token),
-                    Map.of("text", "❌ Cancelar", "data", cancel))));
+            boolean inline = telegramProperties != null && telegramProperties.isWebhookEnabled();
+            String message = inline
+                    ? "Confirme a operação /" + command.name() + " em até 5 minutos."
+                        + "\nFallback: /confirm " + token
+                    : "Confirme em até 5 minutos com /confirm " + token;
+            if (inline) {
+                String cancel = tokens.issue(command.userId(), command.chatId(),
+                        new CallbackAction("cancel", List.of(token)), clock.instant().plus(CONFIRMATION_TTL));
+                enqueueReply(message, command, List.of(List.of(
+                        Map.of("text", "✅ Confirmar", "data", token),
+                        Map.of("text", "❌ Cancelar", "data", cancel))));
+            } else {
+                enqueueReply(message, command, List.of());
+            }
             return AdminResult.confirmation(message);
         });
     }
