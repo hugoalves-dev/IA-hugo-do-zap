@@ -24,6 +24,8 @@ public final class AiSimulationClassifier {
     private final AiClassificationProperties properties;
     private final ProviderTransport transport;
     private dev.hugo.watcher.OperationalState operational;
+    @org.springframework.beans.factory.annotation.Value("${watcher.ai.context-window-hours:24}")
+    private long contextWindowHours = 24;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
     @Autowired public AiSimulationClassifier(JdbcTemplate jdbc, BudgetService budgets, Clock clock,
@@ -44,7 +46,7 @@ public final class AiSimulationClassifier {
         purposes = contextualPurposes(batch, purposes);
         if (purposes.isEmpty()) return Classification.unavailable();
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
-        ClassificationInput input = ClassificationInput.fromBatch(batch);
+        ClassificationInput input = new ConversationContextRepository(jdbc, java.time.Duration.ofHours(contextWindowHours)).input(batch, clock.instant());
         if (input.messages().isEmpty()) return Classification.unavailable();
         UUID token = UUID.randomUUID();
         Instant deadline = clock.instant().plus(properties.timeout().multipliedBy(3)).plusSeconds(30);
