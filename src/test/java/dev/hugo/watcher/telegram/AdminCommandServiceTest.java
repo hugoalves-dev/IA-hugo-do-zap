@@ -147,6 +147,36 @@ class AdminCommandServiceTest {
         assertTrue(commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message().contains("expirada"));
     }
 
+    @Test void archivedShadowDecisionShowsRequestAndInactiveTemplateAsHypotheticalOnly() {
+        var id = java.util.UUID.randomUUID();
+        var chat = "authorized-shadow@s.whatsapp.net";
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        jdbc.update("update response_templates set body='Resposta automática: retorno assim que possível.', enabled=false, identifies_automation=true where template_id='contact_request' and version=1");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)", chat);
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)",
+                id, chat, now, now, now, now, expires, expires);
+        jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",
+                id, java.util.UUID.randomUUID(), expires,
+                "{\"provider\":\"openrouter\",\"requestDetected\":true,\"situations\":[\"CONTACT_REQUEST\"],\"groupTriggerMatched\":false,\"contextCount\":1,\"contextWindowHours\":24}");
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,
+                    classification_status,classification_urgency,classification_confidence,availability_state,availability_source)
+                values (?,false,false,'no_authorized_action',?,?,'CLASSIFIED','NORMAL',0.9,'AVAILABLE','PROFILE')
+                """, id, now, expires);
+
+        String recent = commands.execute(command("ultimas", List.of("5"), false)).message();
+        assertTrue(recent.contains("pedido=sim"));
+        assertTrue(recent.contains("resposta=false"));
+        String detail = commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message();
+        assertTrue(detail.contains("Solicitação detectada: sim"));
+        assertTrue(detail.contains("would_reply: false"));
+        assertTrue(detail.contains("Prévia hipotética se habilitado: Resposta automática: retorno assim que possível."));
+        assertTrue(detail.contains("template atualmente inativo"));
+        assertTrue(detail.contains("não autoriza envio automático"));
+        assertFalse(detail.contains(chat));
+    }
+
     @Test void recentDecisionsShowNotifyNameWithoutExposingIdentity() {
         var id = java.util.UUID.randomUUID();
         var now = java.sql.Timestamp.from(clock.instant());
