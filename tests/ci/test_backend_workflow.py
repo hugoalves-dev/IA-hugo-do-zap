@@ -77,7 +77,12 @@ class BackendWorkflowContractTest(unittest.TestCase):
         result = subprocess.run(["docker", "compose", "--env-file", str(ROOT / ".env.example"),
                                  "config", "--format", "json"], cwd=ROOT, env=env,
                                 text=True, capture_output=True, check=True)
-        watcher = json.loads(result.stdout)["services"]["watcher"]["environment"]
+        config = json.loads(result.stdout)
+        watcher_service = config["services"]["watcher"]
+        watcher = watcher_service["environment"]
+        self.assertEqual("health,prometheus", watcher["MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE"])
+        self.assertNotIn("ports", watcher_service, "Metrics endpoint must not bind a public host port")
+        self.assertEqual({"infra_network"}, set(watcher_service["networks"]))
         for name, value in names.items():
             self.assertEqual(value, str(watcher[name]).lower(), name)
         env["WATCHER_AI_CLASSIFICATION_ENABLED"] = "false"

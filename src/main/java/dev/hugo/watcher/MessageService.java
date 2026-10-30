@@ -73,8 +73,40 @@ public class MessageService {
 
     public Acceptance accept(IncomingMessage message) {
         Objects.requireNonNull(message, "message");
-        return Objects.requireNonNull(transactions.execute(status -> acceptInTransaction(message)),
+        Acceptance result = Objects.requireNonNull(transactions.execute(status -> acceptInTransaction(message)),
                 "Message transaction returned no result");
+        if (message.fromMe()) {
+            try { captureOwnerContext(message); }
+            catch (RuntimeException failure) {
+                org.slf4j.LoggerFactory.getLogger(MessageService.class).warn("Owner context capture unavailable");
+            }
+        }
+        return result;
+    }
+
+    private void captureOwnerContext(IncomingMessage message) {
+        if (debounce == null || !(simulationProperties.isEnabled() || realModeEnabled) || message.history()
+                || !"notify".equals(message.upsertType()) || !validChatJid(message.chatJid())
+                || isGroup(message.chatJid()) || isStatusJid(message.chatJid()) || message.receivedAt() == null) return;
+        String id = message.externalId().orElse("");
+        if (id.isBlank() || id.length() > 255) return;
+        String text = new dev.hugo.watcher.ai.ClassificationInput(List.of(
+                dev.hugo.watcher.ai.ClassificationInput.extractText(message.content()))).target();
+        if (text.isBlank()) return;
+        List<String> aliases = jdbc.query("select canonical_identity from identity_aliases where alias=?",
+                (rs, row) -> rs.getString(1), message.chatJid());
+        String chat = aliases.isEmpty() ? message.chatJid() : aliases.getFirst();
+        List<ChatSnapshot> snapshots = jdbc.query("select archived,synchronized_snapshot,display_name,is_group,last_read_at from chat_snapshot where chat_jid=?",
+                (rs, row) -> new ChatSnapshot((Boolean)rs.getObject(1), rs.getBoolean(2), rs.getString(3), rs.getBoolean(4),
+                        rs.getTimestamp(5) == null ? null : rs.getTimestamp(5).toInstant()), chat);
+        ArchiveMode mode = archiveModes.getMode();
+        if (mode != ArchiveMode.ALL && (snapshots.isEmpty() || !mode.accepts(snapshots.getFirst().archived(), snapshots.getFirst().synchronizedSnapshot()))) return;
+        Instant now = Instant.now();
+        jdbc.update("""
+                insert into simulation_owner_context(chat_jid,external_id,received_at,captured_at,expires_at,text)
+                values (?,?,?,?,?,?) on conflict do nothing
+                """, chat, id, Timestamp.from(message.receivedAt()), Timestamp.from(now),
+                Timestamp.from(now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L)), text);
     }
 
     /** Stores minimal, short-lived provenance for an authenticated own outbound message. */

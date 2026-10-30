@@ -24,6 +24,14 @@ public final class AiSimulationClassifier {
     private final AiClassificationProperties properties;
     private final ProviderTransport transport;
     private dev.hugo.watcher.OperationalState operational;
+    private ShadowMetrics metrics;
+    @Autowired(required = false) public void configureMetrics(ShadowMetrics value) { this.metrics = value; }
+    private long contextWindowHours = 24;
+    @org.springframework.beans.factory.annotation.Value("${watcher.ai.context-window-hours:24}")
+    public void configureContextWindow(long hours) {
+        if (hours < 1 || hours > 168) throw new IllegalArgumentException("context window must be 1 to 168 hours");
+        contextWindowHours = hours;
+    }
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
     @Autowired public AiSimulationClassifier(JdbcTemplate jdbc, BudgetService budgets, Clock clock,
@@ -39,13 +47,16 @@ public final class AiSimulationClassifier {
     public Classification classify(Batch batch) {
         if (TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("provider calls must run outside SQL transactions");
-        if (!properties.configured() || !eligible(batch)) return Classification.unavailable();
+        if (!properties.configured()) return unavailable("configuration_invalid");
+        if (!eligible(batch)) return unavailable("state_or_scope_ineligible");
         Set<Situation> purposes = permittedPurposes(batch, "openrouter");
+        if (purposes.isEmpty()) return unavailable("consent_missing");
         purposes = contextualPurposes(batch, purposes);
-        if (purposes.isEmpty()) return Classification.unavailable();
+        if (purposes.isEmpty()) return unavailable("state_or_scope_ineligible");
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
-        ClassificationInput input = ClassificationInput.fromBatch(batch);
-        if (input.messages().isEmpty()) return Classification.unavailable();
+        ClassificationInput input = new ConversationContextRepository(jdbc, java.time.Duration.ofHours(contextWindowHours)).input(batch, clock.instant());
+        if (input.messages().isEmpty()) return unavailable("no_eligible_text");
+        if (input.contextEntries().isEmpty() && needsContext(input.target())) return unavailable("context_insufficient");
         UUID token = UUID.randomUUID();
         Instant deadline = clock.instant().plus(properties.timeout().multipliedBy(3)).plusSeconds(30);
         int claimed = jdbc.update("""
@@ -72,15 +83,29 @@ public final class AiSimulationClassifier {
         ClassificationResult result = new ClassificationService(primary, fallback).classify(input);
         Classification classification = authorized(batch, usedProvider.get(), purposes) ? convert(batch, result, purposes) : Classification.unavailable();
         int saved = jdbc.update("update simulation_ai_evaluations set result=?::jsonb where batch_id=? and lease_token=? and expires_at>?",
-                encode(classification, usedProvider.get(), purposes), batch.id(), token, Timestamp.from(clock.instant()));
-        return saved == 1 ? classification : Classification.unavailable();
+                encode(classification, usedProvider.get(), purposes, input.contextEntries().size(), contextWindowHours), batch.id(), token, Timestamp.from(clock.instant()));
+        Classification finalResult = saved == 1 ? classification : Classification.unavailable();
+        if (metrics != null) metrics.classification(finalResult.status());
+        return finalResult;
+    }
+
+    private Classification unavailable(String reason) {
+        if (metrics != null) metrics.classification(ClassificationResult.Status.UNAVAILABLE);
+        return Classification.unavailable(reason);
+    }
+    private static boolean needsContext(String text) {
+        String normalized = text.strip().toLowerCase(Locale.ROOT).replaceAll("[\\p{Punct}\\s]+$", "");
+        return Set.of("ok", "pode", "apaga", "faz isso").contains(normalized);
     }
 
     /** Recheck data consent and kill switch in the short decision-persistence transaction. Never performs HTTP. */
     public Classification revalidate(Batch batch) {
+        return revalidate(batch, Classification.unavailable());
+    }
+    public Classification revalidate(Batch batch, Classification attempted) {
         var rows = jdbc.query("select result::text from simulation_ai_evaluations where batch_id=? and result is not null",
                 (rs, row) -> rs.getString(1), batch.id());
-        return rows.isEmpty() ? Classification.unavailable() : authorizedStored(batch, rows.getFirst());
+        return rows.isEmpty() ? (attempted.available() ? Classification.unavailable() : attempted) : authorizedStored(batch, rows.getFirst());
     }
     private Classification authorizedStored(Batch batch, String stored) {
         Map<?, ?> metadata = JSON.readValue(stored, Map.class);
@@ -91,13 +116,31 @@ public final class AiSimulationClassifier {
         String reference = referenceHash(batch);
         if ((decoded.explicitPersonalReference() || decoded.groupTriggerMatched()) && reference == null) return Classification.unavailable();
         return new Classification(decoded.situations(),decoded.requestDetected(),reference != null,
-                reference != null && batch.chatJid().endsWith("@g.us"),decoded.available(),decoded.urgency(),decoded.confidence(),decoded.status(),reference);
+                reference != null && batch.chatJid().endsWith("@g.us"),decoded.available(),decoded.urgency(),decoded.confidence(),decoded.status(),reference,decoded.diagnostic());
     }
     private ProviderTransport guarded(ProviderTransport http, Batch batch, String provider, Set<Situation> purposes,
                                       java.util.concurrent.atomic.AtomicReference<String> usedProvider) {
         ProviderTransport tracked = (request, timeout, max) -> {
-            usedProvider.set(provider);
-            return http.send(request, timeout, max);
+            if ("gemini".equals(provider) && "openrouter".equals(usedProvider.getAndSet(provider)) && metrics != null) metrics.fallback();
+            else usedProvider.set(provider);
+            long start = System.nanoTime();
+            String status = "error";
+            try {
+                ProviderTransport.Response response = http.send(request, timeout, max);
+                status = response == null ? "error" : providerStatus(response.statusCode());
+                if (metrics != null && "success".equals(status)) metrics.reportedUsage(provider, response.body());
+                return response;
+            } catch (RuntimeException failure) {
+                for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                    if (cause instanceof java.util.concurrent.TimeoutException || cause instanceof java.net.http.HttpTimeoutException) {
+                        status = "timeout";
+                        break;
+                    }
+                }
+                throw failure;
+            } finally {
+                if (metrics != null) metrics.providerCall(provider, status, java.time.Duration.ofNanos(System.nanoTime() - start));
+            }
         };
         if (properties.disableLocalBudget()) return (request, timeout, max) -> {
             if (!authorized(batch, provider, purposes)) throw ClassificationProviderException.authorizationDenied(provider);
@@ -105,6 +148,9 @@ public final class AiSimulationClassifier {
         };
         return new BudgetedProviderTransport(tracked, budgets, () -> authorized(batch, provider, purposes),
                 provider, properties.attemptHoldMicros(), clock);
+    }
+    static String providerStatus(int status) {
+        return status == 408 ? "timeout" : status >= 200 && status < 300 ? "success" : "rejected";
     }
     private boolean authorized(Batch batch, String provider, Set<Situation> purposes) {
         return properties.configured() && eligible(batch)
@@ -139,7 +185,7 @@ public final class AiSimulationClassifier {
     }
     private Classification convert(Batch batch, ClassificationResult result, Set<Situation> purposes) {
         if (result.status() != ClassificationResult.Status.CLASSIFIED)
-            return new Classification(Set.of(),false,false,false,false,result.urgency(),result.confidence(),result.status(),null);
+            return new Classification(Set.of(),false,false,false,false,result.urgency(),result.confidence(),result.status(),null,result.diagnostic());
         Set<Situation> situations = EnumSet.noneOf(Situation.class);
         if (result.intent() == ClassificationResult.Intent.CONTACT_REQUEST) situations.add(Situation.CONTACT_REQUEST);
         if (result.intent() == ClassificationResult.Intent.GROUP_TRIGGER) situations.add(Situation.GROUP_TRIGGER);
@@ -153,7 +199,7 @@ public final class AiSimulationClassifier {
         return dev.hugo.watcher.simulation.PersonalReferenceEvidence.findHash(jdbc,batch.id(),properties.ownJid(),clock.instant());
     }
     private boolean structuredMention(Batch batch) { return referenceHash(batch) != null; }
-    private static String encode(Classification result, String provider, Set<Situation> purposes) {
+    private static String encode(Classification result, String provider, Set<Situation> purposes, int contextCount, long contextWindowHours) {
         Map<String,Object> metadata = new LinkedHashMap<>();
         metadata.put("provider",provider); metadata.put("purposes",purposes.stream().map(Enum::name).toList());
         metadata.put("situations",result.situations().stream().map(Enum::name).toList());
@@ -161,6 +207,8 @@ public final class AiSimulationClassifier {
         metadata.put("groupTriggerMatched",result.groupTriggerMatched()); metadata.put("available",result.available());
         metadata.put("urgency",result.urgency().name()); metadata.put("confidence",result.confidence()); metadata.put("status",result.status().name());
         metadata.put("personalReferenceHash",result.personalReferenceHash());
+        metadata.put("diagnostic", result.diagnostic());
+        metadata.put("contextCount", contextCount); metadata.put("contextWindowHours", contextWindowHours);
         return JSON.writeValueAsString(metadata);
     }
     private static Classification decode(String value) {
@@ -172,7 +220,7 @@ public final class AiSimulationClassifier {
                 ClassificationResult.Urgency.valueOf(Objects.toString(result.get("urgency"),"UNCERTAIN")),
                 result.get("confidence") instanceof Number n ? n.doubleValue() : 0,
                 ClassificationResult.Status.valueOf(Objects.toString(result.get("status"),"UNCERTAIN")),
-                (String)result.get("personalReferenceHash"));
+                (String)result.get("personalReferenceHash"), (String)result.get("diagnostic"));
     }
     private record Prior(String result, Instant expires) { }
 }

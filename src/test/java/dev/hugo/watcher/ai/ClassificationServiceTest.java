@@ -33,8 +33,37 @@ class ClassificationServiceTest {
 
         ClassificationResult result = new ClassificationService(primary, fallback).classify(batch("hello"));
 
-        assertEquals(ClassificationResult.Status.UNCERTAIN, result.status());
+        assertEquals(ClassificationResult.Status.UNAVAILABLE, result.status());
+        assertEquals("authorization_denied", result.diagnostic());
         assertEquals(0, fallbackCalls.get());
+    }
+
+    @Test void exhaustedBudgetIsNotTreatedAsTechnicalFallback() {
+        AtomicInteger fallbackCalls = new AtomicInteger();
+        ClassificationProvider primary = new ClassificationProvider() {
+            @Override public String name() { return "openrouter"; }
+            @Override public ClassificationResult classify(ClassificationInput input) {
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.TECHNICAL_FAILURE, new BudgetExceededException());
+            }
+        };
+        ClassificationProvider fallback = new ClassificationProvider() {
+            @Override public String name() { return "gemini"; }
+            @Override public ClassificationResult classify(ClassificationInput input) { fallbackCalls.incrementAndGet(); return ClassificationResult.uncertain(); }
+        };
+        ClassificationResult result = new ClassificationService(primary, fallback).classify(batch("hello"));
+        assertEquals("budget_exceeded", result.diagnostic());
+        assertEquals(0, fallbackCalls.get());
+    }
+    @Test void timeoutWithoutFallbackHasSpecificDiagnostic() {
+        ClassificationProvider primary = new ClassificationProvider() {
+            @Override public String name() { return "openrouter"; }
+            @Override public ClassificationResult classify(ClassificationInput input) {
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.TIMEOUT);
+            }
+        };
+        var result = new ClassificationService(primary, null).classify(batch("hello"));
+        assertEquals("provider_timeout", result.diagnostic());
+        assertEquals(ClassificationResult.Status.UNAVAILABLE, result.status());
     }
 
     @Test void technicalFailureUsesFallbackButPromptCannotCarryIdentifiers() {
@@ -90,7 +119,7 @@ class ClassificationServiceTest {
             }
         };
 
-        assertEquals(ClassificationResult.Status.UNCERTAIN,
+        assertEquals(ClassificationResult.Status.UNAVAILABLE,
                 new ClassificationService(primary, fallback).classify(batch("hello")).status());
         assertEquals(0, fallbackCalls.get());
     }

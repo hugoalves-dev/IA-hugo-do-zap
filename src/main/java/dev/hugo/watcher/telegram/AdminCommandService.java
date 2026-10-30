@@ -114,9 +114,11 @@ public class AdminCommandService {
         String override = state.overrideState() == null || state.overrideExpiresAt() == null
                 || !state.overrideExpiresAt().isAfter(clock.instant()) ? "sem override ativo"
                 : state.overrideState().toLowerCase() + " até " + state.overrideExpiresAt();
-        return "Estado: IA " + on(operational.classification()) + "; kill switch " + on(operational.killSwitch())
-                + "; emergência " + on(operational.emergency()) + "; alertas reais " + on(operational.alerts())
-                + "; respostas reais " + on(operational.replies()) + "; simulação " + on(operational.simulation())
+        return "Estado: IA " + on(operational.classification() && operational.classificationConfigured())
+                + (operational.classification() && !operational.classificationConfigured() ? " (configuration_invalid)" : "")
+                + "; kill switch " + on(operational.killSwitch())
+                + "; emergência " + on(operational.emergency()) + "; alertas reais " + on(operational.realModeEnabled() && operational.alerts())
+                + "; respostas reais " + on(operational.realModeEnabled() && operational.replies()) + "; simulação " + on(operational.simulation())
                 + "; pausa de simulação " + on(operational.simulationPaused()) + "; " + override + ".";
     }
 
@@ -159,7 +161,7 @@ public class AdminCommandService {
 
     private String report() {
         if (reports != null) {
-            reports.schedule(LocalDate.now(clock.withZone(ADMIN_ZONE)));
+            reports.scheduleOnDemand(LocalDate.now(clock.withZone(ADMIN_ZONE)));
             return "Resumo diário de simulação enfileirado para entrega no Telegram.";
         }
         Integer decisions = jdbc.queryForObject("select count(*) from simulation_decisions where decided_at >= ?",

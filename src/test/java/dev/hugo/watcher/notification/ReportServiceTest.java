@@ -66,4 +66,33 @@ class ReportServiceTest {
         assertTrue(action.payload().contains("urgencyDistribution"));
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='simulation_daily_summary'", Integer.class));
     }
+    @Test void manualReportRefreshesCountsWithoutReplayingScheduledDailyReport() {
+        OutboxAction scheduled = reports.schedule(day);
+        assertEquals(0, tools.jackson.databind.json.JsonMapper.builder().build()
+                .readTree(scheduled.payload()).path("decisionCount").asInt());
+
+        var batch = java.util.UUID.randomUUID();
+        Instant at = Instant.parse("2026-10-27T14:00:00Z");
+        Timestamp timestamp = Timestamp.from(at);
+        Timestamp expires = Timestamp.from(at.plusSeconds(86400));
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)",
+                batch, "test-business@s.whatsapp.net", timestamp, timestamp, timestamp, timestamp, expires, expires);
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at) values (?,false,false,'no_request_detected',?,?)",
+                batch, timestamp, expires);
+
+        OutboxAction first = reports.scheduleOnDemand(day);
+        OutboxAction second = reports.scheduleOnDemand(day);
+
+        assertNotEquals(scheduled.id(), first.id());
+        assertNotEquals(first.id(), second.id());
+        assertEquals(1, tools.jackson.databind.json.JsonMapper.builder().build()
+                .readTree(first.payload()).path("decisionCount").asInt());
+        assertEquals(1, tools.jackson.databind.json.JsonMapper.builder().build()
+                .readTree(second.payload()).path("decisionCount").asInt());
+        assertEquals(scheduled.id(), reports.schedule(day).id(), "daily automatic summary remains idempotent");
+        assertEquals(3, jdbc.queryForObject(
+                "select count(*) from outbox_actions where action_type='simulation_daily_summary'", Integer.class));
+        assertFalse(first.payload().contains("test-business"));
+    }
+
 }

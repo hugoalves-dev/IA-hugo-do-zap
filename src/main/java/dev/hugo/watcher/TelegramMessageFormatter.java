@@ -110,9 +110,10 @@ public class TelegramMessageFormatter {
                 + payload.path("urgencyDistribution").path("UNCERTAIN").asLong(0)
                 + " · classificações incertas: " + payload.path("uncertainCount").asLong(0)
                 + "/" + payload.path("decisionCount").asLong(0)
+                + " · indisponíveis: " + payload.path("unavailableCount").asLong(0)
                 + "\nCusto reservado: " + payload.path("reservedCostMicros").asLong(0)
                 + " micros · informado: " + payload.path("reportedActualCostMicros").asLong(0)
-                + " micros. Sem conteúdo de conversas.";
+                + " micros (ledger local; custo externo pode diferir). Sem conteúdo de conversas.";
     }
 
     private String intelligentAlert(JsonNode payload) {

@@ -27,6 +27,8 @@ public class OperationalState {
     }
     public boolean killSwitch() { return automation.isKillSwitchEnabled() || emergency(); }
     public boolean classification() { return ai.enabled() && ai.classificationEnabled() && !killSwitch() && (realMode || simulation()); }
+    public boolean classificationConfigured() { return ai.configured(); }
+    public boolean realModeEnabled() { return realMode; }
     public boolean alerts() { return automation.isIntelligentAlertsEnabled() && !killSwitch(); }
     public boolean replies() { return automation.isAutoReplyEnabled() && !killSwitch(); }
     public boolean simulation() { return simulation.isEnabled() && !simulationPaused(); }

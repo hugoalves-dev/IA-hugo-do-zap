@@ -61,6 +61,8 @@ Configure `WATCHER_TELEGRAM_BOT_TOKEN` com o token fornecido pelo BotFather e `W
 A urgência mede prazo e consequências: **LOW** para pedidos sem prazo iminente ou explicitamente não urgentes; **NORMAL** para demanda ordinária sem consequências imediatas; **HIGH** para prazo próximo, como necessidade ainda hoje com consequência relevante; **CRITICAL** para emergência imediata com dano grave; **UNCERTAIN** quando os dados são insuficientes. Exemplos de avaliação: “importante, responda quando estiver disponível” e “sem pressa” são LOW; “quando puder nesta semana” pode ser NORMAL; “preciso ainda hoje para evitar perder o prazo” é HIGH; “preciso de socorro agora, alguém está sem respirar” é CRITICAL. A palavra “importante” isolada não aumenta a urgência; “hoje” sem consequência relevante não implica emergência. Esses exemplos são metas de classificação, não garantias sobre respostas de um modelo. A confiança informada não é uma probabilidade estatisticamente calibrada. O relatório diário registra distribuição e contagem de classificações incertas, sem texto pessoal.
 
 
+O comando privado `/relatorio` gera um **resumo atualizado a cada solicitação**, mesmo após um relatório anterior no mesmo dia. O envio automático diário permanece idempotente, com no máximo um resumo agendado por data. Os dois caminhos usam apenas agregados, sem conteúdo ou identificadores das conversas; o custo do ledger local não comprova custo externo zero.
+
 O polling vem desligado e não afeta as notificações. O destino atual é uma conversa privada: IDs de grupo não são aceitos pela configuração. O User ID identifica a pessoa autorizada; não é o token do bot e pode ser diferente do Chat ID. O bot exige ambos os IDs e tipo `private` para aceitar comandos e confirmações.
 
 Na VPS, obtenha o User ID e o Chat ID por um método confiável, sem divulgar o token. Edite o arquivo privado com `vim .env`:
@@ -114,11 +116,22 @@ WATCHER_AI_OPENROUTERAPIKEY=
 WATCHER_AI_OPENROUTERMODEL=
 WATCHER_AI_ATTEMPTHOLDMICROS=0
 WATCHER_AI_TIMEOUT=15s
+WATCHER_AI_CONTEXT_WINDOW_HOURS=24
 ```
 
 A classificação exige `WATCHER_AI_ENABLED=true` e `WATCHER_AI_CLASSIFICATION_ENABLED=true`, além de `WATCHER_AUTOMATION_KILL_SWITCH_ENABLED=false`, provedor válido e modo de processamento ativo. Os defaults são seguros: classificação desligada, kill switch ligado, alertas e respostas desligados. As quatro colunas antigas de `automation_settings` e `telegram_admin_settings.simulation_enabled` são preservadas como dados legados, mas não configuram esses comportamentos; não as altere para ativação. Mudanças no `.env` exigem recriar o watcher.
 
 Por padrão, orçamento local e consentimento por conversa são obrigatórios. `WATCHER_AI_DISABLE_LOCAL_BUDGET=true` dispensa reservas e limites locais, deixando a quota para o provedor; `WATCHER_AI_REQUIRE_CHAT_CONSENT=false` dispensa os registros locais de consentimento. Eles são opt-ins separados. Com orçamento local ativo, `WATCHER_AI_ATTEMPTHOLDMICROS` deve ser positivo e cada tentativa reserva e reconcilia custos como antes. Gemini continua opcional; quando o orçamento local é dispensado, ele também exige `WATCHER_AI_ALLOW_UNBUDGETED_GEMINI_FALLBACK=true`. A quota OpenRouter não cobre a conta Gemini.
+
+O classificador recebe a mensagem-alvo e até cinco mensagens anteriores retidas, identificadas como contato ou proprietário. `WATCHER_AI_CONTEXT_WINDOW_HOURS` limita a janela a 24 horas por padrão; valores válidos vão de 1 a 168 horas. A retenção sensível continua limitada a sete dias. Mensagens próprias de grupos não são usadas quando não há vínculo confiável com o participante. O sistema não busca histórico remoto nem reclassifica decisões anteriores.
+
+O endpoint `/actuator/prometheus` exporta métricas na porta interna do watcher. Para uma implantação autorizada, conecte Prometheus à mesma rede Docker e configure o target `watcher:8080` com `metrics_path: /actuator/prometheus`. Não publique o endpoint no proxy nem no host. Confira o target na interface de targets do Prometheus e valide a consulta `up{job="watcher"}`; a configuração do scrape e o deploy não são aplicados automaticamente por este repositório. As métricas de classificação, decisões e chamadas usam apenas rótulos limitados. Custos no ledger local podem ser zero quando a reserva local é dispensada; isso não demonstra custo externo zero. Tokens e custo reportados pelo provedor só são contados quando presentes na resposta.
+
+Os painéis Grafana existentes **GenAI Observability** e **Lightweight APM for OpenTelemetry** já exibem chamadas, tokens, custos e latência do OpenRouter por meio do Tempo. Eles não mostram falhas que acontecem antes da chamada; use as métricas `watcher_shadow_*` e os logs `shadow_decision` do watcher para esses casos. O UUID opaco `batch_id` no log e nos metadados `trace` do OpenRouter permite correlacionar uma decisão com a chamada; não é rótulo de métrica. As consultas OpenRouter agregam outras aplicações que usem a mesma origem; não interprete seus totais como custo exclusivo do watcher sem filtrar a correlação.
+
+No OpenRouter, ative Privacy Mode em cada destination Broadcast para Tempo. Verifique um trace novo e seus campos de entrada, saída e metadados sem compartilhar conteúdo. A alteração não remove traces antigos; revise acesso e retenção desses dados separadamente.
+
+Os avisos históricos `Telegram delivery rejected: errorCode=404` de 29/10/2026 foram gerados pelo transporte Telegram: oito ocorrências entre 16:53 e 17:18 no horário de São Paulo. Os logs consultados não identificam a causa do 404; eles não demonstram falha do classificador. Confira a configuração do bot e o destino sem divulgar token ou identificador, e compare com entregas posteriores antes de alterar o transporte.
 
 Com consentimento por chat dispensado e escopo `ALL`, texto minimizado de qualquer conversa elegível pode ser enviado ao provedor externo. Isso não equivale ao consentimento dos participantes. Restrinja o escopo e minimize dados conforme necessário. Limites no provedor podem diferir do ledger local por atrasos e regras de faturamento. Veja o [checklist de ativação](docs/local-ai-activation-checklist.md).
 

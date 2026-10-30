@@ -30,6 +30,7 @@ import java.util.Objects;
 
 @Service
 public class SimulationService {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(SimulationService.class);
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
     private final Clock clock;
@@ -41,6 +42,8 @@ public class SimulationService {
     private final dev.hugo.watcher.ai.AiSimulationClassifier classifier;
     private final dev.hugo.watcher.notification.DecisionActionProducer producer;
     private dev.hugo.watcher.OperationalState operational;
+    private dev.hugo.watcher.ai.ShadowMetrics metrics;
+    @Autowired(required = false) public void configureMetrics(dev.hugo.watcher.ai.ShadowMetrics value) { this.metrics = value; }
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -121,7 +124,7 @@ public class SimulationService {
         Availability currentAvailability = availability.at(now, ZoneId.of(watcher.getTimezone()), resolved);
         EffectivePolicy effective = new EffectivePolicy(resolved.fields(), resolved.temporaryAvailability(),
                 loadDecisionPolicy(batch), currentAvailability);
-        Classification verified = classifier == null ? classification : classifier.revalidate(batch);
+        Classification verified = classifier == null ? classification : classifier.revalidate(batch, classification);
         Decision decided = scopeBlocked == null
                 ? decisions.decide(batch, verified, effective, now)
                 : new Decision(false, false, null, "archive_scope_blocked", scopeBlocked, false, "archive_scope_blocked");
@@ -131,8 +134,8 @@ public class SimulationService {
         int inserted = jdbc.update("""
                 insert into simulation_decisions(batch_id,would_alert,would_reply,template_id,decision_reason,blocked_reason,
                     decided_at,metadata_expires_at,real_action_allowed,real_blocked_reason,decision_state,policy_snapshot,availability_state,availability_source,availability_reason,
-                    classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash,production_mode,alert_template_reference)
-                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?) on conflict (batch_id) do nothing
+                    classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash,production_mode,alert_template_reference,classification_diagnostic)
+                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?) on conflict (batch_id) do nothing
                 """, batch.id(), decision.wouldAlert(), decision.wouldReply(), decision.templateId(), decision.decisionReason(),
                 decision.blockedReason(), Timestamp.from(now), Timestamp.from(now.plusSeconds(properties.getAuditRetentionDays() * 86_400L)),
                 decision.realActionAllowed(), decision.realBlockedReason(), decision.status().name(),
@@ -140,7 +143,7 @@ public class SimulationService {
                 currentAvailability.source().name(), currentAvailability.reason(),
                 verified.status().name(),verified.urgency().name(),verified.confidence(),verified.personalReferenceHash(),producer != null && producer.realModeEnabled(),
                 effective.decisionPolicy().templates().containsKey(Situation.CRITICAL_URGENCY)
-                        ? effective.decisionPolicy().templates().get(Situation.CRITICAL_URGENCY).reference() : null);
+                        ? effective.decisionPolicy().templates().get(Situation.CRITICAL_URGENCY).reference() : null, verified.diagnostic());
         List<SimulationDecision> persisted = jdbc.query("""
                 select would_alert,would_reply,template_id,decision_reason,blocked_reason,real_action_allowed,real_blocked_reason,decision_state
                   from simulation_decisions where batch_id=?
@@ -149,6 +152,19 @@ public class SimulationService {
                 rs.getBoolean("real_action_allowed"), rs.getString("real_blocked_reason"),
                 DecisionStatus.valueOf(rs.getString("decision_state"))), batch.id());
         if (persisted.isEmpty()) throw new IllegalStateException("simulation decision was not persisted");
+        if (inserted == 1) {
+            Classification completed = verified;
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() {
+                            if (metrics != null) {
+                                metrics.decision(decision.blockedReason(), completed.diagnostic());
+                                if (scopeBlocked == null) metrics.eligibleBatch();
+                            }
+                            LOG.info("shadow_decision batch_id={} state={} classification={}", batch.id(), decision.status(), completed.status());
+                        }
+                    });
+        }
         if (inserted == 1 && (decision.wouldAlert() || decision.wouldReply())) {
             jdbc.update("""
                     insert into decision_cooldowns(chat_jid,participant_jid,last_simulation_action_at)

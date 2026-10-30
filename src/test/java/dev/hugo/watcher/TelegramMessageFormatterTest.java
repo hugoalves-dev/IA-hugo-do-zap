@@ -6,6 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TelegramMessageFormatterTest {
+    @Test void dailyReportDistinguishesUnavailableAndLocalLedgerCosts() {
+        var action = new OutboxAction(6, "daily-new", "simulation_daily_summary", "{\"eventType\":\"simulation_daily_summary\",\"unavailableCount\":2}", "[]", 0, java.time.Instant.EPOCH, java.time.Instant.EPOCH.plusSeconds(60), null);
+        String text = new TelegramMessageFormatter().format(action);
+        assertTrue(text.contains("indisponíveis: 2"));
+        assertTrue(text.contains("ledger local"));
+        assertTrue(text.contains("custo externo pode diferir"));
+    }
     private final TelegramMessageFormatter formatter = new TelegramMessageFormatter();
 
     @Test void formatsArchivedMessagesAsAUsefulPrivateSummary() {

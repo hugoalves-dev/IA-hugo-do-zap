@@ -43,6 +43,7 @@ class AiSimulationAcceptanceTest {
         jdbc.update("delete from whatsapp_action_outbox");
         jdbc.update("delete from simulation_decisions");
         jdbc.update("delete from simulation_batches");
+        jdbc.update("delete from simulation_owner_context");
         jdbc.update("delete from chat_automation_authorizations");
         jdbc.update("delete from decision_cooldowns");
         jdbc.update("delete from availability_overrides");
@@ -126,6 +127,41 @@ class AiSimulationAcceptanceTest {
         jdbc.update("update archive_monitor_settings set mode='ARCHIVED_ONLY'");
         assertFalse(classifier(true, fake()).classify(batch()).available());
         assertEquals(0, calls.get());
+    }
+    @Test void missingConsentPersistsSanitizedDiagnosticWithoutProviderCall() {
+        jdbc.update("delete from ai_data_consents");
+        var ai = classifier(true, fake());
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
+                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai));
+        var current = batch();
+        var decision = service.evaluate(current);
+        assertEquals("classification_unavailable", decision.blockedReason());
+        assertEquals("consent_missing", jdbc.queryForObject("select classification_diagnostic from simulation_decisions where batch_id=?", String.class, current.id()));
+        assertEquals(0, calls.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class));
+    }
+    @Test void contextDependentReplyWithoutContextFailsClosedBeforeProvider() {
+        var result = classifier(true, fake()).classify(batch(chat, Map.of("conversation", "pode")));
+        assertFalse(result.available());
+        assertEquals("context_insufficient", result.diagnostic());
+        assertEquals(0, calls.get());
+    }
+    @Test void ownerContextIsMinimizedAndPassedToProviderForShortReply() {
+        Instant now = clock.instant();
+        jdbc.update("insert into simulation_owner_context(chat_jid,external_id,received_at,captured_at,expires_at,text) values (?,?,?,?,?,?)",
+                chat, "context-owner", java.sql.Timestamp.from(now.minusSeconds(15)), java.sql.Timestamp.from(now.minusSeconds(15)),
+                java.sql.Timestamp.from(now.plusSeconds(300)), "Apago o compromisso?");
+        var ai = classifier(true, (request, timeout, max) -> {
+            String body = FakeProviderTransport.requestBody(request);
+            assertTrue(body.contains("owner"));
+            assertTrue(body.contains("Apago o compromisso?"));
+            assertTrue(body.contains("pode"));
+            assertFalse(body.contains(chat));
+            calls.incrementAndGet();
+            return openrouter(valid());
+        });
+        assertTrue(ai.classify(batch(chat, Map.of("conversation", "pode"))).available());
+        assertEquals(1, calls.get());
     }
     @Test void technicalOpenRouterFailureTriggersGeminiFallbackAndSeparateReservations() {
         List<String> hosts = new ArrayList<>();
