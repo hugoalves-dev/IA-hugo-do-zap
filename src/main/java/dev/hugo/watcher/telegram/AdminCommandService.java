@@ -79,7 +79,7 @@ public class AdminCommandService {
             String token = tokens.issue(command.userId(), command.chatId(),
                     new CallbackAction(command.name(), command.arguments()), clock.instant().plus(CONFIRMATION_TTL));
             String cancel = tokens.issue(command.userId(), command.chatId(),
-                    new CallbackAction("cancel", List.of()), clock.instant().plus(CONFIRMATION_TTL));
+                    new CallbackAction("cancel", List.of(token)), clock.instant().plus(CONFIRMATION_TTL));
             String message = "Confirme a operação /" + command.name() + " em até 5 minutos."
                     + "\nFallback: /confirm " + token;
             enqueueReply(message, command, List.of(List.of(
@@ -97,7 +97,7 @@ public class AdminCommandService {
             case "availability" -> "Disponibilidade: escolha uma duração ou use /ocupado e /disponivel.";
             case "shadow" -> "Shadow Mode: escolha ligar/desligar a simulação. Ações reais seguem bloqueadas.";
             case "emergency_menu" -> "Emergência: ativação imediata, recuperação mediante confirmação.";
-            case "cancel" -> "Operação cancelada.";
+            case "cancel" -> cancel(command);
             case "status" -> status();
             case "ocupado" -> setAvailability(AvailabilityState.UNAVAILABLE, minutes(args));
             case "disponivel" -> setAvailability(AvailabilityState.AVAILABLE, minutes(args));
@@ -119,6 +119,12 @@ public class AdminCommandService {
         };
         if (isMutation(name, args)) audit(command, "APPLIED");
         return message;
+    }
+
+    private String cancel(AdminCommand command) {
+        if (command.arguments().size() != 1) return "Cancelamento inválido.";
+        return tokens.invalidate(command.arguments().getFirst(), command.userId(), command.chatId())
+                ? "Operação cancelada." : "Operação já concluída, expirada ou cancelada.";
     }
 
     private String status() {
@@ -314,6 +320,7 @@ public class AdminCommandService {
     }
 
     private List<List<Map<String, String>>> keyboardFor(AdminCommand command) {
+        if (telegramProperties == null || !telegramProperties.isWebhookEnabled()) return List.of();
         long user = command.userId(), chat = command.chatId();
         Instant expiry = clock.instant().plus(CONFIRMATION_TTL);
         String name = command.name();
