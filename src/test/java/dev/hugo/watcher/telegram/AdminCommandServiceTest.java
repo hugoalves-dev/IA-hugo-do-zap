@@ -170,6 +170,43 @@ class AdminCommandServiceTest {
         assertTrue(commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message().contains("budget_exceeded"));
     }
 
+    @Test void truncatedDiagnosticPersistsAndRendersViaTelegramWithoutSensitiveData() {
+        var id = java.util.UUID.randomUUID();
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        String chat = "secret-synthetic@s.whatsapp.net";
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)",
+                id, chat, now, now, now, now, expires, expires);
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,blocked_reason,
+                    classification_status,classification_urgency,classification_confidence,classification_diagnostic,
+                    decided_at,metadata_expires_at)
+                values (?,false,false,'classification_unavailable','classification_unavailable',
+                    'UNAVAILABLE','UNCERTAIN',0,'provider_output_truncated',?,?)
+                """, id, now, expires);
+
+        assertEquals("provider_output_truncated", jdbc.queryForObject(
+                "select classification_diagnostic from simulation_decisions where batch_id=?", String.class, id));
+        assertEquals(0, jdbc.queryForObject(
+                "select count(*) from simulation_decisions where batch_id=? and (would_alert or would_reply)", Integer.class, id));
+
+        String recent = commands.execute(command("ultimas", List.of("10"), false)).message();
+        assertTrue(recent.contains("provider_output_truncated"));
+        assertTrue(recent.contains("UNAVAILABLE / UNCERTAIN / 0.00"));
+        String payload = jdbc.queryForObject(
+                "select payload::text from outbox_actions where action_type='telegram_admin_reply' order by id desc limit 1", String.class);
+        var action = new OutboxAction(1, "synthetic", "telegram_admin_reply", payload, "[]", 0,
+                clock.instant(), clock.instant().plusSeconds(60), null);
+        String telegram = new TelegramMessageFormatter().format(action);
+        assertTrue(telegram.contains("provider_output_truncated"));
+        assertFalse(telegram.contains(chat));
+        assertFalse(telegram.contains("synthetic private prompt"));
+
+        String detail = commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message();
+        assertTrue(detail.contains("diagnóstico=provider_output_truncated"));
+        assertFalse(detail.contains(chat));
+    }
+
     @Test void recentDecisionUsesSafeGroupSnapshotName() {
         var id = java.util.UUID.randomUUID();
         var now = java.sql.Timestamp.from(clock.instant());

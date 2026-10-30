@@ -32,4 +32,15 @@ class OperationalBindingTest {
                 assertFalse(flags.isKillSwitchEnabled()); assertTrue(flags.isIntelligentAlertsEnabled()); assertTrue(flags.isAutoReplyEnabled());
             });
     }
+    @Test void composeEnvironmentContractBindsReasoningAndTokens() {
+        runner.withPropertyValues("WATCHER_AI_OPENROUTERMAXTOKENS=720",
+                "WATCHER_AI_OPENROUTERREASONINGENABLED=true")
+                .run(ctx -> {
+                    var ai = ctx.getBean(AiClassificationProperties.class);
+                    assertEquals(720, ai.openRouterMaxTokens());
+                    assertTrue(ai.openRouterReasoningEnabled());
+                });
+    }
+
+
 }

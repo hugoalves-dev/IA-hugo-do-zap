@@ -124,6 +124,31 @@ class ClassificationServiceTest {
         assertEquals(0, fallbackCalls.get());
     }
 
+    @Test void truncatedOutputHasDistinctDiagnosticAndNeverInvokesFallback() {
+        AtomicInteger fallbackCalls = new AtomicInteger();
+        ClassificationProvider primary = new ClassificationProvider() {
+            @Override public String name() { return "openrouter"; }
+            @Override public ClassificationResult classify(ClassificationInput input) {
+                throw new ClassificationProviderException(ClassificationProviderException.Kind.OUTPUT_TRUNCATED);
+            }
+        };
+        ClassificationProvider fallback = new ClassificationProvider() {
+            @Override public String name() { return "gemini"; }
+            @Override public ClassificationResult classify(ClassificationInput input) {
+                fallbackCalls.incrementAndGet();
+                return ClassificationResult.uncertain();
+            }
+        };
+
+        ClassificationResult result = new ClassificationService(primary, fallback).classify(batch("fixture synthetic"));
+
+        assertEquals(ClassificationResult.Status.UNAVAILABLE, result.status());
+        assertEquals(ClassificationResult.Urgency.UNCERTAIN, result.urgency());
+        assertEquals(0, result.confidence());
+        assertEquals("provider_output_truncated", result.diagnostic());
+        assertEquals(0, fallbackCalls.get());
+    }
+
     private static Batch batch(String text) {
         var message = new IncomingMessage(Optional.of("secret-message-id"), "private-chat@s.whatsapp.net",
                 Optional.of("person@s.whatsapp.net"), Optional.empty(), Optional.empty(), false,

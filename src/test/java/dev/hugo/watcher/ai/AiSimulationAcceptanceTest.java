@@ -128,6 +128,39 @@ class AiSimulationAcceptanceTest {
         assertFalse(classifier(true, fake()).classify(batch()).available());
         assertEquals(0, calls.get());
     }
+    @Test void truncatedOpenRouterOutputPersistsDistinctDiagnosticWithoutActionOrFallback() {
+        ProviderTransport truncated = (request, timeout, max) -> {
+            calls.incrementAndGet();
+            assertEquals("openrouter.ai", request.uri().getHost(), "truncation must not trigger Gemini fallback");
+            return new ProviderTransport.Response(200, """
+                    {"choices":[{"finish_reason":"length","message":{"content":null}}],
+                     "usage":{"completion_tokens":300,"completion_tokens_details":{"reasoning_tokens":300}}}
+                    """);
+        };
+        var ai = classifier(true, truncated);
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(),
+                new DecisionEngine(), new PersistedPolicyRepository(jdbc, new PolicyResolver()),
+                new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai));
+        var current = batch();
+        var decision = service.evaluate(current);
+
+        assertEquals("classification_unavailable", decision.blockedReason());
+        assertEquals("UNAVAILABLE", jdbc.queryForObject(
+                "select classification_status from simulation_decisions where batch_id=?", String.class, current.id()));
+        assertEquals("provider_output_truncated", jdbc.queryForObject(
+                "select classification_diagnostic from simulation_decisions where batch_id=?", String.class, current.id()));
+        String stored = jdbc.queryForObject(
+                "select result::text from simulation_ai_evaluations where batch_id=?", String.class, current.id());
+        assertTrue(stored.contains("provider_output_truncated"));
+        assertFalse(stored.contains(chat));
+        assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class));
+        assertEquals(0, jdbc.queryForObject(
+                "select count(*) from outbox_actions where action_type='intelligent_alert'", Integer.class));
+        assertEquals(1, calls.get());
+        service.evaluate(current);
+        assertEquals(1, calls.get(), "retained decision must not reissue paid provider requests");
+    }
+
     @Test void missingConsentPersistsSanitizedDiagnosticWithoutProviderCall() {
         jdbc.update("delete from ai_data_consents");
         var ai = classifier(true, fake());

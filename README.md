@@ -114,6 +114,8 @@ WATCHER_AI_GEMINIAPIKEY=
 WATCHER_AI_GEMINIMODEL=
 WATCHER_AI_OPENROUTERAPIKEY=
 WATCHER_AI_OPENROUTERMODEL=
+WATCHER_AI_OPENROUTERMAXTOKENS=300
+WATCHER_AI_OPENROUTERREASONINGENABLED=false
 WATCHER_AI_ATTEMPTHOLDMICROS=0
 WATCHER_AI_TIMEOUT=15s
 WATCHER_AI_CONTEXT_WINDOW_HOURS=24
@@ -124,6 +126,10 @@ A classificação exige `WATCHER_AI_ENABLED=true` e `WATCHER_AI_CLASSIFICATION_E
 Por padrão, orçamento local e consentimento por conversa são obrigatórios. `WATCHER_AI_DISABLE_LOCAL_BUDGET=true` dispensa reservas e limites locais, deixando a quota para o provedor; `WATCHER_AI_REQUIRE_CHAT_CONSENT=false` dispensa os registros locais de consentimento. Eles são opt-ins separados. Com orçamento local ativo, `WATCHER_AI_ATTEMPTHOLDMICROS` deve ser positivo e cada tentativa reserva e reconcilia custos como antes. Gemini continua opcional; quando o orçamento local é dispensado, ele também exige `WATCHER_AI_ALLOW_UNBUDGETED_GEMINI_FALLBACK=true`. A quota OpenRouter não cobre a conta Gemini.
 
 O classificador recebe a mensagem-alvo e até cinco mensagens anteriores retidas, identificadas como contato ou proprietário. `WATCHER_AI_CONTEXT_WINDOW_HOURS` limita a janela a 24 horas por padrão; valores válidos vão de 1 a 168 horas. A retenção sensível continua limitada a sete dias. Mensagens próprias de grupos não são usadas quando não há vínculo confiável com o participante. O sistema não busca histórico remoto nem reclassifica decisões anteriores.
+
+O OpenRouter recebe explicitamente `reasoning.enabled` conforme `WATCHER_AI_OPENROUTERREASONINGENABLED` (`false` por padrão), junto de `max_tokens` via `WATCHER_AI_OPENROUTERMAXTOKENS` (300 por padrão, intervalo permitido de 128 a 8192). O orçamento de saída inclui tokens de reasoning. A desativação depende de suporte da rota Haiku 5.5/Vertex; `require_parameters=true`, ZDR, `data_collection=deny` e `allow_fallbacks=false` continuam obrigatórios. Uma rota incompatível falha sem autorização de ações. `finish_reason=length/max_tokens` e conteúdo incompleto também falham fechados, sem fallback por truncamento. Nenhuma mudança no `.env` de produção é automática; confira apenas as duas variáveis não secretas após recriar o serviço.
+
+Para checar sem revelar credenciais: `docker compose exec -T watcher sh -c 'printf "MAXTOKENS=%s REASONING=%s\\n" "$WATCHER_AI_OPENROUTERMAXTOKENS" "$WATCHER_AI_OPENROUTERREASONINGENABLED"'`. A análise de antes/depois exige carga equivalente e métricas reais: `watcher_shadow_provider_calls_total`, `watcher_shadow_provider_finish_reason_total`, `watcher_shadow_provider_truncated_total`, `watcher_shadow_provider_failures_total`, `watcher_shadow_provider_tokens_total`, `watcher_shadow_queue_wait_seconds`, `watcher_shadow_classification_latency_seconds`, `watcher_shadow_provider_latency_seconds`, `watcher_shadow_persistence_latency_seconds`, `watcher_shadow_decision_latency_seconds`. Os timers publicam histogramas para `histogram_quantile(0.50/0.95, sum by (le) (rate(<metric>_bucket[5m])))`. Os contadores de tokens e custo só refletem valores informados na resposta. O scheduler permanece sequencial até que backlog/latência medidos justifiquem, com segurança, concorrência e claims duráveis.
 
 O endpoint `/actuator/prometheus` exporta métricas na porta interna do watcher. Para uma implantação autorizada, conecte Prometheus à mesma rede Docker e configure o target `watcher:8080` com `metrics_path: /actuator/prometheus`. Não publique o endpoint no proxy nem no host. Confira o target na interface de targets do Prometheus e valide a consulta `up{job="watcher"}`; a configuração do scrape e o deploy não são aplicados automaticamente por este repositório. As métricas de classificação, decisões e chamadas usam apenas rótulos limitados. Custos no ledger local podem ser zero quando a reserva local é dispensada; isso não demonstra custo externo zero. Tokens e custo reportados pelo provedor só são contados quando presentes na resposta.
 
