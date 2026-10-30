@@ -33,11 +33,20 @@ public class ReportService {
         this.clock = clock;
     }
 
+    /** Automatic daily delivery stays idempotent for each reporting date. */
     public OutboxAction schedule(LocalDate date) {
+        return enqueue(date, "simulation_daily_summary:" + date);
+    }
+
+    /** A private administrator command needs a fresh snapshot on each request. */
+    public OutboxAction scheduleOnDemand(LocalDate date) {
+        return enqueue(date, "simulation_daily_summary:manual:" + date + ":" + java.util.UUID.randomUUID());
+    }
+
+    private OutboxAction enqueue(LocalDate date, String key) {
         if (date == null) throw new IllegalArgumentException("report date is required");
         return transactions.execute(status -> {
             jdbc.query("select pg_advisory_xact_lock(947221, 41)", rs -> { });
-            String key = "simulation_daily_summary:" + date;
             var existing = jdbc.query("""
                     select id,action_key,action_type,payload::text,pending_snapshot::text,attempts,created_at,sensitive_expires_at
                       from outbox_actions where action_key=?
