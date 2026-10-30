@@ -89,6 +89,8 @@ public class AdminCommandService {
             case "ferias" -> setHolidayOverride(args);
             case "simulacao" -> setSimulation(args);
             case "relatorio" -> report();
+            case "ultimas" -> new ShadowDecisionQuery(jdbc, clock).recent(args);
+            case "decisao" -> new ShadowDecisionQuery(jdbc, clock).detail(args);
             case "emergencia" -> emergency();
             case "recuperar" -> recoverEmergency(args);
             case "perfis" -> profiles();
@@ -305,7 +307,7 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
     private record Status(String overrideState, Instant overrideExpiresAt) { }

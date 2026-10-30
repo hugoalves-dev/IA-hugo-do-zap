@@ -102,6 +102,62 @@ class AdminCommandServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='simulacao'", Integer.class));
     }
 
+    @Test void recentDecisionsAndDetailRespectRetentionAndDoNotRevealMessages() {
+        var id = java.util.UUID.randomUUID();
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)", id, "fixture@s.whatsapp.net", now, now, now, now, expires, expires);
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,classification_status,classification_urgency,classification_confidence) values (?,false,false,'no_request_detected',?,?,'CLASSIFIED','LOW',0.95)", id, now, expires);
+        String recent = commands.execute(command("ultimas", List.of("5"), false)).message();
+        assertTrue(recent.contains(id.toString().substring(0, 8)));
+        assertTrue(recent.contains("LOW"));
+        assertTrue(recent.contains("Contato indisponível"));
+        assertTrue(recent.contains("27/10/2026 - 09:00:00"));
+        String detail = commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message();
+        assertTrue(detail.contains("would_reply: false"));
+        assertTrue(detail.contains("motivo específico não armazenado"));
+        assertTrue(detail.contains("Prévia indisponível"));
+        assertFalse(detail.contains("fixture@s.whatsapp.net"));
+        assertTrue(commands.execute(command("decisao", List.of("invalid"), false)).message().contains("ID inválido"));
+        clock.now = clock.now.plusSeconds(3601);
+        assertTrue(commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message().contains("expirada"));
+    }
+
+    @Test void hypotheticalPreviewRequiresCurrentOptInAndEscapesHtml() {
+        var id = java.util.UUID.randomUUID();
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        String chat = "preview@s.whatsapp.net";
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)", id, chat, now, now, now, now, expires, expires);
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,classification_status,classification_urgency,classification_confidence,availability_state,availability_source) values (?,false,false,'no_authorized_action',?,?,'CLASSIFIED','LOW',0.95,'UNAVAILABLE','SCHEDULE')", id, now, expires);
+        jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)", id, java.util.UUID.randomUUID(), expires, "{\"provider\":\"openrouter\",\"requestDetected\":true,\"situations\":[\"CONTACT_REQUEST\"]}");
+        jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('fixture',1,'CONTACT_REQUEST','Resposta automática: & <teste>',true,true)");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','fixture',1)", chat);
+        String detail = commands.execute(command("decisao", List.of(id.toString().substring(0,8)), false)).message();
+        assertTrue(detail.contains("Prévia hipotética se habilitado"));
+        assertTrue(detail.contains("&amp; &lt;teste&gt;"));
+        assertTrue(detail.contains("would_reply: false"));
+        jdbc.update("delete from chat_automation_authorizations where chat_jid=?", chat);
+        assertTrue(commands.execute(command("decisao", List.of(id.toString().substring(0,8)), false)).message().contains("Prévia indisponível"));
+    }
+
+    @Test void recentVolumeBoundsAndEscapesUntrustedContactNames() {
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        for (int i=0; i<10; i++) {
+            var id=java.util.UUID.randomUUID();
+            String chat="volume"+i+"@s.whatsapp.net";
+            jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?, 'CONTACT_NAME')", chat, "<".repeat(100));
+            jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)", id,chat,now,now,now,now,expires,expires);
+            jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,blocked_reason,decided_at,metadata_expires_at) values (?,false,false,'blocked',?,?,?)",id,"a".repeat(120),now,expires);
+        }
+        String text=commands.execute(command("ultimas",List.of("10"),false)).message();
+        assertTrue(text.length() < 3500);
+        assertTrue(text.contains("&lt;"));
+        assertFalse(text.contains("<"));
+        assertTrue(commands.execute(command("ultimas",List.of("11"),false)).message().contains("1-10"));
+    }
+
     private AdminCommand command(String name, List<String> args, boolean confirmed) {
         return new AdminCommand(name, args, 1001, 2002, confirmed);
     }

@@ -62,6 +62,8 @@ class ReportServiceTest {
         assertFalse(action.payload().contains("SENSITIVE_RAW_TEXT_DO_NOT_COPY"));
         assertFalse(action.payload().contains("15551234567"));
         assertTrue(action.payload().contains("decisionCount"));
+        assertTrue(action.payload().contains("uncertainCount"));
+        assertTrue(action.payload().contains("urgencyDistribution"));
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='simulation_daily_summary'", Integer.class));
     }
 }

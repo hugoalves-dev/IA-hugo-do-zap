@@ -149,4 +149,9 @@ class TelegramMessageFormatterTest {
             } else assertFalse(Character.isLowSurrogate(current));
         }
     }
+    @org.junit.jupiter.api.Test void adminReplyRetainsReadableLineBreaks() {
+        var now = java.time.Instant.parse("2026-10-27T12:00:00Z");
+        var action = new OutboxAction(1, "test", "telegram_admin_reply", "{\"eventType\":\"telegram_admin_reply\",\"text\":\"linha um\\nlinha dois\"}", "[]", 0, now, now.plusSeconds(60), null);
+        org.junit.jupiter.api.Assertions.assertEquals("linha um\nlinha dois", new TelegramMessageFormatter().format(action));
+    }
 }
