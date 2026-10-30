@@ -131,8 +131,12 @@ class ShadowMetricsTest {
         var registry = new SimpleMeterRegistry();
         var metrics = new ShadowMetrics(registry);
         metrics.decision("classification_unavailable", "provider_output_truncated");
+        metrics.providerFailure("openrouter", ClassificationProviderException.Kind.OUTPUT_TRUNCATED);
         assertEquals(1, registry.get("watcher.shadow.decisions")
                 .tags("reason", "classification_unavailable", "diagnostic", "provider_output_truncated")
+                .counter().count());
+        assertEquals(1, registry.get("watcher.shadow.provider.failures")
+                .tags("provider", "openrouter", "reason", "provider_output_truncated")
                 .counter().count());
     }
 
