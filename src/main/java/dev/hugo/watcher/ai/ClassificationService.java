@@ -33,8 +33,8 @@ public final class ClassificationService {
             try {
                 return fallback.classify(input);
             } catch (RuntimeException failure) {
-                if (metrics != null && failure instanceof ClassificationProviderException error)
-                    metrics.providerFailure(fallback.name(), error.kind());
+                if (metrics != null && failure instanceof ClassificationProviderException fallbackError)
+                    metrics.providerFailure(fallback.name(), fallbackError.kind());
                 return ClassificationResult.unavailable(reason(failure));
             }
         } catch (RuntimeException failure) {
