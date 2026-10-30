@@ -53,17 +53,22 @@ public class AdminCommandService {
 
     public AdminResult execute(AdminCommand command) {
         if (command == null) return AdminResult.rejected("Comando inválido.");
-        if (isMutation(command.name(), command.arguments()) && !command.confirmed() && !command.name().equals("emergencia"))
-            return requestConfirmation(command);
+        // Navigation tokens do not authorize mutations; a second, explicit token confirms them.
+        AdminCommand effective = command.name().startsWith("nav_")
+                ? new AdminCommand(command.name().substring(4), command.arguments(),
+                        command.userId(), command.chatId(), false, command.sourceMessageId())
+                : command;
+        if (isMutation(effective.name(), effective.arguments()) && !effective.confirmed() && !effective.name().equals("emergencia"))
+            return requestConfirmation(effective);
         return transactions.execute(status -> {
             try {
-                String message = apply(command);
-                enqueueReply(message);
+                String message = apply(effective);
+                enqueueReply(message, effective);
                 return AdminResult.accepted(message);
             } catch (IllegalArgumentException | java.time.format.DateTimeParseException ex) {
-                String message = safeError(command.name(), ex);
-                if (isMutation(command.name(), command.arguments())) audit(command, "REJECTED");
-                enqueueReply(message);
+                String message = safeError(effective.name(), ex);
+                if (isMutation(effective.name(), effective.arguments())) audit(effective, "REJECTED");
+                enqueueReply(message, effective);
                 return AdminResult.rejected(message);
             }
         });
@@ -73,8 +78,20 @@ public class AdminCommandService {
         return transactions.execute(status -> {
             String token = tokens.issue(command.userId(), command.chatId(),
                     new CallbackAction(command.name(), command.arguments()), clock.instant().plus(CONFIRMATION_TTL));
-            String message = "Confirme em até 5 minutos com /confirm " + token;
-            enqueueReply(message);
+            boolean inline = telegramProperties != null && telegramProperties.isWebhookEnabled();
+            String message = inline
+                    ? "Confirme a operação /" + command.name() + " em até 5 minutos."
+                        + "\nFallback: /confirm " + token
+                    : "Confirme em até 5 minutos com /confirm " + token;
+            if (inline) {
+                String cancel = tokens.issue(command.userId(), command.chatId(),
+                        new CallbackAction("cancel", List.of(token)), clock.instant().plus(CONFIRMATION_TTL));
+                enqueueReply(message, command, List.of(List.of(
+                        Map.of("text", "✅ Confirmar", "data", token),
+                        Map.of("text", "❌ Cancelar", "data", cancel))));
+            } else {
+                enqueueReply(message, command, List.of());
+            }
             return AdminResult.confirmation(message);
         });
     }
@@ -83,6 +100,11 @@ public class AdminCommandService {
         String name = command.name();
         List<String> args = command.arguments();
         String message = switch (name) {
+            case "menu", "start" -> "⚙️ Administração Hugo do Zap\nEscolha uma opção:";
+            case "availability" -> "Disponibilidade: escolha uma duração ou use /ocupado e /disponivel.";
+            case "shadow" -> "Shadow Mode: escolha ligar/desligar a simulação. Ações reais seguem bloqueadas.";
+            case "emergency_menu" -> "Emergência: ativação imediata, recuperação mediante confirmação.";
+            case "cancel" -> cancel(command);
             case "status" -> status();
             case "ocupado" -> setAvailability(AvailabilityState.UNAVAILABLE, minutes(args));
             case "disponivel" -> setAvailability(AvailabilityState.AVAILABLE, minutes(args));
@@ -104,6 +126,12 @@ public class AdminCommandService {
         };
         if (isMutation(name, args)) audit(command, "APPLIED");
         return message;
+    }
+
+    private String cancel(AdminCommand command) {
+        if (command.arguments().size() != 1) return "Cancelamento inválido.";
+        return tokens.invalidate(command.arguments().getFirst(), command.userId(), command.chatId())
+                ? "Operação cancelada." : "Operação já concluída, expirada ou cancelada.";
     }
 
     private String status() {
@@ -278,14 +306,75 @@ public class AdminCommandService {
                 command.name(), outcome, command.userId(), command.chatId(), Timestamp.from(clock.instant()));
     }
 
-    private void enqueueReply(String message) {
+    private void enqueueReply(String message, AdminCommand command) {
+        enqueueReply(message, command, keyboardFor(command));
+    }
+
+    private void enqueueReply(String message, AdminCommand command, List<List<Map<String, String>>> keyboard) {
         Instant now = clock.instant();
+        String event = command.sourceMessageId() == null ? "telegram_admin_reply" : "telegram_admin_edit";
         try {
-            String payload = JSON.writeValueAsString(Map.of("eventType", "telegram_admin_reply", "text", message));
-            outbox.enqueue("telegram_admin_reply:" + UUID.randomUUID(), "telegram_admin_reply", payload, "[]", now, now.plus(REPLY_TTL));
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("eventType", event);
+            payload.put("text", message);
+            if (command.sourceMessageId() != null) payload.put("messageId", command.sourceMessageId());
+            if (!keyboard.isEmpty()) payload.put("keyboard", keyboard);
+            outbox.enqueue(event + ":" + UUID.randomUUID(), event,
+                    JSON.writeValueAsString(payload), "[]", now, now.plus(REPLY_TTL));
         } catch (RuntimeException ex) {
             throw new IllegalStateException("could not queue Telegram admin response", ex);
         }
+    }
+
+    private List<List<Map<String, String>>> keyboardFor(AdminCommand command) {
+        if (telegramProperties == null || !telegramProperties.isWebhookEnabled()) return List.of();
+        long user = command.userId(), chat = command.chatId();
+        Instant expiry = clock.instant().plus(CONFIRMATION_TTL);
+        String name = command.name();
+        List<List<Map<String, String>>> rows = new java.util.ArrayList<>();
+        switch (name) {
+            case "menu", "start" -> {
+                rows.add(List.of(button("📊 Status", "status", List.of(), user, chat, expiry),
+                        button("🕐 Disponibilidade", "availability", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("🧪 Shadow Mode", "shadow", List.of(), user, chat, expiry),
+                        button("👥 Perfis / conversas", "perfis", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("📝 Templates", "templates", List.of(), user, chat, expiry),
+                        button("💰 Orçamento", "orcamento", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("📈 Relatórios", "relatorio", List.of(), user, chat, expiry),
+                        button("🚨 Emergência", "emergency_menu", List.of(), user, chat, expiry)));
+                if (telegramProperties != null && telegramProperties.getMiniAppUrl() != null
+                        && !telegramProperties.getMiniAppUrl().isBlank())
+                    rows.add(List.of(Map.of("text", "🌐 Abrir Mini App",
+                            "webAppUrl", telegramProperties.getMiniAppUrl())));
+            }
+            case "availability" -> rows.add(List.of(
+                    button("Ocupado 60 min", "ocupado", List.of("60"), user, chat, expiry),
+                    button("Disponível 60 min", "disponivel", List.of("60"), user, chat, expiry)));
+            case "shadow" -> rows.add(List.of(
+                    button("Simulação ON", "simulacao", List.of("on"), user, chat, expiry),
+                    button("Simulação OFF", "simulacao", List.of("off"), user, chat, expiry)));
+            case "emergency_menu" -> rows.add(List.of(
+                    button("🚨 Ativar emergência", "emergencia", List.of(), user, chat, expiry),
+                    button("Recuperar", "recuperar", List.of(), user, chat, expiry)));
+            default -> { }
+        }
+        if (!List.of("menu", "start").contains(name))
+            rows.add(List.of(button("⬅️ Menu principal", "menu", List.of(), user, chat, expiry)));
+        return rows;
+    }
+
+    private Map<String, String> button(String text, String name, List<String> args,
+                                       long user, long chat, Instant expiry) {
+        String token = tokens.issue(user, chat, new CallbackAction("nav_" + name, args), expiry);
+        if (token.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 64)
+            throw new IllegalStateException("Telegram callback_data exceeds 64 bytes");
+        return Map.of("text", text, "data", token);
+    }
+
+    private TelegramAdminProperties telegramProperties;
+    @Autowired(required = false)
+    public void configureTelegramMenu(TelegramAdminProperties properties) {
+        this.telegramProperties = properties;
     }
 
     private static boolean isMutation(String name, List<String> args) {
@@ -309,7 +398,7 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/menu, /status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
     private record Status(String overrideState, Instant overrideExpiresAt) { }

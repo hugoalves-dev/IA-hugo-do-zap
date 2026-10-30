@@ -57,7 +57,8 @@ public class TelegramUpdateHandler {
         if (!authorized(sender, chat)) return rejectUnauthorized();
         try {
             CallbackAction action = tokens.consume(callback.data(), sender.id(), chat.id());
-            return commands.execute(new AdminCommand(action.command(), action.arguments(), sender.id(), chat.id(), true));
+            return commands.execute(new AdminCommand(action.command(), action.arguments(), sender.id(), chat.id(),
+                    !action.command().startsWith("nav_"), message.messageId()));
         } catch (CallbackTokenRejectedException ex) {
             return AdminResult.rejected("Confirmação inválida, expirada ou já usada.");
         }

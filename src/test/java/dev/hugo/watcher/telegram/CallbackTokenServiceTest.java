@@ -78,6 +78,19 @@ class CallbackTokenServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_callback_tokens", Integer.class));
     }
 
+    @Test void cancelRevokesOnlyPairedConfirmationForBoundUserAndChat() {
+        String confirmation = tokens.issue(1001, 2002, new CallbackAction("ocupado", java.util.List.of("30")),
+                clock.instant().plusSeconds(60));
+        String unrelated = tokens.issue(1001, 2002, new CallbackAction("simulacao", java.util.List.of("off")),
+                clock.instant().plusSeconds(60));
+        assertFalse(tokens.invalidate(confirmation, 9999, 2002));
+        assertFalse(tokens.invalidate(confirmation, 1001, 9999));
+        assertTrue(tokens.invalidate(confirmation, 1001, 2002));
+        assertFalse(tokens.invalidate(confirmation, 1001, 2002));
+        assertThrows(CallbackTokenRejectedException.class, () -> tokens.consume(confirmation, 1001, 2002));
+        assertEquals("simulacao", tokens.consume(unrelated, 1001, 2002).command());
+    }
+
     private boolean consumeAfter(CountDownLatch start, String token) throws Exception {
         start.await();
         try { tokens.consume(token, 1001, 2002); return true; }

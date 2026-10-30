@@ -32,5 +32,22 @@ class TelegramAdminEnvironmentTest {
         assertTrue(admin.isPollingEnabled());
         assertEquals(12345L, admin.getUserId());
     }
+    @Test void preventsSimultaneousWebhookAndPollingAndRequiresStrongSecret() {
+        var validator = Validation.buildDefaultValidatorFactory().getValidator();
+        var admin = new TelegramAdminProperties();
+        admin.setUserId(1001L);
+        admin.setWebhookEnabled(true);
+        assertFalse(validator.validate(admin).isEmpty());
+        admin.setWebhookSecret("thisIsASufficientlyLongUrlSafeSecret_12345");
+        assertTrue(validator.validate(admin).isEmpty());
+        admin.setPollingEnabled(true);
+        assertFalse(validator.validate(admin).isEmpty());
+        admin.setPollingEnabled(false);
+        admin.setMiniAppUrl("http://insecure.example");
+        assertFalse(validator.validate(admin).isEmpty());
+        admin.setMiniAppUrl("https://example.com/app");
+        assertTrue(validator.validate(admin).isEmpty());
+    }
+
 }
 

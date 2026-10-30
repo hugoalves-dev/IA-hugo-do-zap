@@ -42,6 +42,47 @@ class AdminCommandServiceTest {
         commands.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));
     }
 
+    @Test void menuUsesOpaqueCallbackTokensAndCancelRevokesConfirmation() {
+        var admin = new TelegramAdminProperties();
+        admin.setWebhookEnabled(true);
+        admin.setUserId(1001L);
+        admin.setWebhookSecret("abcdefghijklmnopqrstuvwxyz-01234567890");
+        commands.configureTelegramMenu(admin);
+
+        assertTrue(commands.execute(command("menu", List.of(), false)).accepted());
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        String menu = jdbc.queryForObject("""
+                select payload::text from outbox_actions where action_type='telegram_admin_reply'
+                order by id desc limit 1
+                """, String.class);
+        var root = json.readTree(menu);
+        assertTrue(root.path("keyboard").isArray());
+        String token = root.path("keyboard").get(0).get(0).path("data").asString();
+        assertTrue(token.length() <= 64);
+        assertFalse(menu.contains("1001"));
+        assertFalse(menu.contains("2002"));
+        CallbackAction navigation = tokens.consume(token, 1001, 2002);
+        assertEquals("nav_status", navigation.command());
+
+        var pending = commands.execute(new AdminCommand("nav_ocupado", List.of("60"), 1001, 2002, false, 42));
+        assertTrue(pending.confirmationRequired());
+        assertEquals(0, jdbc.queryForObject("select count(*) from availability_overrides", Integer.class));
+        String prompt = jdbc.queryForObject("""
+                select payload::text from outbox_actions where action_type='telegram_admin_edit'
+                order by id desc limit 1
+                """, String.class);
+        var keyboard = json.readTree(prompt).path("keyboard").get(0);
+        String confirm = keyboard.get(0).path("data").asString();
+        String cancel = keyboard.get(1).path("data").asString();
+        assertEquals(42, json.readTree(prompt).path("messageId").asInt());
+        assertEquals("cancel", tokens.consume(cancel, 1001, 2002).command());
+        CallbackAction cancellation = new CallbackAction("cancel", List.of(confirm));
+        assertTrue(commands.execute(new AdminCommand(cancellation.command(),
+                cancellation.arguments(), 1001, 2002, true, 42)).accepted());
+        assertThrows(CallbackTokenRejectedException.class, () -> tokens.consume(confirm, 1001, 2002));
+        assertEquals(0, jdbc.queryForObject("select count(*) from availability_overrides", Integer.class));
+    }
+
     @Test void availabilityOverrideRequiresConfirmationAndExpires() {
         AdminResult pending = commands.execute(command("ocupado", List.of("30"), false));
         assertTrue(pending.confirmationRequired());

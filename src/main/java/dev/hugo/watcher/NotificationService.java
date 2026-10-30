@@ -121,6 +121,10 @@ public class NotificationService {
                         TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
                                 : ARCHIVED_MESSAGES.equals(latest.actionType())
                                 ? telegram.sendHtml(telegramFormatter.format(latest))
+                                : "telegram_admin_reply".equals(latest.actionType())
+                                ? telegram.sendAdmin(telegramFormatter.format(latest), latest.payload())
+                                : "telegram_admin_edit".equals(latest.actionType())
+                                ? telegram.editAdmin(telegramFormatter.format(latest), latest.payload())
                                 : telegram.send(telegramFormatter.format(latest));
                         if (result.delivered()) outbox.acknowledge(latest, clock.instant());
                         else if (latest == null) outbox.suppress(action, clock.instant());
