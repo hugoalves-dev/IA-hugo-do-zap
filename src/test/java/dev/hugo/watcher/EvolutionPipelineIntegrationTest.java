@@ -81,7 +81,53 @@ class EvolutionPipelineIntegrationTest {
     @BeforeEach void resetLocalState() {
         archiveModes.setMode(ArchiveMode.ALL);
         jdbc.execute("truncate table outbox_actions, pending_notification, processed_message, quarantined_events, processing_jobs, inbox_events, chat_snapshot, contact_identity, identity_aliases restart identity cascade");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=now()-interval '1 second' where singleton_id=1");
         TELEGRAM.reset(true);
+    }
+
+    @Test void evolutionContactWebhookStoresUnverifiedNameWithoutOverwritingAddressBookName() throws Exception {
+        String jid = "5511999999999@s.whatsapp.net";
+        String contact = """
+                {"event":"contacts.upsert","instance":"pipeline-test","data":[
+                {"remoteJid":"5511999999999@s.whatsapp.net","pushName":"Loja & Café","profilePicUrl":null}]}
+                """;
+        assertEquals(202, post(contact).statusCode());
+        assertEquals(1, jobs.processAvailable());
+        assertEquals("Loja & Café", identities.resolveDisplayName(jid));
+        assertEquals("NOTIFY", jdbc.queryForObject("select display_name_source from contact_identity where canonical_jid=?", String.class, jid));
+        identities.observeContactName(jid, "Agenda", ContactNameSource.CONTACT_NAME);
+        assertEquals(202, post(contact.replace("Loja & Café", "Outro nome")).statusCode());
+        assertEquals(1, jobs.processAvailable());
+        assertEquals("Agenda", identities.resolveDisplayName(jid));
+    }
+
+    @Test void incomingPushNameSurvivesConfirmedLidPhoneMergeAndRendersEscaped() throws Exception {
+        String lid = "105342847439087@lid";
+        String phone = "5511999998888@s.whatsapp.net";
+        String payload = evolutionLiveEvent("name-merge", lid, phone, "Olá", Instant.now().getEpochSecond())
+                .replace("\"status\":\"DELIVERY_ACK\"", "\"pushName\":\"Loja <Café>\",\"status\":\"DELIVERY_ACK\"");
+        assertEquals(202, post(payload).statusCode());
+        assertEquals(1, jobs.processAvailable());
+        assertEquals("Loja <Café>", identities.resolveDisplayName(phone));
+        notifications.flush(Instant.now());
+        assertTrue(TELEGRAM.lastMessage().contains("Loja &lt;Café&gt;"));
+        assertTrue(TELEGRAM.lastMessage().contains("https://wa.me/5511999998888"));
+    }
+
+    @Test void contactUpdatesIgnoreMalformedNamesAndDoNotInventAliasLinks() throws Exception {
+        String body = """
+                {"event":"contacts.update","instance":"pipeline-test","data":[
+                  {"remoteJid":"105342847439087@lid","pushName":"Nome novo"},
+                  {"remoteJid":"5511999998888@s.whatsapp.net","pushName":"5511999998888"},
+                  {"remoteJid":"120363000000000000@g.us","pushName":"Grupo"},
+                  {"remoteJid":17,"pushName":"Inválido"}, null]}
+                """;
+        assertEquals(202, post(body).statusCode());
+        assertEquals(1, jobs.processAvailable());
+        assertEquals("Nome novo", identities.resolveDisplayName("105342847439087@lid"));
+        assertEquals(0, jdbc.queryForObject("select count(*) from identity_aliases", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from contact_identity where canonical_jid like '%@g.us'", Integer.class));
+        assertEquals(null, jdbc.queryForObject("select display_name from contact_identity where canonical_jid=?", String.class, "5511999998888@s.whatsapp.net"));
     }
 
     @Test void duplicateWebhookSurvivesWorkerRestartAndOutboxRetryBeforeFakeTelegramAcknowledges() throws Exception {

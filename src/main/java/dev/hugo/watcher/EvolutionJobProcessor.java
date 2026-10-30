@@ -34,6 +34,7 @@ public class EvolutionJobProcessor {
     private final JobRepository jobs;
     private final EvolutionEventMapper mapper;
     private final MessageService messages;
+    private final IdentityService identities;
     private final Clock clock;
 
     public EvolutionJobProcessor(JdbcTemplate jdbc, JobRepository jobs, EvolutionEventMapper mapper,
@@ -43,6 +44,7 @@ public class EvolutionJobProcessor {
         this.jobs = jobs;
         this.mapper = mapper;
         this.messages = messages;
+        this.identities = new IdentityService(jdbc, transactionManager);
         this.clock = clock;
     }
 
@@ -111,6 +113,18 @@ public class EvolutionJobProcessor {
             return ProcessResult.COMPLETED;
         }
         JsonNode data = envelope == null ? null : envelope.get("data");
+        String eventType = envelope == null ? null : text(envelope.get("event"));
+        if ("contacts.upsert".equals(eventType) || "contacts.update".equals(eventType)) {
+            if (data != null && data.isArray()) {
+                for (JsonNode contact : data) observeContact(contact);
+            } else if (data != null && data.isObject()) {
+                observeContact(data);
+            } else {
+                quarantine(null, "unsupported_or_unverified_envelope", now);
+            }
+            jobs.complete(job.id(), job.leaseToken());
+            return ProcessResult.COMPLETED;
+        }
         if (data == null || !data.isObject()) {
             quarantine(null, "unsupported_or_unverified_envelope", now);
             jobs.complete(job.id(), job.leaseToken());
@@ -139,6 +153,10 @@ public class EvolutionJobProcessor {
         }
 
         boolean group = event.jid().orElseThrow().endsWith("@g.us");
+        if (!group && !fromMe.booleanValue() && contactJid(event.jid().orElseThrow())) {
+            String name = text(data.get("pushName"));
+            if (name != null) identities.observeContactName(event.jid().orElseThrow(), name, ContactNameSource.NOTIFY);
+        }
         if (fromMe.booleanValue() && event.externalId() != null && !event.externalId().isBlank()
                 && event.externalId().length() <= 255 && event.jid().orElseThrow().length() <= 255) {
             messages.recordOutgoingReference(event.jid().orElseThrow(), event.externalId(), event.timestamp().orElseThrow());
@@ -179,6 +197,17 @@ public class EvolutionJobProcessor {
     }
 
     private enum ProcessResult { COMPLETED, EXPIRED, STALE_LEASE }
+    private void observeContact(JsonNode contact) {
+        if (!contact.isObject()) return;
+        String jid = text(contact.get("remoteJid"));
+        String name = text(contact.get("pushName"));
+        if (name == null || !contactJid(jid)) return;
+        identities.observeContactName(jid, name, ContactNameSource.NOTIFY);
+    }
+    private static boolean contactJid(String jid) {
+        return jid != null && jid.length() <= 255
+                && jid.matches("(?i)^(?:[1-9][0-9]{7,14}(?::[0-9]+)?@s\\.whatsapp\\.net|[0-9]+@lid)$");
+    }
     private record Validity(boolean leaseValid, boolean inboxValid) { }
 
     private void quarantine(String externalId, String reason, Instant now) {
