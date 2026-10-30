@@ -25,7 +25,7 @@ public class TelegramMessageFormatter {
         try {
             JsonNode payload = JSON.readTree(action.payload());
             return switch (payload.path("eventType").asString("")) {
-                case "telegram_admin_reply" -> limit(cleanAdmin(payload.path("text").asString("")), MAX_MESSAGE_LENGTH);
+                case "telegram_admin_reply", "telegram_admin_edit" -> limit(cleanAdmin(payload.path("text").asString("")), MAX_MESSAGE_LENGTH);
                 case NotificationService.ARCHIVED_MESSAGES -> archived(payload).text();
                 case ConnectionService.ACTION_TYPE -> connection(payload);
                 case "simulation_daily_summary" -> dailySummary(payload);
