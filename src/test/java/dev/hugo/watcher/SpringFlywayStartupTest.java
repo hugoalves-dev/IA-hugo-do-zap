@@ -35,13 +35,14 @@ class SpringFlywayStartupTest {
     @Autowired dev.hugo.watcher.ai.AiClassificationProperties ai;
 
     @Test void appliesFlywayMigrationsAutomaticallyDuringApplicationStartup() {
-        assertEquals("33", jdbc.queryForObject(
+        assertEquals("34", jdbc.queryForObject(
                 "select version from flyway_schema_history order by installed_rank desc limit 1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from ai_budget_limits", Integer.class));
         assertEquals(false, ai.enabled());
         assertEquals(0, jdbc.queryForObject("select count(*) from ai_data_consents", Integer.class));
         assertEquals("UNKNOWN", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from inbox_events", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from telegram_webhook_inbox", Integer.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from simulation_decisions where whatsapp_action_enqueued is null", Integer.class));
     }
