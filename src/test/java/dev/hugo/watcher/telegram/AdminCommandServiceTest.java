@@ -229,4 +229,36 @@ class AdminCommandServiceTest {
         @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
         @Override public Clock withZone(ZoneId zone) { return this; }
     }
+    @Test void reportCommandUsesFreshDataOnEveryPrivateRequest() {
+        var source = jdbc.getDataSource();
+        var manager = new DataSourceTransactionManager(source);
+        var outbox = new NotificationOutboxRepository(jdbc, manager);
+        var reportService = new dev.hugo.watcher.notification.ReportService(jdbc, manager, outbox, clock);
+        commands = new AdminCommandService(jdbc, manager, tokens, outbox, clock, reportService);
+
+        assertTrue(commands.execute(command("relatorio", List.of(), false)).accepted());
+        String before = jdbc.queryForObject("""
+                select payload::text from outbox_actions
+                 where action_type='simulation_daily_summary' order by id desc limit 1
+                """, String.class);
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        int baseline = json.readTree(before).path("decisionCount").asInt();
+
+        var batch = java.util.UUID.randomUUID();
+        var timestamp = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)",
+                batch, "report-test@s.whatsapp.net", timestamp, timestamp, timestamp, timestamp, expires, expires);
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at) values (?,false,false,'no_request_detected',?,?)",
+                batch, timestamp, expires);
+
+        assertTrue(commands.execute(command("relatorio", List.of(), false)).accepted());
+        String after = jdbc.queryForObject("""
+                select payload::text from outbox_actions
+                 where action_type='simulation_daily_summary' order by id desc limit 1
+                """, String.class);
+        assertEquals(baseline + 1, json.readTree(after).path("decisionCount").asInt());
+        assertFalse(after.contains("report-test@s.whatsapp.net"));
+    }
+
 }
