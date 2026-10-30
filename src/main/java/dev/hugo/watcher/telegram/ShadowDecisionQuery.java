@@ -28,7 +28,9 @@ final class ShadowDecisionQuery {
                 """, (rs, n) -> {
             String name = rs.getString("display_name");
             String source = rs.getString("display_name_source");
-            if (name == null || name.isBlank() || source == null || !List.of("CONTACT_NAME", "VERIFIED").contains(source)) name = "Contato indisponível";
+            if (name == null || name.isBlank() || source == null
+                    || !List.of("CONTACT_NAME", "NOTIFY", "VERIFIED", "CHAT", "LEGACY", "USERNAME").contains(source)
+                    || name.contains("@") || name.replaceAll("\\D", "").length() >= 8) name = "Contato indisponível";
             name = name.strip().replaceAll("[\\p{Cntrl}]", " ");
             if (name.length() > 30) name = name.substring(0,30);
             name = escape(name);

@@ -123,6 +123,19 @@ class AdminCommandServiceTest {
         assertTrue(commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message().contains("expirada"));
     }
 
+    @Test void recentDecisionsShowNotifyNameWithoutExposingIdentity() {
+        var id = java.util.UUID.randomUUID();
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        String chat = "fixture-notify@s.whatsapp.net";
+        jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?,'NOTIFY')", chat, "Amazon & Filhos");
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)", id, chat, now, now, now, now, expires, expires);
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at) values (?,false,false,'no_request_detected',?,?)", id, now, expires);
+        String result = commands.execute(command("ultimas", List.of("10"), false)).message();
+        assertTrue(result.contains("Amazon &amp; Filhos"));
+        assertFalse(result.contains(chat));
+    }
+
     @Test void hypotheticalPreviewRequiresCurrentOptInAndEscapesHtml() {
         var id = java.util.UUID.randomUUID();
         var now = java.sql.Timestamp.from(clock.instant());

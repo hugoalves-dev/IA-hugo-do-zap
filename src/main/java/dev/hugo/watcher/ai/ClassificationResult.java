@@ -10,7 +10,7 @@ public record ClassificationResult(Intent intent, boolean requestDetected, Urgen
 
     public enum Intent { NONE, CONTACT_REQUEST, GROUP_TRIGGER, UNCERTAIN }
     public enum Urgency { LOW, NORMAL, HIGH, CRITICAL, UNCERTAIN }
-    public enum Status { CLASSIFIED, UNCERTAIN }
+    public enum Status { CLASSIFIED, UNCERTAIN, UNAVAILABLE }
 
     public ClassificationResult {
         if (intent == null || urgency == null || status == null
@@ -20,7 +20,13 @@ public record ClassificationResult(Intent intent, boolean requestDetected, Urgen
                 .map(String::strip).filter(value -> !value.isEmpty()).limit(MAX_EVIDENCE_ITEMS)
                 .map(value -> value.length() > MAX_EVIDENCE_CHARS ? value.substring(0, MAX_EVIDENCE_CHARS) : value)
                 .toList();
-        if (confidence < MIN_CONFIDENCE || intent == Intent.UNCERTAIN || urgency == Urgency.UNCERTAIN
+        if (status == Status.UNAVAILABLE) {
+            intent = Intent.UNCERTAIN;
+            requestDetected = false;
+            urgency = Urgency.UNCERTAIN;
+            evidence = List.of();
+            confidence = 0;
+        } else if (confidence < MIN_CONFIDENCE || intent == Intent.UNCERTAIN || urgency == Urgency.UNCERTAIN
                 || status == Status.UNCERTAIN) {
             intent = Intent.UNCERTAIN;
             requestDetected = false;
@@ -39,5 +45,9 @@ public record ClassificationResult(Intent intent, boolean requestDetected, Urgen
 
     public static ClassificationResult uncertain() {
         return new ClassificationResult(Intent.UNCERTAIN, false, Urgency.UNCERTAIN, List.of(), 0, Status.UNCERTAIN);
+    }
+
+    public static ClassificationResult unavailable() {
+        return new ClassificationResult(Intent.UNCERTAIN, false, Urgency.UNCERTAIN, List.of(), 0, Status.UNAVAILABLE);
     }
 }

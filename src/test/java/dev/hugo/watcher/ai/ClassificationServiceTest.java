@@ -33,7 +33,7 @@ class ClassificationServiceTest {
 
         ClassificationResult result = new ClassificationService(primary, fallback).classify(batch("hello"));
 
-        assertEquals(ClassificationResult.Status.UNCERTAIN, result.status());
+        assertEquals(ClassificationResult.Status.UNAVAILABLE, result.status());
         assertEquals(0, fallbackCalls.get());
     }
 
@@ -90,7 +90,7 @@ class ClassificationServiceTest {
             }
         };
 
-        assertEquals(ClassificationResult.Status.UNCERTAIN,
+        assertEquals(ClassificationResult.Status.UNAVAILABLE,
                 new ClassificationService(primary, fallback).classify(batch("hello")).status());
         assertEquals(0, fallbackCalls.get());
     }

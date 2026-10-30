@@ -22,14 +22,14 @@ public final class ClassificationService {
         try {
             return primary.classify(input);
         } catch (ClassificationProviderException error) {
-            if (!error.isTechnicalFailure() || fallback == null) return ClassificationResult.uncertain();
+            if (!error.isTechnicalFailure() || fallback == null) return ClassificationResult.unavailable();
             try {
                 return fallback.classify(input);
             } catch (RuntimeException ignored) {
-                return ClassificationResult.uncertain();
+                return ClassificationResult.unavailable();
             }
         } catch (RuntimeException ignored) {
-            return ClassificationResult.uncertain();
+            return ClassificationResult.unavailable();
         }
     }
 }

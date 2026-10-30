@@ -9,18 +9,22 @@ import java.util.Map;
 
 /** Bounded and deterministically minimized text passed to a classification provider. */
 public record ClassificationInput(List<String> messages) {
-    public static final int MAX_MESSAGES = 5;
+    public static final int MAX_MESSAGES = 6;
     public static final int MAX_CHARS_PER_MESSAGE = 1_000;
 
     public ClassificationInput {
         if (messages == null) messages = List.of();
         messages = messages.stream().filter(java.util.Objects::nonNull)
                 .map(String::strip).filter(text -> !text.isEmpty())
-                .limit(MAX_MESSAGES)
                 .map(ClassificationInputMinimizer::minimize)
                 .map(text -> text.length() > MAX_CHARS_PER_MESSAGE ? text.substring(0, MAX_CHARS_PER_MESSAGE) : text)
                 .toList();
+        if (messages.size() > MAX_MESSAGES)
+            messages = List.copyOf(messages.subList(messages.size() - MAX_MESSAGES, messages.size()));
     }
+
+    public String target() { return messages.isEmpty() ? "" : messages.getLast(); }
+    public List<String> context() { return messages.isEmpty() ? List.of() : messages.subList(0, messages.size() - 1); }
 
     public static ClassificationInput fromBatch(Batch batch) {
         if (batch == null || batch.messages() == null) return new ClassificationInput(List.of());

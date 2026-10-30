@@ -7,6 +7,17 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ClassificationInputMinimizerTest {
+    @Test void keepsMostRecentMessageWhenInputExceedsLimit() {
+        var input = new ClassificationInput(List.of("one", "two", "three", "four", "five", "six"));
+        assertEquals(List.of("one", "two", "three", "four", "five", "six"), input.messages());
+    }
+
+    @Test void identifiesTargetSeparatelyFromFivePreviousMessages() {
+        var input = new ClassificationInput(List.of("one", "two", "three", "four", "five", "six", "pode"));
+        assertEquals("pode", input.target());
+        assertEquals(List.of("two", "three", "four", "five", "six"), input.context());
+    }
+
     @Test void masksCommonContactAndIdentityTokensBeforeProviderInput() {
         String text = "Call +55 (11) 98765-4321 or 11987654321; email person.test@example.com; "
                 + "WhatsApp 5511987654321@s.whatsapp.net; CPF 123.456.789-09; "

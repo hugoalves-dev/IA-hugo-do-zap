@@ -21,8 +21,11 @@ public final class DecisionEngine {
         DecisionPolicy settings = policy.decisionPolicy();
         if (settings == null || !settings.aiClassificationEnabled())
             return blocked("ai_classification_disabled", "ai_classification_disabled");
-        if (!classification.available())
-            return blocked("classification_unavailable", "classification_unavailable");
+        if (!classification.available()) {
+            String reason = classification.status() == dev.hugo.watcher.ai.ClassificationResult.Status.UNCERTAIN
+                    ? "classification_uncertain" : "classification_unavailable";
+            return blocked(reason, reason);
+        }
 
         boolean critical = classification.situations().contains(Situation.CRITICAL_URGENCY);
         if (critical && !classification.explicitPersonalReference())

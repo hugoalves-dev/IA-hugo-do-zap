@@ -32,6 +32,15 @@ class DecisionEngineTest {
         assertEquals(DecisionStatus.BLOCKED, decision.status());
     }
 
+    @Test void inconclusiveProviderResponseHasDistinctFailClosedReason() {
+        var classification = new Classification(Set.of(), false, false, false, false,
+                dev.hugo.watcher.ai.ClassificationResult.Urgency.UNCERTAIN, 0.3,
+                dev.hugo.watcher.ai.ClassificationResult.Status.UNCERTAIN, null);
+        Decision decision = engine.decide(batch(false), classification, policy(true), NOW);
+        assertEquals("classification_uncertain", decision.blockedReason());
+        assertFalse(decision.realActionAllowed());
+    }
+
     @Test void contactRequestNeedsExplicitAuthorizationAndTemplate() {
         var classification = Classification.contactRequest();
         assertFalse(engine.decide(batch(false), classification, policy(true, Set.of(), true, true), NOW).wouldReply());
