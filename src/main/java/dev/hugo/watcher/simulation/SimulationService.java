@@ -222,8 +222,8 @@ public class SimulationService {
                 """, (rs, row) -> new Cooldowns(rs.getTimestamp(1) == null ? null : rs.getTimestamp(1).toInstant(),
                 rs.getTimestamp(2) == null ? null : rs.getTimestamp(2).toInstant()), batch.chatJid(), "");
         Cooldowns last = cooldowns.isEmpty() ? new Cooldowns(null, null) : cooldowns.getFirst();
-        return new DecisionPolicy(operational != null && operational.classification(), operational != null && operational.alerts(),
-                operational != null && operational.replies(), operational == null || operational.killSwitch(), templates.keySet(), templates, Duration.ofSeconds(current.simulationCooldownSeconds()),
+        return new DecisionPolicy(operational != null && operational.classification(), operational != null && operational.simulatedAlerts(),
+                operational != null && operational.simulatedReplies(), operational == null || operational.killSwitch(), templates.keySet(), templates, Duration.ofSeconds(current.simulationCooldownSeconds()),
                 Duration.ofSeconds(current.realCooldownSeconds()), last.simulationAt(), last.realAt());
     }
 
