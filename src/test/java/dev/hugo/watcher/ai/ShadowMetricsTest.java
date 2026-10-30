@@ -87,6 +87,34 @@ class ShadowMetricsTest {
                     .tags("provider", "other", "status", "other").counter().count());
         }
     }
+    @Test void missingFinishReasonAndUsageProduceOnlySanitizedMetadata() {
+        var registry = new SimpleMeterRegistry();
+        var metrics = new ShadowMetrics(registry);
+        metrics.reportedUsage("openrouter", """
+                {"choices":[{"message":{"content":"synthetic private prompt"}}]}
+                """);
+        assertEquals(1, registry.get("watcher.shadow.provider.finish_reason")
+                .tags("provider", "openrouter", "reason", "missing").counter().count());
+        assertNull(registry.find("watcher.shadow.provider.tokens").counter());
+        assertTrue(registry.getMeters().stream().flatMap(m -> m.getId().getTags().stream())
+                .noneMatch(tag -> tag.getValue().contains("synthetic private prompt")));
+    }
+
+    @Test void reasoningCanConsumeEntireOutputBudgetWithoutParsedContent() {
+        var registry = new SimpleMeterRegistry();
+        var metrics = new ShadowMetrics(registry);
+        metrics.reportedUsage("openrouter", """
+                {"choices":[{"finish_reason":"length","message":{"content":null}}],
+                 "usage":{"completion_tokens":300,"completion_tokens_details":{"reasoning_tokens":300}}}
+                """);
+        assertEquals(300, registry.get("watcher.shadow.provider.tokens")
+                .tags("provider", "openrouter", "direction", "output").counter().count());
+        assertEquals(300, registry.get("watcher.shadow.provider.tokens")
+                .tags("provider", "openrouter", "direction", "reasoning").counter().count());
+        assertEquals(1, registry.get("watcher.shadow.provider.truncated")
+                .tag("provider", "openrouter").counter().count());
+    }
+
     @Test void recordsBoundedFinishReasonAndReasoningUsage() {
         var registry = new SimpleMeterRegistry();
         var metrics = new ShadowMetrics(registry);
