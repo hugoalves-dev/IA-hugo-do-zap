@@ -5,6 +5,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.Mockito.*;
 
 class TelegramWebhookControllerTest {
@@ -32,15 +33,15 @@ class TelegramWebhookControllerTest {
     }
 
     @Test void acksOnlyAfterDurableInsertAndDeduplicatesReplay() {
-        when(jdbc.update(anyString(), any(), any())).thenReturn(1, 0);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1, 0);
         var endpoint = controller();
         assertEquals(202, endpoint.receive(secret, validPayload()).getStatusCode().value());
         assertEquals(200, endpoint.receive(secret, validPayload()).getStatusCode().value());
-        verify(jdbc, times(2)).update(anyString(), eq(42L), eq(validPayload()));
+        verify(jdbc, times(2)).update(anyString(), aryEq(new Object[]{42L, validPayload()}));
     }
 
     @Test void returnsRetryableFailureWhenPersistenceFails() {
-        when(jdbc.update(anyString(), any(), any()))
+        when(jdbc.update(anyString(), any(Object[].class)))
                 .thenThrow(new DataAccessResourceFailureException("test database down"));
         assertEquals(503, controller().receive(secret, validPayload()).getStatusCode().value());
     }
