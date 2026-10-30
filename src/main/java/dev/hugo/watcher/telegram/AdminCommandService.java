@@ -338,7 +338,7 @@ public class AdminCommandService {
                 if (telegramProperties != null && telegramProperties.getMiniAppUrl() != null
                         && !telegramProperties.getMiniAppUrl().isBlank())
                     rows.add(List.of(Map.of("text", "🌐 Abrir Mini App",
-                            "url", telegramProperties.getMiniAppUrl())));
+                            "webAppUrl", telegramProperties.getMiniAppUrl())));
             }
             case "availability" -> rows.add(List.of(
                     button("Ocupado 60 min", "ocupado", List.of("60"), user, chat, expiry),
