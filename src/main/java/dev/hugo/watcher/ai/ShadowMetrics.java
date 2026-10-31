@@ -25,7 +25,9 @@ public final class ShadowMetrics {
             "group_trigger_missing", "kill_switch_enabled", "no_eligible_text",
             "no_request_detected", "privacy_route_unavailable", "provider_timeout",
             "provider_unavailable", "result_invalid", "provider_output_truncated", "state_or_scope_ineligible",
-            "template_missing", "cooldown_active", "not_available", "no_action",
+            "batch_missing", "batch_chat_mismatch", "batch_status_ineligible",
+            "batch_expired", "archive_settings_missing", "template_missing", "cooldown_active",
+            "not_available", "no_action",
             "simulation_only"
     );
 
@@ -50,7 +52,7 @@ public final class ShadowMetrics {
 
     public void decision(String blockedReason, String diagnostic) {
         registry.counter("watcher.shadow.decisions",
-                "reason", reason(blockedReason), "diagnostic", reason(diagnostic)).increment();
+                "reason", safeReason(blockedReason), "diagnostic", safeReason(diagnostic)).increment();
     }
 
     public void providerCall(String provider, String status, Duration duration) {
@@ -172,7 +174,7 @@ public final class ShadowMetrics {
         return "openrouter".equals(value) || "gemini".equals(value) ? value : "other";
     }
 
-    private static String reason(String value) {
+    public static String safeReason(String value) {
         if (value == null || value.isBlank()) return "none";
         return REASONS.contains(value) ? value : "other";
     }
