@@ -83,6 +83,48 @@ class AiSimulationAcceptanceTest {
         assertFalse(classifier(true, fake()).classify(batch).available());
         assertEquals(0, calls.get());
     }
+    @Test void realKillSwitchPreservesConsentedShadowEvaluationWithoutSending() {
+        flags.setKillSwitchEnabled(true);
+        flags.setAutoReplyEnabled(true);
+        jdbc.update("update response_templates set body='Resposta automática: retorno em breve.',enabled=true where template_id='contact_request'");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)", chat);
+
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(),
+                new DecisionEngine(), new PersistedPolicyRepository(jdbc, new PolicyResolver()),
+                new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), classifier(true, fake())));
+        var batch = batch();
+        var decision = service.evaluate(batch);
+
+        assertEquals(1, calls.get(), "shadow can still classify with consent and budget");
+        assertTrue(decision.wouldReply(), decision.toString());
+        assertFalse(decision.realActionAllowed());
+        assertEquals("kill_switch_enabled", decision.realBlockedReason());
+        assertEquals("CLASSIFIED", jdbc.queryForObject(
+                "select classification_status from simulation_decisions where batch_id=?", String.class, batch.id()));
+        assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'", Integer.class));
+    }
+
+    @Test void inactiveTemplateNeverBecomesAnAuthorizedShadowReply() {
+        flags.setKillSwitchEnabled(true);
+        flags.setAutoReplyEnabled(true);
+        jdbc.update("update response_templates set body='Resposta automática: ainda inativo.',enabled=false where template_id='contact_request'");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)", chat);
+
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(),
+                new DecisionEngine(), new PersistedPolicyRepository(jdbc, new PolicyResolver()),
+                new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), classifier(true, fake())));
+        var batch = batch();
+        var decision = service.evaluate(batch);
+
+        assertEquals(1, calls.get());
+        assertFalse(decision.wouldReply(), "an inactive template must not authorize a simulated reply");
+        assertFalse(decision.realActionAllowed());
+        assertEquals("CLASSIFIED", jdbc.queryForObject(
+                "select classification_status from simulation_decisions where batch_id=?", String.class, batch.id()));
+        assertEquals(0, jdbc.queryForObject("select count(*) from whatsapp_action_outbox", Integer.class));
+    }
+
     @Test void simulationClassifiesOutsideSqlTransactionAndReusesDurableResult() {
         flags.setAutoReplyEnabled(true); flags.setIntelligentAlertsEnabled(true);
         jdbc.update("update response_templates set body='Resposta automática: retorno em breve.',enabled=true where template_id='contact_request'");
