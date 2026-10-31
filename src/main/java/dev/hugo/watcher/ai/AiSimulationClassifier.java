@@ -50,11 +50,15 @@ public final class AiSimulationClassifier {
         if (TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("provider calls must run outside SQL transactions");
         if (!properties.configured()) return unavailable("configuration_invalid");
-        if (!eligible(batch)) return unavailable("state_or_scope_ineligible");
+        String scopeDiagnostic = eligibilityDiagnostic(batch);
+        if (scopeDiagnostic != null) return unavailable(scopeDiagnostic);
         Set<Situation> purposes = permittedPurposes(batch, "openrouter");
         if (purposes.isEmpty()) return unavailable("consent_missing");
+        Set<Situation> consentedPurposes = purposes;
         purposes = contextualPurposes(batch, purposes);
-        if (purposes.isEmpty()) return unavailable("state_or_scope_ineligible");
+        if (purposes.isEmpty())
+            return unavailable(batch.chatJid().endsWith("@g.us") && consentedPurposes.contains(Situation.GROUP_TRIGGER)
+                    ? "group_trigger_missing" : "consent_missing");
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
         ClassificationInput input = new ConversationContextRepository(jdbc, java.time.Duration.ofHours(contextWindowHours)).input(batch, clock.instant());
         if (input.messages().isEmpty()) return unavailable("no_eligible_text");
@@ -180,16 +184,43 @@ public final class AiSimulationClassifier {
                 (rs, row) -> Situation.valueOf(rs.getString(1)), chat, provider, Timestamp.from(clock.instant())));
     }
     private boolean eligible(Batch batch) {
-        if (operational == null || !operational.classification()) return false;
-        return Boolean.TRUE.equals(jdbc.queryForObject("""
-                select exists(select 1 from archive_monitor_settings s
-                    join simulation_batches b on b.batch_id=? left join chat_snapshot c on c.chat_jid=b.chat_jid
-                    where s.singleton_id=1
-                    and b.chat_jid=? and b.expires_at>? and b.status in ('CLAIMED','COMPLETED')
-                    and (s.mode='ALL' or (c.synchronized_snapshot=true and c.archived is not null
-                        and ((s.mode='ARCHIVED_ONLY' and c.archived) or (s.mode='UNARCHIVED_ONLY' and not c.archived)))))
-                """, Boolean.class, batch.id(), batch.chatJid(), Timestamp.from(clock.instant())));
+        return eligibilityDiagnostic(batch) == null;
     }
+
+    /**
+     * Returns a fixed, privacy-safe diagnostic for every pre-provider rejection.
+     * This must enforce the same fail-closed conditions as the authorization recheck.
+     */
+    private String eligibilityDiagnostic(Batch batch) {
+        if (operational == null || !operational.classification())
+            return operational != null && operational.killSwitch()
+                    ? "kill_switch_enabled" : "ai_classification_disabled";
+        List<BatchScope> scopes = jdbc.query("""
+                select b.chat_jid,b.status,b.expires_at,s.mode,c.archived,
+                       coalesce(c.synchronized_snapshot,false) synchronized_snapshot
+                  from simulation_batches b
+                  left join archive_monitor_settings s on s.singleton_id=1
+                  left join chat_snapshot c on c.chat_jid=b.chat_jid
+                 where b.batch_id=?
+                """, (rs, row) -> new BatchScope(rs.getString("chat_jid"), rs.getString("status"),
+                rs.getTimestamp("expires_at").toInstant(), rs.getString("mode"),
+                (Boolean) rs.getObject("archived"), rs.getBoolean("synchronized_snapshot")), batch.id());
+        if (scopes.isEmpty()) return "batch_missing";
+        BatchScope scope = scopes.getFirst();
+        if (!scope.chatJid().equals(batch.chatJid())) return "batch_chat_mismatch";
+        if (!Set.of("CLAIMED", "COMPLETED").contains(scope.status())) return "batch_status_ineligible";
+        if (!scope.expiresAt().isAfter(clock.instant())) return "batch_expired";
+        if (scope.mode() == null) return "archive_settings_missing";
+        if ("ALL".equals(scope.mode())) return null;
+        if (!scope.synchronizedSnapshot() || scope.archived() == null) return "archive_state_unknown";
+        if (("ARCHIVED_ONLY".equals(scope.mode()) && scope.archived()) ||
+                ("UNARCHIVED_ONLY".equals(scope.mode()) && !scope.archived())) return null;
+        return "archive_scope_excluded";
+    }
+
+    private record BatchScope(String chatJid, String status, Instant expiresAt, String mode,
+                              Boolean archived, boolean synchronizedSnapshot) { }
+
     private Classification convert(Batch batch, ClassificationResult result, Set<Situation> purposes) {
         if (result.status() != ClassificationResult.Status.CLASSIFIED)
             return new Classification(Set.of(),false,false,false,false,result.urgency(),result.confidence(),result.status(),null,result.diagnostic());
