@@ -70,12 +70,21 @@ class EnvironmentAiIntegrationTest {
         assertFalse(classifier(config(true,true),false).classify(batch(Map.of("conversation","Oi"))).available());
         assertEquals(0,calls.get());
     }
-    @Test void killAndEmergencyBlockAndEmergencySurvivesNewState() {
+    @Test void realKillSwitchPermitsExplicitShadowClassificationButEmergencyBlocks() {
         var cfg=config(true,false);
-        assertFalse(classifier(cfg,true).classify(batch(Map.of("conversation","Oi"))).available());
+        var shadow = state(cfg,true);
+        assertTrue(shadow.killSwitch());
+        assertTrue(shadow.classification(), "real-action kill switch must not disable consented Shadow Mode");
+        assertFalse(shadow.alerts());
+        assertFalse(shadow.replies());
+        assertTrue(classifier(cfg,true).classify(batch(Map.of("conversation","Oi"))).available());
+        assertEquals(1,calls.get());
+
         jdbc.update("update operational_restrictions set emergency_latched=true");
         assertFalse(classifier(cfg,false).classify(batch(Map.of("conversation","Oi"))).available());
-        assertTrue(state(cfg,false).emergency()); assertEquals(0,calls.get());
+        assertTrue(state(cfg,false).emergency());
+        assertFalse(state(cfg,false).classification());
+        assertEquals(1,calls.get(), "emergency must reject classification before contacting provider");
     }
     @Test void stickerWithoutTextDoesNotCallProvider() {
         assertFalse(classifier(config(true,false),false).classify(batch(Map.of("stickerMessage",Map.of()))).available());
@@ -122,9 +131,11 @@ class EnvironmentAiIntegrationTest {
         jdbc.update("update automation_settings set ai_classification_enabled=true,kill_switch_enabled=false,intelligent_alerts_enabled=true,auto_reply_enabled=true");
         var flags=new AutomationProperties();
         var state=new OperationalState(jdbc,flags,config(true,false),new WatcherSimulationProperties(),false);
-        assertTrue(state.killSwitch()); assertFalse(state.classification());
+        assertTrue(state.killSwitch());
+        assertTrue(state.classification(), "declarative AI plus Shadow Mode remains independent of the real kill switch");
         assertFalse(state.alerts()); assertFalse(state.replies());
         flags.setKillSwitchEnabled(false);
+        assertTrue(state.classification());
         assertFalse(state.alerts()); assertFalse(state.replies());
         jdbc.update("update automation_settings set kill_switch_enabled=true,intelligent_alerts_enabled=false,auto_reply_enabled=false");
         flags.setIntelligentAlertsEnabled(true); flags.setAutoReplyEnabled(true);
