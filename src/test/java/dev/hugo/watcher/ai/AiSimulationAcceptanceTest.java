@@ -120,6 +120,60 @@ class AiSimulationAcceptanceTest {
         assertNull(jdbc.queryForObject("select intelligent_alert_reference_hash from simulation_decisions where batch_id=?", String.class, batch.id()));
     }
 
+    @Test void preflightReportsMissingMismatchedUnclaimedAndExpiredBatchesWithoutHttp() {
+        var ai = classifier(true, fake());
+        var missing = new Batch(UUID.randomUUID(), chat, "", List.of());
+        assertEquals("batch_missing", ai.classify(missing).diagnostic());
+        var mismatch = batch();
+        assertEquals("batch_chat_mismatch", ai.classify(new Batch(
+                mismatch.id(), "different@s.whatsapp.net", mismatch.participantJid(), mismatch.messages())).diagnostic());
+        var unclaimed = batch();
+        jdbc.update("update simulation_batches set status='READY' where batch_id=?", unclaimed.id());
+        assertEquals("batch_status_ineligible", ai.classify(unclaimed).diagnostic());
+        var expired = batch();
+        jdbc.update("update simulation_batches set expires_at=now()-interval '1 second' where batch_id=?", expired.id());
+        assertEquals("batch_expired", ai.classify(expired).diagnostic());
+        assertEquals(0, calls.get());
+    }
+
+    @Test void preflightReportsKillSwitchAndArchiveScopeFailuresWithoutHttp() {
+        var ai = classifier(true, fake());
+        var current = batch();
+        flags.setKillSwitchEnabled(true);
+        assertEquals("kill_switch_enabled", ai.classify(current).diagnostic());
+        flags.setKillSwitchEnabled(false);
+
+        jdbc.update("delete from chat_snapshot where chat_jid=?", chat);
+        jdbc.update("update archive_monitor_settings set mode='ARCHIVED_ONLY'");
+        assertEquals("archive_state_unknown", ai.classify(current).diagnostic());
+        jdbc.update("""
+                insert into chat_snapshot(chat_jid,archived,synchronized_snapshot)
+                values (?,false,true)
+                on conflict(chat_jid) do update set archived=false,synchronized_snapshot=true
+                """, chat);
+        assertEquals("archive_scope_excluded", ai.classify(current).diagnostic());
+        assertEquals(0, calls.get());
+    }
+
+    @Test void missingStructuredGroupMentionPersistsSpecificDiagnosticWithoutHttp() {
+        String group = "missing-mention@g.us";
+        jdbc.update("""
+                insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at)
+                values (?,'GROUP_TRIGGER','openrouter',true,now()+interval '1 day')
+                """, group);
+        var current = batch(group, Map.of("conversation", "@owner, pode ajudar?"));
+        var ai = classifier(true, fake());
+        assertEquals("group_trigger_missing", ai.classify(current).diagnostic());
+
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(),
+                new DecisionEngine(), new PersistedPolicyRepository(jdbc, new PolicyResolver()),
+                new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai));
+        assertEquals("classification_unavailable", service.evaluate(current).blockedReason());
+        assertEquals("group_trigger_missing", jdbc.queryForObject(
+                "select classification_diagnostic from simulation_decisions where batch_id=?", String.class, current.id()));
+        assertEquals(0, calls.get());
+    }
+
     @Test void privacyAndUnknownArchivedStateBlockBeforeHttp() {
         jdbc.update("delete from ai_data_consents");
         assertFalse(classifier(true, fake()).classify(batch()).available());
