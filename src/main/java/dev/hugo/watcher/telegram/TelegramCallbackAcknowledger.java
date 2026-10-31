@@ -3,11 +3,9 @@ package dev.hugo.watcher.telegram;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.request.AnswerCallbackQuery;
 import dev.hugo.watcher.WatcherProperties;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConditionalOnProperty(prefix = "watcher.telegram.admin", name = "webhook-enabled", havingValue = "true")
 public class TelegramCallbackAcknowledger {
     private static final System.Logger LOG = System.getLogger(TelegramCallbackAcknowledger.class.getName());
     private final TelegramBot bot;
