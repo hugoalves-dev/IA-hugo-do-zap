@@ -1,6 +1,7 @@
 package dev.hugo.watcher.telegram;
 
 import com.pengrad.telegrambot.model.Update;
+import com.pengrad.telegrambot.model.CallbackQuery;
 import com.pengrad.telegrambot.model.Chat;
 import com.pengrad.telegrambot.model.Message;
 import com.pengrad.telegrambot.model.User;
@@ -155,6 +156,49 @@ class TelegramUpdatePollingServiceTest {
         polling.poll();
         assertEquals(5L, jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
         assertEquals(true, jdbc.queryForObject("select emergency_latched from operational_restrictions where singleton_id=1", Boolean.class));
+    }
+
+    @Test void acknowledgesInlineCallbackOnlyAfterPollingOffsetIsCommitted() {
+        Update update = mock(Update.class);
+        CallbackQuery callback = mock(CallbackQuery.class);
+        when(update.updateId()).thenReturn(91);
+        when(update.callbackQuery()).thenReturn(callback);
+        when(callback.id()).thenReturn("callback-91");
+        TelegramUpdateHandler handler = mock(TelegramUpdateHandler.class);
+        when(handler.handle(update)).thenReturn(AdminResult.accepted("ok"));
+        TelegramCallbackAcknowledger acknowledger = mock(TelegramCallbackAcknowledger.class);
+        doAnswer(invocation -> {
+            assertEquals(92L, jdbc.queryForObject(
+                    "select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
+            return null;
+        }).when(acknowledger).answer("callback-91", "✅ Comando recebido.");
+
+        var polling = new TelegramUpdatePollingService(jdbc, offset -> List.of(update),
+                handler, new DataSourceTransactionManager(source), acknowledger);
+        polling.poll();
+
+        verify(acknowledger).answer("callback-91", "✅ Comando recebido.");
+        assertEquals(92L, jdbc.queryForObject(
+                "select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
+    }
+
+    @Test void rejectedInlineCallbackIsAcknowledgedWithoutChangingTheOffsetSemantics() {
+        Update update = mock(Update.class);
+        CallbackQuery callback = mock(CallbackQuery.class);
+        when(update.updateId()).thenReturn(27);
+        when(update.callbackQuery()).thenReturn(callback);
+        when(callback.id()).thenReturn("rejected-27");
+        TelegramUpdateHandler handler = mock(TelegramUpdateHandler.class);
+        when(handler.handle(update)).thenReturn(AdminResult.rejected("Confirmação inválida."));
+        TelegramCallbackAcknowledger acknowledger = mock(TelegramCallbackAcknowledger.class);
+
+        var polling = new TelegramUpdatePollingService(jdbc, offset -> List.of(update),
+                handler, new DataSourceTransactionManager(source), acknowledger);
+        polling.poll();
+
+        verify(acknowledger).answer("rejected-27", "Confirmação inválida.");
+        assertEquals(28L, jdbc.queryForObject(
+                "select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
     }
 
     private Update messageUpdate(int updateId, String text) {

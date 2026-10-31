@@ -24,15 +24,23 @@ public class TelegramUpdatePollingService {
     private final JdbcTemplate jdbc;
     private final TelegramUpdatesClient telegram;
     private final TelegramUpdateHandler handler;
+    private final TelegramCallbackAcknowledger callbacks;
     private final TransactionTemplate transactions;
 
     @Autowired
     public TelegramUpdatePollingService(JdbcTemplate jdbc, TelegramUpdatesClient telegram,
-                                        TelegramUpdateHandler handler, PlatformTransactionManager manager) {
+                                        TelegramUpdateHandler handler, PlatformTransactionManager manager,
+                                        TelegramCallbackAcknowledger callbacks) {
         this.jdbc = jdbc;
         this.telegram = telegram;
         this.handler = handler;
+        this.callbacks = callbacks;
         this.transactions = new TransactionTemplate(manager);
+    }
+
+    public TelegramUpdatePollingService(JdbcTemplate jdbc, TelegramUpdatesClient telegram,
+                                        TelegramUpdateHandler handler, PlatformTransactionManager manager) {
+        this(jdbc, telegram, handler, manager, null);
     }
 
     public TelegramUpdatePollingService(JdbcTemplate jdbc, TelegramUpdatesClient telegram, TelegramUpdateHandler handler) {
@@ -70,13 +78,20 @@ public class TelegramUpdatePollingService {
         long offset = jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class);
         List<Update> updates = telegram.getUpdates(offset);
         for (Update update : updates) {
-            transactions.executeWithoutResult(status -> {
-                handler.handle(update);
+            AdminResult result = transactions.execute(status -> {
+                AdminResult handled = handler.handle(update);
                 if (update != null && update.updateId() != null) {
                     long nextOffset = update.updateId().longValue() + 1;
                     jdbc.update("update telegram_admin_settings set polling_offset=greatest(polling_offset,?),updated_at=now() where singleton_id=1", nextOffset);
                 }
+                return handled;
             });
+            // Answer only after the update and its durable offset are committed.
+            if (callbacks != null && update != null && update.callbackQuery() != null) {
+                callbacks.answer(update.callbackQuery().id(),
+                        result != null && result.accepted() ? "✅ Comando recebido."
+                                : result == null ? "Comando não processado." : result.message());
+            }
         }
     }
 }

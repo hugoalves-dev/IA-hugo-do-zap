@@ -42,9 +42,18 @@ class AdminCommandServiceTest {
         commands.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));
     }
 
-    @Test void menuUsesOpaqueCallbackTokensAndCancelRevokesConfirmation() {
+    @Test void webhookMenuUsesOpaqueCallbackTokensAndCancelRevokesConfirmation() {
+        assertMenuAndConfirmationCallbacks(false);
+    }
+
+    @Test void pollingMenuUsesOpaqueCallbackTokensAndCancelRevokesConfirmation() {
+        assertMenuAndConfirmationCallbacks(true);
+    }
+
+    private void assertMenuAndConfirmationCallbacks(boolean polling) {
         var admin = new TelegramAdminProperties();
-        admin.setWebhookEnabled(true);
+        admin.setPollingEnabled(polling);
+        admin.setWebhookEnabled(!polling);
         admin.setUserId(1001L);
         admin.setWebhookSecret("abcdefghijklmnopqrstuvwxyz-01234567890");
         commands.configureTelegramMenu(admin);
