@@ -78,7 +78,7 @@ public class AdminCommandService {
         return transactions.execute(status -> {
             String token = tokens.issue(command.userId(), command.chatId(),
                     new CallbackAction(command.name(), command.arguments()), clock.instant().plus(CONFIRMATION_TTL));
-            boolean inline = telegramProperties != null && telegramProperties.isWebhookEnabled();
+            boolean inline = inlineCallbacksEnabled();
             String message = inline
                     ? "Confirme a operação /" + command.name() + " em até 5 minutos."
                         + "\nFallback: /confirm " + token
@@ -326,8 +326,13 @@ public class AdminCommandService {
         }
     }
 
+    private boolean inlineCallbacksEnabled() {
+        return telegramProperties != null
+                && (telegramProperties.isPollingEnabled() || telegramProperties.isWebhookEnabled());
+    }
+
     private List<List<Map<String, String>>> keyboardFor(AdminCommand command) {
-        if (telegramProperties == null || !telegramProperties.isWebhookEnabled()) return List.of();
+        if (!inlineCallbacksEnabled()) return List.of();
         long user = command.userId(), chat = command.chatId();
         Instant expiry = clock.instant().plus(CONFIRMATION_TTL);
         String name = command.name();
