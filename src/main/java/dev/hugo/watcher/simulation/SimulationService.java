@@ -173,7 +173,10 @@ public class SimulationService {
                                 metrics.decision(decision.blockedReason(), completed.diagnostic());
                                 if (scopeBlocked == null) metrics.eligibleBatch();
                             }
-                            LOG.info("shadow_decision batch_id={} state={} classification={}", batch.id(), decision.status(), completed.status());
+                            LOG.info("shadow_decision batch_id={} state={} classification={} reason={} diagnostic={}",
+                                    batch.id(), decision.status(), completed.status(),
+                                    dev.hugo.watcher.ai.ShadowMetrics.safeReason(decision.blockedReason()),
+                                    dev.hugo.watcher.ai.ShadowMetrics.safeReason(completed.diagnostic()));
                         }
                     });
         }
