@@ -127,12 +127,12 @@ class AiSimulationAcceptanceTest {
         var mismatch = batch();
         assertEquals("batch_chat_mismatch", ai.classify(new Batch(
                 mismatch.id(), "different@s.whatsapp.net", mismatch.participantJid(), mismatch.messages())).diagnostic());
-        var unclaimed = batch();
-        jdbc.update("update simulation_batches set status='READY' where batch_id=?", unclaimed.id());
-        assertEquals("batch_status_ineligible", ai.classify(unclaimed).diagnostic());
         var expired = batch();
         jdbc.update("update simulation_batches set expires_at=now()-interval '1 second' where batch_id=?", expired.id());
         assertEquals("batch_expired", ai.classify(expired).diagnostic());
+        var unclaimed = batch();
+        jdbc.update("update simulation_batches set status='READY' where batch_id=?", unclaimed.id());
+        assertEquals("batch_status_ineligible", ai.classify(unclaimed).diagnostic());
         assertEquals(0, calls.get());
     }
 
