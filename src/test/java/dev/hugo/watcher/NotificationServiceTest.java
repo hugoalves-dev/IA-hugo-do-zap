@@ -861,15 +861,13 @@ class NotificationServiceTest {
                 """, jid, payload, java.sql.Timestamp.from(lastAt), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
     }
 
-    /** Keep the fixed business-hours scenario while staying within the real DB's seven-day TTL. */
+    /** Use the previous business day at 08:00 São Paulo: inside TTL and behind the DB clock, even after advancing 5h. */
     private static Instant recentWorkdayStart() {
-        Instant wallClock = Instant.now();
-        LocalDate day = LocalDate.ofInstant(wallClock, ZoneOffset.UTC);
-        for (int daysBack = 0; daysBack < 7; daysBack++) {
+        LocalDate day = LocalDate.now(ZoneOffset.UTC);
+        for (int daysBack = 1; daysBack <= 7; daysBack++) {
             LocalDate candidateDay = day.minusDays(daysBack);
             if (candidateDay.getDayOfWeek().getValue() > 5) continue;
-            Instant candidate = candidateDay.atTime(11, 0).toInstant(ZoneOffset.UTC);
-            if (!candidate.isAfter(wallClock)) return candidate;
+            return candidateDay.atTime(11, 0).toInstant(ZoneOffset.UTC);
         }
         throw new IllegalStateException("Unable to find a recent business-day fixture");
     }
