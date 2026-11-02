@@ -2,13 +2,9 @@ package dev.hugo.watcher;
 
 import dev.hugo.watcher.ai.AiClassificationProperties;
 import dev.hugo.watcher.simulation.WatcherSimulationProperties;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Component;
 
 /** Restrictive database latches are deliberately separate from declarative settings. */
-@Component
 public class OperationalState {
     private final OperationalRestrictionDataRepository restrictions;
     private final OperationalRestrictionJdbcRepository legacy;
@@ -17,10 +13,9 @@ public class OperationalState {
     private final WatcherSimulationProperties simulation;
     private final boolean realMode;
 
-    @Autowired
     public OperationalState(OperationalRestrictionDataRepository restrictions, AutomationProperties automation,
                             AiClassificationProperties ai, WatcherSimulationProperties simulation,
-                            @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realMode) {
+                            boolean realMode) {
         this.restrictions = restrictions;
         this.legacy = null;
         this.automation = automation;

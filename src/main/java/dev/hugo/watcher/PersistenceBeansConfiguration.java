@@ -1,0 +1,73 @@
+package dev.hugo.watcher;
+
+import dev.hugo.watcher.ai.AiClassificationProperties;
+import dev.hugo.watcher.policy.AvailabilityOverrideDataRepository;
+import dev.hugo.watcher.policy.ChatPolicyOverrideDataRepository;
+import dev.hugo.watcher.policy.GlobalPolicyDataRepository;
+import dev.hugo.watcher.policy.GlobalPolicyRepository;
+import dev.hugo.watcher.policy.HolidayCalendarQueryRepository;
+import dev.hugo.watcher.policy.HolidayService;
+import dev.hugo.watcher.policy.PersistedPolicyRepository;
+import dev.hugo.watcher.policy.PolicyProfileDataRepository;
+import dev.hugo.watcher.policy.PolicyResolver;
+import dev.hugo.watcher.simulation.WatcherSimulationProperties;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+
+/**
+ * Explicit wiring for services that retain legacy constructors during migration #24.
+ * Avoid selecting a JDBC compatibility constructor by accident.
+ * Remove these factories once each class has only one production constructor.
+ */
+@Configuration(proxyBeanMethods = false)
+class PersistenceBeansConfiguration {
+
+    @Bean
+    GlobalPolicyRepository globalPolicyRepository(AvailabilityOverrideDataRepository availability) {
+        return new GlobalPolicyRepository(availability);
+    }
+
+    @Bean
+    PersistedPolicyRepository persistedPolicyRepository(
+            PolicyResolver resolver,
+            GlobalPolicyRepository globalPolicies,
+            GlobalPolicyDataRepository globals,
+            PolicyProfileDataRepository profiles,
+            ChatPolicyOverrideDataRepository overrides) {
+        return new PersistedPolicyRepository(resolver, globalPolicies, globals, profiles, overrides);
+    }
+
+    @Bean
+    HolidayService holidayService(HolidayCalendarQueryRepository calendar) {
+        return new HolidayService(calendar);
+    }
+
+    @Bean
+    ArchiveModeService archiveModeService(ArchiveModeDataRepository archiveModeData,
+                                          PlatformTransactionManager transactions) {
+        return new ArchiveModeService(archiveModeData, transactions);
+    }
+
+    @Bean
+    ConnectionService connectionService(ConnectionStateRepository states,
+                                        PlatformTransactionManager transactions,
+                                        NotificationOutboxRepository outbox, WatcherProperties properties) {
+        return new ConnectionService(states, transactions, outbox, properties);
+    }
+
+    @Bean
+    OperationalState operationalState(OperationalRestrictionDataRepository restrictions,
+                                      AutomationProperties automation, AiClassificationProperties ai,
+                                      WatcherSimulationProperties simulation,
+                                      @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realMode) {
+        return new OperationalState(restrictions, automation, ai, simulation, realMode);
+    }
+
+    @Bean
+    RetentionService retentionService(RetentionRepository retentionRepository,
+                                      PlatformTransactionManager transactions) {
+        return new RetentionService(retentionRepository, transactions);
+    }
+}

@@ -1,20 +1,16 @@
 package dev.hugo.watcher;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Objects;
 
-@Service
 public class ArchiveModeService {
     private final ArchiveModeDataRepository data;
     private final ArchiveModeJdbcRepository legacy;
     private final TransactionTemplate transactions;
 
-    @Autowired
     public ArchiveModeService(ArchiveModeDataRepository data, PlatformTransactionManager manager) {
         this.data = Objects.requireNonNull(data);
         this.legacy = null;

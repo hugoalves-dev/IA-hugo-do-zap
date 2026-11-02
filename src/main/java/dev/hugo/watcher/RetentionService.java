@@ -1,21 +1,17 @@
 package dev.hugo.watcher;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 
 /** Executes retention as one transaction; SQL remains in the repository layer. */
-@Service
 public class RetentionService {
     private final RetentionRepository repository;
     private final TransactionTemplate transactions;
 
-    @Autowired
     public RetentionService(RetentionRepository repository, PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.transactions = new TransactionTemplate(transactionManager);

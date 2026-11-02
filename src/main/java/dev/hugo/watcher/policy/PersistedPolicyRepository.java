@@ -1,8 +1,6 @@
 package dev.hugo.watcher.policy;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import java.time.DayOfWeek;
@@ -13,7 +11,6 @@ import java.util.ArrayList;
 import java.util.Map;
 
 /** Loads only persisted policy values. Missing holiday attestations never become holidays. */
-@Repository
 public class PersistedPolicyRepository {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate legacyJdbc;
@@ -38,7 +35,6 @@ public class PersistedPolicyRepository {
     }
 
     /** Spring-managed path: all routine policy reads use typed Spring Data JDBC repositories. */
-    @Autowired
     public PersistedPolicyRepository(PolicyResolver resolver,
                                      GlobalPolicyRepository globalPolicies,
                                      GlobalPolicyDataRepository globals,

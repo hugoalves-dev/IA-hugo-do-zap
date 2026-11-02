@@ -1,8 +1,6 @@
 package dev.hugo.watcher.policy;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.ZoneOffset;
@@ -15,12 +13,10 @@ import java.util.Optional;
  * Spring-managed callers use Spring Data JDBC; the JDBC constructor remains for
  * existing explicit legacy construction sites and tests until their own migration.
  */
-@Repository
 public class GlobalPolicyRepository {
     private final JdbcTemplate jdbc;
     private final AvailabilityOverrideDataRepository data;
 
-    @Autowired
     public GlobalPolicyRepository(AvailabilityOverrideDataRepository data) {
         this.data = Objects.requireNonNull(data, "data");
         this.jdbc = null;
