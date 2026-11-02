@@ -15,6 +15,8 @@ import dev.hugo.watcher.notification.IntelligentAlertService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.ZoneId;
 import java.util.UUID;
 import java.sql.Timestamp;
@@ -28,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @Testcontainers(disabledWithoutDocker = true)
 class NotificationServiceTest {
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private static final Instant NOW = Instant.parse("2026-10-26T11:00:00Z");
+    private static final Instant NOW = recentWorkdayStart();
 
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
@@ -190,8 +192,8 @@ class NotificationServiceTest {
         seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "primeira", NOW);
         requestHook.set(ignored -> jdbc.update("""
                 update pending_notification set payload=jsonb_set(jsonb_set(payload, '{messageCount}', '2'::jsonb),
-                    '{lastMessageAt}', to_jsonb('2026-10-26T10:01:00Z'::text)), updated_at=? where chat_jid=?
-                """, java.sql.Timestamp.from(NOW.plusSeconds(1)), jid));
+                    '{lastMessageAt}', to_jsonb(?::text)), updated_at=? where chat_jid=?
+                """, fixture("2026-10-26T10:01:00Z").toString(), java.sql.Timestamp.from(NOW.plusSeconds(1)), jid));
 
         notifications.flush(NOW);
 
@@ -740,7 +742,9 @@ class NotificationServiceTest {
             if (requestCount.get() == 1) {
                 new ChatStateService(jdbc, manager, new ArchiveModeService(jdbc, manager)).clearRead(jid, NOW, java.util.Optional.of(0), java.util.Optional.empty(), java.util.Optional.empty());
                 jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
-                        jid, "{\"messageCount\":1,\"firstMessageAt\":\"2026-10-26T11:00:01Z\",\"lastMessageAt\":\"2026-10-26T11:00:01Z\",\"preview\":\"new preview\"}",
+                        jid, JSON.writeValueAsString(Map.of("messageCount", 1,
+                                "firstMessageAt", NOW.plusSeconds(1).toString(),
+                                "lastMessageAt", NOW.plusSeconds(1).toString(), "preview", "new preview")),
                         java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW.plusSeconds(86400)));
             }
             responseStatus.set(503);
@@ -823,6 +827,8 @@ class NotificationServiceTest {
     }
 
     private void seed(String jid, String name, boolean group, int count, String first, String last, String preview, Instant now) {
+        Instant firstAt = fixture(first);
+        Instant lastAt = fixture(last);
         Instant updated = now.minusSeconds(3600);
         Instant expires = updated.plusSeconds(7 * 86400L);
         Instant previewExpires = expires;
@@ -843,8 +849,8 @@ class NotificationServiceTest {
         }
         String payload = JSON.writeValueAsString(Map.of(
                 "messageCount", count,
-                "firstMessageAt", first,
-                "lastMessageAt", last,
+                "firstMessageAt", firstAt.toString(),
+                "lastMessageAt", lastAt.toString(),
                 "preview", preview,
                 "previewExpiresAt", previewExpires.toString(),
                 "isGroup", group,
@@ -852,7 +858,22 @@ class NotificationServiceTest {
         jdbc.update("""
                 insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
                 values (?, ?::jsonb, ?, ?, ?)
-                """, jid, payload, java.sql.Timestamp.from(Instant.parse(last)), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
+                """, jid, payload, java.sql.Timestamp.from(lastAt), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
+    }
+
+    /** Use the previous business day at 08:00 São Paulo: inside TTL and behind the DB clock, even after advancing 5h. */
+    private static Instant recentWorkdayStart() {
+        LocalDate day = LocalDate.now(ZoneOffset.UTC);
+        for (int daysBack = 1; daysBack <= 7; daysBack++) {
+            LocalDate candidateDay = day.minusDays(daysBack);
+            if (candidateDay.getDayOfWeek().getValue() > 5) continue;
+            return candidateDay.atTime(11, 0).toInstant(ZoneOffset.UTC);
+        }
+        throw new IllegalStateException("Unable to find a recent business-day fixture");
+    }
+
+    private static Instant fixture(String original) {
+        return NOW.plus(Duration.between(Instant.parse("2026-10-26T11:00:00Z"), Instant.parse(original)));
     }
 
     private static final class MutableClock extends Clock {
