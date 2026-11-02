@@ -157,4 +157,20 @@ class AvailabilityOverrideDataRepositoryTest {
         assertTrue(matches.stream().allMatch(HolidayEntry::hasManualAttestation));
         assertEquals(validatedAt.toInstant(), matches.getFirst().validatedAt());
     }
+
+    @Autowired dev.hugo.watcher.ArchiveModeService archiveModes;
+    @Autowired dev.hugo.watcher.ArchiveModeDataRepository archiveData;
+
+    @Test void archiveModeUsesTypedRepositoryAndRetainsSingletonOnUpdate() {
+        jdbc.update("update archive_monitor_settings set mode='ALL' where singleton_id=1");
+        try {
+            assertEquals("ALL", archiveData.readMode());
+            assertEquals(dev.hugo.watcher.ArchiveMode.UNARCHIVED_ONLY,
+                    archiveModes.setMode(dev.hugo.watcher.ArchiveMode.UNARCHIVED_ONLY));
+            assertEquals("UNARCHIVED_ONLY", archiveData.readMode());
+            assertEquals(1, jdbc.queryForObject("select count(*) from archive_monitor_settings", Integer.class));
+        } finally {
+            jdbc.update("update archive_monitor_settings set mode='ALL' where singleton_id=1");
+        }
+    }
 }
