@@ -16,38 +16,72 @@ import java.util.Map;
 @Repository
 public class PersistedPolicyRepository {
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private final JdbcTemplate jdbc;
+    private final JdbcTemplate legacyJdbc;
     private final PolicyResolver resolver;
     private final GlobalPolicyRepository globalPolicies;
+    private final GlobalPolicyDataRepository globals;
+    private final PolicyProfileDataRepository profiles;
+    private final ChatPolicyOverrideDataRepository overrides;
 
-    /** Legacy construction path retained until all explicitly created repositories migrate. */
+    /** Existing standalone tests may still use explicit JDBC construction. */
     public PersistedPolicyRepository(JdbcTemplate jdbc, PolicyResolver resolver) {
         this(jdbc, resolver, new GlobalPolicyRepository(jdbc));
     }
 
-    @Autowired
     public PersistedPolicyRepository(JdbcTemplate jdbc, PolicyResolver resolver, GlobalPolicyRepository globalPolicies) {
-        this.jdbc = jdbc;
+        this.legacyJdbc = jdbc;
         this.resolver = resolver;
         this.globalPolicies = globalPolicies;
+        this.globals = null;
+        this.profiles = null;
+        this.overrides = null;
     }
+
+    /** Spring-managed path: all routine policy reads use typed Spring Data JDBC repositories. */
+    @Autowired
+    public PersistedPolicyRepository(PolicyResolver resolver,
+                                     GlobalPolicyRepository globalPolicies,
+                                     GlobalPolicyDataRepository globals,
+                                     PolicyProfileDataRepository profiles,
+                                     ChatPolicyOverrideDataRepository overrides) {
+        this.legacyJdbc = null;
+        this.resolver = resolver;
+        this.globalPolicies = globalPolicies;
+        this.globals = globals;
+        this.profiles = profiles;
+        this.overrides = overrides;
+    }
+
     public EffectivePolicy forChat(String chat, String fallbackProfile) {
-        var globals = jdbc.query("select fields::text from global_policy where singleton_id=1", (rs, row) -> rs.getString(1));
-        if (globals.isEmpty()) throw new IllegalStateException("global policy missing");
-        var overrides = jdbc.query("""
-                select distinct profile_name,fields::text from chat_policy_overrides
-                 where chat_jid=? or chat_jid in (select alias from identity_aliases where canonical_identity=?)
-                """, (rs, row) -> new Override(rs.getString(1), rs.getString(2)), chat, chat);
-        // Conflicting explicit policies survive an alias merge; do not silently choose one or widen permissions.
-        if (overrides.size() > 1) return new EffectivePolicy(Map.of(), null);
-        String profile = overrides.isEmpty() ? fallbackProfile : overrides.getFirst().profile();
-        var profiles = jdbc.query("select fields::text from policy_profiles where profile_name=?", (rs, row) -> rs.getString(1), profile);
-        if (profiles.isEmpty()) throw new IllegalStateException("policy profile missing");
-        return resolver.resolve(new GlobalPolicy(parse(globals.getFirst()),
-                globalPolicies.temporaryAvailabilityOverride().orElse(null)),
-                new Profile(profile, parse(profiles.getFirst())),
-                overrides.isEmpty() ? ChatOverride.empty() : new ChatOverride(parse(overrides.getFirst().fields())));
+        var globalFields = globals == null
+                ? legacyJdbc.query("select fields::text from global_policy where singleton_id=1",
+                        (rs, row) -> rs.getString(1))
+                : globals.loadFields().stream().toList();
+        if (globalFields.isEmpty()) throw new IllegalStateException("global policy missing");
+
+        java.util.List<Override> explicit = overrides == null
+                ? legacyJdbc.query("""
+                        select distinct profile_name,fields::text from chat_policy_overrides
+                         where chat_jid=? or chat_jid in (select alias from identity_aliases where canonical_identity=?)
+                        """, (rs, row) -> new Override(rs.getString(1), rs.getString(2)), chat, chat)
+                : overrides.forCanonicalChat(chat, chat).stream()
+                        .map(row -> new Override(row.profile(), row.fields())).toList();
+
+        // DISTINCT ignores chat_jid; conflicting policies across aliases must deny access.
+        if (explicit.size() > 1) return new EffectivePolicy(Map.of(), null);
+        String profile = explicit.isEmpty() ? fallbackProfile : explicit.getFirst().profile();
+        var profileFields = profiles == null
+                ? legacyJdbc.query("select fields::text from policy_profiles where profile_name=?",
+                        (rs, row) -> rs.getString(1), profile)
+                : profiles.loadFields(profile).stream().toList();
+        if (profileFields.isEmpty()) throw new IllegalStateException("policy profile missing");
+
+        return resolver.resolve(new GlobalPolicy(parse(globalFields.getFirst()),
+                        globalPolicies.temporaryAvailabilityOverride().orElse(null)),
+                new Profile(profile, parse(profileFields.getFirst())),
+                explicit.isEmpty() ? ChatOverride.empty() : new ChatOverride(parse(explicit.getFirst().fields())));
     }
+
     private static Map<PolicyField,Object> parse(String raw) {
         JsonNode fields = JSON.readTree(raw);
         if (!fields.isObject()) throw new IllegalArgumentException("policy fields must be an object");

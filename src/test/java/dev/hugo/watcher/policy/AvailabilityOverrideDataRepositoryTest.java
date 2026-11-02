@@ -43,6 +43,9 @@ class AvailabilityOverrideDataRepositoryTest {
 
     @BeforeEach void clear() {
         jdbc.update("delete from availability_overrides");
+        jdbc.update("delete from chat_policy_overrides");
+        jdbc.update("delete from identity_aliases");
+        jdbc.update("delete from holiday_calendar");
     }
 
     @Test void readsExistingFlywayRowWithoutSchemaChanges() {
@@ -95,5 +98,63 @@ class AvailabilityOverrideDataRepositoryTest {
         assertThrows(DataIntegrityViolationException.class,
                 () -> springData.upsert("AVAILABLE", end, start));
         assertTrue(policy.temporaryAvailabilityOverride().isEmpty());
+    }
+
+    @Autowired HolidayService holidays;
+    @Autowired GlobalPolicyDataRepository globalData;
+    @Autowired PolicyProfileDataRepository profileData;
+    @Autowired ChatPolicyOverrideDataRepository overrideData;
+
+    @Test void managedPoliciesReadJsonbAndRespectExplicitOverrides() {
+        assertTrue(globalData.loadFields().orElseThrow().contains("includeOptionalHolidays"));
+        assertTrue(profileData.loadFields("WORK_ONLY").orElseThrow().contains("WORK_WINDOW"));
+
+        jdbc.update("""
+                insert into chat_policy_overrides(chat_jid,profile_name,fields)
+                values ('issue24-policy@lid','WORK_ONLY','{"includeOptionalHolidays":true}'::jsonb)
+                """);
+        EffectivePolicy effective = persistedPolicies.forChat("issue24-policy@lid", "ANYTIME");
+        assertEquals(ScheduleMode.WORK_WINDOW, effective.value(PolicyField.MODE));
+        assertEquals(PolicySource.PROFILE, effective.origin(PolicyField.MODE));
+        assertEquals(true, effective.value(PolicyField.INCLUDE_OPTIONAL_HOLIDAYS));
+        assertEquals(PolicySource.CHAT_OVERRIDE, effective.origin(PolicyField.INCLUDE_OPTIONAL_HOLIDAYS));
+    }
+
+    @Test void conflictingAliasPoliciesFailClosedButEqualAliasesRemainEquivalent() {
+        String canonical = "issue24-canonical@lid";
+        String first = "issue24-first@s.whatsapp.net";
+        String second = "issue24-second@s.whatsapp.net";
+        jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?),(?,?)",
+                first, canonical, second, canonical);
+        jdbc.update("""
+                insert into chat_policy_overrides(chat_jid,profile_name,fields)
+                values (?, 'ANYTIME', '{}'::jsonb), (?, 'WORK_ONLY', '{}'::jsonb)
+                """, first, second);
+
+        assertTrue(persistedPolicies.forChat(canonical, "ANYTIME").fields().isEmpty(),
+                "different policy values on identity aliases must fail closed");
+
+        jdbc.update("update chat_policy_overrides set profile_name='ANYTIME' where chat_jid=?", second);
+        EffectivePolicy resolved = persistedPolicies.forChat(canonical, "WORK_ONLY");
+        assertEquals(ScheduleMode.ANYTIME, resolved.value(PolicyField.MODE));
+        assertEquals(1, overrideData.forCanonicalChat(canonical, canonical).size(),
+                "same policies on two aliases are one DISTINCT policy");
+    }
+
+    @Test void holidayProjectionPreservesAttestationAndLocalJurisdictionPriority() {
+        java.time.LocalDate day = java.time.LocalDate.of(2026, 12, 31);
+        java.sql.Timestamp validatedAt = java.sql.Timestamp.from(Instant.parse("2026-11-02T12:00:00Z"));
+        jdbc.update("""
+                insert into holiday_calendar(local_date,jurisdiction,name,source,calendar_year,validation_status,
+                                             optional,validated_by,validated_at)
+                values (?,'SP','State','https://official.example/sp',2026,'VALIDATED',false,'test-maintainer',?),
+                       (?,'LINS','Local','https://official.example/lins',2026,'VALIDATED',false,'test-maintainer',?)
+                """, day, validatedAt, day, validatedAt);
+        var matches = holidays.on(day);
+        assertEquals(2, matches.size());
+        assertEquals("LINS", matches.getFirst().jurisdiction());
+        assertEquals("SP", matches.get(1).jurisdiction());
+        assertTrue(matches.stream().allMatch(HolidayEntry::hasManualAttestation));
+        assertEquals(validatedAt.toInstant(), matches.getFirst().validatedAt());
     }
 }
