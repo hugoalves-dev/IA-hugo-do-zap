@@ -106,4 +106,13 @@ class PersistenceBeansConfiguration {
                 debounce, simulationProperties, realModeEnabled);
     }
 
+    @Bean
+    EvolutionJobProcessor evolutionJobProcessor(EvolutionJobEnvelopeRepository envelopes,
+                                                JobRepository jobs, EvolutionEventMapper mapper,
+                                                MessageService messages, IdentityService identities,
+                                                Clock clock, PlatformTransactionManager transactions) {
+        return new EvolutionJobProcessor(envelopes, jobs, mapper, messages, identities, clock, transactions);
+    }
+
+
 }

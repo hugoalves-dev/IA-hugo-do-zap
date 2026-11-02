@@ -2,7 +2,6 @@ package dev.hugo.watcher;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
@@ -17,7 +16,6 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Consumes durable webhook jobs; unknown event metadata is quarantined rather than inferred. */
-@Component
 public class EvolutionJobProcessor {
     private static final System.Logger LOG = System.getLogger(EvolutionJobProcessor.class.getName());
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -29,7 +27,7 @@ public class EvolutionJobProcessor {
             "locationMessage", "liveLocationMessage", "ephemeralMessage",
             "viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension",
             "documentWithCaptionMessage");
-    private final JdbcTemplate jdbc;
+    private final EvolutionJobEnvelopeRepository envelopes;
     private final TransactionTemplate transactions;
     private final JobRepository jobs;
     private final EvolutionEventMapper mapper;
@@ -39,12 +37,20 @@ public class EvolutionJobProcessor {
 
     public EvolutionJobProcessor(JdbcTemplate jdbc, JobRepository jobs, EvolutionEventMapper mapper,
                                  MessageService messages, Clock clock, PlatformTransactionManager transactionManager) {
-        this.jdbc = jdbc;
+        this(new EvolutionJobEnvelopeRepository(jdbc), jobs, mapper, messages,
+                new IdentityService(jdbc, transactionManager), clock, transactionManager);
+    }
+
+    public EvolutionJobProcessor(EvolutionJobEnvelopeRepository envelopes, JobRepository jobs,
+                                 EvolutionEventMapper mapper, MessageService messages,
+                                 IdentityService identities, Clock clock,
+                                 PlatformTransactionManager transactionManager) {
+        this.envelopes = envelopes;
         this.transactions = new TransactionTemplate(transactionManager);
         this.jobs = jobs;
         this.mapper = mapper;
         this.messages = messages;
-        this.identities = new IdentityService(jdbc, transactionManager);
+        this.identities = identities;
         this.clock = clock;
     }
 
@@ -81,26 +87,13 @@ public class EvolutionJobProcessor {
 
     @SuppressWarnings("unchecked")
     private ProcessResult processAndComplete(Job job, Instant now) {
-        List<String> rows = jdbc.query("""
-                select inbox.payload::text
-                  from processing_jobs job
-                  join inbox_events inbox on inbox.id=job.inbox_event_id
-                 where job.job_uuid=? and job.lease_token=? and job.status='PROCESSING'
-                 for update of job, inbox
-                """, (rs, row) -> rs.getString(1), job.id(), job.leaseToken());
+        List<String> rows = envelopes.lockEnvelope(job.id(), job.leaseToken());
         if (rows.isEmpty()) return ProcessResult.STALE_LEASE;
-        List<Validity> validity = jdbc.query("""
-                select job.lease_expires_at > clock_timestamp() as lease_valid,
-                       inbox.expires_at > clock_timestamp() as inbox_valid
-                  from processing_jobs job
-                  join inbox_events inbox on inbox.id=job.inbox_event_id
-                 where job.job_uuid=? and job.lease_token=? and job.status='PROCESSING'
-                """, (rs, row) -> new Validity(rs.getBoolean("lease_valid"), rs.getBoolean("inbox_valid")),
-                job.id(), job.leaseToken());
+        var validity = envelopes.checkLeaseAndInbox(job.id(), job.leaseToken());
         if (validity.isEmpty() || !validity.getFirst().leaseValid()) return ProcessResult.STALE_LEASE;
         if (!validity.getFirst().inboxValid()) {
             jobs.expire(job.id(), job.leaseToken());
-            jdbc.update("update inbox_events set payload='{}'::jsonb where id=?", job.inboxEventId());
+            envelopes.scrubExpiredInbox(job.inboxEventId());
             return ProcessResult.EXPIRED;
         }
 
@@ -208,10 +201,9 @@ public class EvolutionJobProcessor {
         return jid != null && jid.length() <= 255
                 && jid.matches("(?i)^(?:[1-9][0-9]{7,14}(?::[0-9]+)?@s\\.whatsapp\\.net|[0-9]+@lid)$");
     }
-    private record Validity(boolean leaseValid, boolean inboxValid) { }
 
     private void quarantine(String externalId, String reason, Instant now) {
-        QuarantineWriter.write(jdbc, "WEBHOOK", externalId, reason, now);
+        envelopes.quarantine(externalId, reason, now);
     }
 
     private static String text(JsonNode node) {
