@@ -25,18 +25,21 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Telegram webhook ingress: Spring Data JDBC `TelegramWebhookDataRepository.insertIfAbsent`, preserving atomic `ON CONFLICT` (CI #41499750493, 472 tests green)
 - Telegram webhook worker: `TelegramWebhookInboxRepository` encapsulates `FOR UPDATE SKIP LOCKED`, failure backoff, completion and retention; ACK only after commit (CI #41499750493)
-- Telegram admin polling: `TelegramAdminPollingRepository` keeps the session-scoped advisory lock and durable offset mutations, with handler+offset transaction unchanged (latest CI pending)
+- Telegram admin polling: `TelegramAdminPollingRepository` keeps the session-scoped advisory lock and durable offset mutations, with handler+offset transaction unchanged (CI #41501108752, 474 tests green)
 - Telegram confirmation tokens: `CallbackTokenLedgerRepository` encapsulates `UPDATE ... RETURNING`, hash-only storage and exactly-once consumption (CI #41499750493)
 - Real-action eligibility: Spring Data JDBC `DecisionEligibilityDataRepository` preserves production-mode, AI-availability and confidence checks, defaulting to deny (CI #41499750493)
 - Simulation scheduler due-time metric: Spring Data JDBC `SimulationBatchDueRepository`; observability failures still do not block processing (CI #41500191945 green)
+
+- Evolution webhook processing: `EvolutionJobEnvelopeRepository` owns locked envelope read, post-lock lease/expiry validation, expired payload scrubbing, and quarantine. `EvolutionJobProcessor` remains the transaction and message-processing coordinator ([CI #41506619110](https://github.com/hugoalves-dev/IA-hugo-do-zap/actions/runs/41506619110): 475 tests green)
+- Notification queue projection: `NotificationQueueQueryRepository` owns due-notification SQL, blocked-group deletion and connection alert generation lookup. Formatting, filtering and outbox transitions stay in `NotificationService` ([CI #41507350751](https://github.com/hugoalves-dev/IA-hugo-do-zap/actions/runs/41507350751): pending)
 
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |
 | --- | --- | --- |
 | Identity and contact | `IdentityService`, `LegacyImportService` | Canonical aliases, LID/PN/JID merge, contact-name precedence, collision rejection |
-| Ingest/job/outbox | `JdbcInboxRepository`, `JdbcJobRepository`, `NotificationOutboxRepository`, `EvolutionJobProcessor` | Lease/claim, `SKIP LOCKED`, idempotency, restart, ordered processing |
-| Notification delivery | `NotificationService`, `IntelligentAlertService`, `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionDeliveryCoordinator`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
+| Ingest/job/outbox | `JdbcInboxRepository`, `JdbcJobRepository`, `NotificationOutboxRepository` | Lease/claim, `SKIP LOCKED`, idempotency, restart, ordered processing |
+| Notification delivery | `IntelligentAlertService`, `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionDeliveryCoordinator`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
 | Simulation and AI | `DebounceService`, `SimulationService`, `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
 | Telegram admin | `AdminCommandService`, `ShadowDecisionQuery` | Authorize before action, durable inbox, offsets, callback replay prevention |
 | Other | `QuarantineWriter`, remaining historical JDBC compatibility facades | Bounded retention, no sensitive payload leaks |
