@@ -182,8 +182,10 @@ class AiSimulationAcceptanceTest {
         var ai = classifier(true, fake());
         var current = batch();
         flags.setKillSwitchEnabled(true);
+        ai.configureOperationalState(state(false)); // In real-only mode the emergency switch blocks classification.
         assertEquals("kill_switch_enabled", ai.classify(current).diagnostic());
         flags.setKillSwitchEnabled(false);
+        ai.configureOperationalState(state()); // Restore independently authorized Shadow Mode.
 
         jdbc.update("delete from chat_snapshot where chat_jid=?", chat);
         jdbc.update("update archive_monitor_settings set mode='ARCHIVED_ONLY'");
@@ -822,9 +824,12 @@ class AiSimulationAcceptanceTest {
     }
     private int countActions() { return jdbc.queryForObject("select count(*) from whatsapp_action_outbox",Integer.class); }
     private int countAlerts() { return jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'",Integer.class); }
-    private dev.hugo.watcher.OperationalState state() {
+    private dev.hugo.watcher.OperationalState state() { return state(true); }
+    private dev.hugo.watcher.OperationalState state(boolean shadowEnabled) {
         var config = new AiClassificationProperties(true,null,null,"key","model",10,Duration.ofSeconds(1),"owner@s.whatsapp.net",true,false,true,false);
-        return new dev.hugo.watcher.OperationalState(jdbc,flags,config,new WatcherSimulationProperties(),true);
+        var simulation = new WatcherSimulationProperties();
+        simulation.setEnabled(shadowEnabled);
+        return new dev.hugo.watcher.OperationalState(jdbc,flags,config,simulation,true);
     }
     private SimulationService prepared(SimulationService service) { service.configureOperationalState(state()); return service; }
     private dev.hugo.watcher.notification.DecisionRuntimeGate gate() {

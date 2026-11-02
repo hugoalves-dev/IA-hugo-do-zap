@@ -37,7 +37,7 @@ class ConnectionServiceTest {
     }
 
     @Test void aBriefDisconnectThatRecoversDuringGraceDoesNotQueueAnAlert() {
-        Instant openedAt = Instant.parse("2026-10-26T10:00:00Z");
+        Instant openedAt = Instant.now().minus(Duration.ofHours(1));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, openedAt, "open", null));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, openedAt.plusSeconds(1), "connection_lost", 503));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, openedAt.plusSeconds(20), "open", null));
@@ -47,7 +47,7 @@ class ConnectionServiceTest {
     }
 
     @Test void firstRecoverableCloseStartsGraceAndDuplicateCloseDoesNotRestartIt() {
-        Instant startedAt = Instant.parse("2026-10-26T10:00:00Z");
+        Instant startedAt = Instant.now().minus(Duration.ofHours(1));
 
         connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, startedAt, "connection_lost", 408));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, startedAt.plusSeconds(20), "connection_lost", 408));
@@ -63,7 +63,7 @@ class ConnectionServiceTest {
     }
 
     @Test void firstRecoverableCloseCanReconnectBeforeGraceWithoutAlert() {
-        Instant startedAt = Instant.parse("2026-10-26T10:00:00Z");
+        Instant startedAt = Instant.now().minus(Duration.ofHours(1));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, startedAt, "connection_lost", 408));
         connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, startedAt.plusSeconds(20), "open", 200));
 
@@ -73,7 +73,7 @@ class ConnectionServiceTest {
     }
 
     @Test void deviceRemovedQueuesOneImmediatePairingAlertPerOutage() {
-        Instant openedAt = Instant.parse("2026-10-26T10:00:00Z");
+        Instant openedAt = Instant.now().minus(Duration.ofHours(1));
         var removed = new ConnectionEvent(ConnectionEvent.State.DEVICE_REMOVED, openedAt, "device_removed", 401);
 
         connections.onState(removed);
@@ -85,7 +85,7 @@ class ConnectionServiceTest {
 
     @Test void reconnectCancelsOnlyPendingConnectionAlerts() {
         var outbox = new NotificationOutboxRepository(jdbc, manager);
-        Instant created = Instant.parse("2026-10-26T10:00:00Z");
+        Instant created = Instant.now().minus(Duration.ofHours(1));
         outbox.enqueue("whatsapp_connection_lost:3", "whatsapp_connection_lost", "{\"eventType\":\"whatsapp_connection_lost\"}",
                 "[]", created, created.plusSeconds(7 * 86_400L));
         outbox.enqueue("unrelated:1", "archived_messages", "{\"eventType\":\"archived_messages\"}",
@@ -100,7 +100,7 @@ class ConnectionServiceTest {
 
     @Test void reconnectDoesNotChangeAnActionWithAnActiveLease() {
         var outbox = new NotificationOutboxRepository(jdbc, manager);
-        Instant created = Instant.parse("2026-10-26T10:00:00Z");
+        Instant created = Instant.now().minus(Duration.ofHours(1));
         outbox.enqueue("whatsapp_connection_lost:4", "whatsapp_connection_lost", "{\"eventType\":\"whatsapp_connection_lost\"}",
                 "[]", created, created.plusSeconds(7 * 86_400L));
         OutboxAction claimed = outbox.claimNext(created);

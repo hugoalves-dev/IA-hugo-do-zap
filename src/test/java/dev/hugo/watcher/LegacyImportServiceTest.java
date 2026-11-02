@@ -33,10 +33,11 @@ class LegacyImportServiceTest {
             s.execute("create table contact_identity(canonical_jid text primary key,lid_jid text unique,phone_jid text unique,username text,display_name text,display_name_source text,updated_at text not null)");
             s.execute("create table chat_state(jid text primary key,is_group integer not null,notification_policy text not null)");
             s.execute("create table pending_notification(jid text primary key,message_count integer not null,first_message_at text not null,last_message_at text not null,last_message_preview text)");
-            String old = "2026-10-26T10:00:00Z", newer = "2026-10-26T10:03:00Z";
-            s.execute("insert into contact_identity values('canon@lid','canon@lid','phone@s.whatsapp.net',null,null,'legacy','2026-10-26T10:04:00Z')");
+            Instant base = Instant.now().minusSeconds(600);
+            String old = base.toString(), newer = base.plusSeconds(180).toString();
+            s.execute("insert into contact_identity values('canon@lid','canon@lid','phone@s.whatsapp.net',null,null,'legacy','"+base.plusSeconds(240)+"')");
             s.execute("insert into chat_state values('canon@lid',0,'ANYTIME'),('phone@s.whatsapp.net',0,'ANYTIME')");
-            s.execute("insert into pending_notification values('phone@s.whatsapp.net',2,'"+old+"','2026-10-26T10:01:00Z','antiga'),('canon@lid',3,'2026-10-26T10:02:00Z','"+newer+"','nova')");
+            s.execute("insert into pending_notification values('phone@s.whatsapp.net',2,'"+old+"','"+base.plusSeconds(60)+"','antiga'),('canon@lid',3,'"+base.plusSeconds(120)+"','"+newer+"','nova')");
         }
         ImportReport result = importer(jdbc).importSnapshot(snapshot, ImportMode.APPLY);
         assertTrue(result.conflicts().isEmpty());
