@@ -497,7 +497,8 @@ class AiSimulationAcceptanceTest {
                 Optional.empty(), false, "notify", false, mention(), clock.instant().minusSeconds(60));
         assertEquals(dev.hugo.watcher.MessageService.Acceptance.ACCEPTED, messages.accept(incoming));
         jdbc.update("update operational_restrictions set simulation_paused=true");
-        var scheduler = new SimulationScheduler(debounce, producingService(true, critical()), clock, jdbc, true);
+        var scheduler = new SimulationScheduler(debounce, producingService(true, critical()), clock,
+                org.mockito.Mockito.mock(SimulationBatchDueRepository.class), true);
 
         scheduler.processReady();
 
@@ -518,7 +519,8 @@ class AiSimulationAcceptanceTest {
                 Optional.empty(), false, "notify", false, mention(), clock.instant().minusSeconds(60));
         assertEquals(dev.hugo.watcher.MessageService.Acceptance.ACCEPTED, messages.accept(incoming));
 
-        var scheduler = new SimulationScheduler(debounce, producingService(false, critical()), clock, jdbc);
+        var scheduler = new SimulationScheduler(debounce, producingService(false, critical()), clock,
+                org.mockito.Mockito.mock(SimulationBatchDueRepository.class), false);
         scheduler.configureOperationalState(state()); scheduler.processReady();
 
         assertEquals(0, jdbc.queryForObject("select count(*) from processed_message where shadow_payload is not null", Integer.class));

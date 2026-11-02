@@ -40,6 +40,7 @@ class AvailabilityOverrideDataRepositoryTest {
     @Autowired AvailabilityOverrideDataRepository springData;
     @Autowired dev.hugo.watcher.telegram.TelegramWebhookDataRepository webhookData;
     @Autowired dev.hugo.watcher.notification.DecisionEligibilityDataRepository eligibilityData;
+    @Autowired dev.hugo.watcher.simulation.SimulationBatchDueRepository dueData;
     @Autowired GlobalPolicyRepository policy;
     @Autowired PersistedPolicyRepository persistedPolicies;
 
@@ -209,5 +210,9 @@ class AvailabilityOverrideDataRepositoryTest {
 
     @Test void unrecognizedDecisionFailsClosedInSpringDataEligibilityQuery() {
         assertFalse(eligibilityData.isEligible(java.util.UUID.randomUUID()));
+    }
+
+    @Test void missingSimulationBatchHasNoDueTime() {
+        assertTrue(dueData.findDueAt(java.util.UUID.randomUUID()).isEmpty());
     }
 }

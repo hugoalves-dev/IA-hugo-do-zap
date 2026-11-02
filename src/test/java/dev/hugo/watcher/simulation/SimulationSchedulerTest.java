@@ -48,7 +48,7 @@ class SimulationSchedulerTest {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(anyString(), eq(Boolean.class))).thenReturn(false);
         DebounceService debounce = mock(DebounceService.class);
-        new SimulationScheduler(debounce, mock(SimulationService.class), Clock.systemUTC(), jdbc).processReady();
+        new SimulationScheduler(debounce, mock(SimulationService.class), Clock.systemUTC(), mock(SimulationBatchDueRepository.class), false).processReady();
         verifyNoInteractions(debounce);
     }
 
@@ -60,5 +60,6 @@ class SimulationSchedulerTest {
         @Bean Clock clock() { return Clock.systemUTC(); }
         @Bean dev.hugo.watcher.OperationalState operationalState() { return mock(dev.hugo.watcher.OperationalState.class); }
         @Bean JdbcTemplate jdbcTemplate() { return mock(JdbcTemplate.class); }
+        @Bean SimulationBatchDueRepository dueRepository() { return mock(SimulationBatchDueRepository.class); }
     }
 }
