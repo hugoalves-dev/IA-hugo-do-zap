@@ -39,6 +39,7 @@ class AvailabilityOverrideDataRepositoryTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired AvailabilityOverrideDataRepository springData;
     @Autowired GlobalPolicyRepository policy;
+    @Autowired PersistedPolicyRepository persistedPolicies;
 
     @BeforeEach void clear() {
         jdbc.update("delete from availability_overrides");
@@ -72,6 +73,18 @@ class AvailabilityOverrideDataRepositoryTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from availability_overrides", Integer.class));
         assertEquals(AvailabilityState.AVAILABLE, policy.temporaryAvailabilityOverride().orElseThrow().state());
         assertEquals(start.plusSeconds(60), policy.temporaryAvailabilityOverride().orElseThrow().startsAt());
+    }
+
+
+    @Test void managedPolicyResolverUsesTheSpringDataAvailabilityOverride() {
+        Instant start = Instant.parse("2026-11-02T12:00:00Z");
+        Instant end = Instant.parse("2026-11-02T14:00:00Z");
+        policy.saveTemporaryAvailabilityOverride(new TemporaryAvailabilityOverride(
+                AvailabilityState.UNAVAILABLE, start, end));
+
+        EffectivePolicy resolved = persistedPolicies.forChat("phase-1-fixture@s.whatsapp.net", "ANYTIME");
+        assertEquals(new TemporaryAvailabilityOverride(AvailabilityState.UNAVAILABLE, start, end),
+                resolved.temporaryAvailability());
     }
 
     @Test void databaseRejectsInvalidStateAndTimeRange() {

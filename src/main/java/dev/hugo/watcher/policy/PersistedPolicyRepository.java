@@ -1,5 +1,6 @@
 package dev.hugo.watcher.policy;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.JsonNode;
@@ -17,9 +18,18 @@ public class PersistedPolicyRepository {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
     private final PolicyResolver resolver;
+    private final GlobalPolicyRepository globalPolicies;
+
+    /** Legacy construction path retained until all explicitly created repositories migrate. */
     public PersistedPolicyRepository(JdbcTemplate jdbc, PolicyResolver resolver) {
+        this(jdbc, resolver, new GlobalPolicyRepository(jdbc));
+    }
+
+    @Autowired
+    public PersistedPolicyRepository(JdbcTemplate jdbc, PolicyResolver resolver, GlobalPolicyRepository globalPolicies) {
         this.jdbc = jdbc;
         this.resolver = resolver;
+        this.globalPolicies = globalPolicies;
     }
     public EffectivePolicy forChat(String chat, String fallbackProfile) {
         var globals = jdbc.query("select fields::text from global_policy where singleton_id=1", (rs, row) -> rs.getString(1));
@@ -34,7 +44,7 @@ public class PersistedPolicyRepository {
         var profiles = jdbc.query("select fields::text from policy_profiles where profile_name=?", (rs, row) -> rs.getString(1), profile);
         if (profiles.isEmpty()) throw new IllegalStateException("policy profile missing");
         return resolver.resolve(new GlobalPolicy(parse(globals.getFirst()),
-                new GlobalPolicyRepository(jdbc).temporaryAvailabilityOverride().orElse(null)),
+                globalPolicies.temporaryAvailabilityOverride().orElse(null)),
                 new Profile(profile, parse(profiles.getFirst())),
                 overrides.isEmpty() ? ChatOverride.empty() : new ChatOverride(parse(overrides.getFirst().fields())));
     }
