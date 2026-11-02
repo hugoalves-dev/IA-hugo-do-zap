@@ -818,7 +818,8 @@ class AiSimulationAcceptanceTest {
         alerts.configureRuntimeGate(gate());
         var actions = new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
         actions.configureRuntimeGate(gate());
-        var producer = new dev.hugo.watcher.notification.DecisionActionProducer(jdbc, alerts, actions, real);
+        var producer = new dev.hugo.watcher.notification.DecisionActionProducer(
+                new dev.hugo.watcher.notification.DecisionEligibilityJdbcReader(jdbc), alerts, actions, real);
         return prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
                 new PersistedPolicyRepository(jdbc,new PolicyResolver()),new AvailabilityService(new HolidayService(jdbc)),new WatcherProperties(),classifier(true,transport),producer));
     }

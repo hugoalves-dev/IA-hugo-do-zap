@@ -89,7 +89,7 @@ class TelegramUpdatePollingServiceTest {
     @Test void invalidConfirmedBudgetCommandIsAuditedAndDoesNotBlockLaterPollingUpdates() {
         Clock clock = Clock.systemUTC();
         var manager = new DataSourceTransactionManager(source);
-        var callbacks = new CallbackTokenService(jdbc, clock);
+        var callbacks = new CallbackTokenService(new CallbackTokenLedgerRepository(jdbc), clock);
         var outbox = new NotificationOutboxRepository(jdbc, manager);
         var commands = new AdminCommandService(jdbc, manager, callbacks, outbox, clock);
         var handler = new TelegramUpdateHandler(1001, 2002, commands, callbacks);
@@ -123,7 +123,7 @@ class TelegramUpdatePollingServiceTest {
     @Test void invalidDatesAreRejectedAndDoNotBlockEmergency() {
         Clock clock = Clock.systemUTC();
         var manager = new DataSourceTransactionManager(source);
-        var callbacks = new CallbackTokenService(jdbc, clock);
+        var callbacks = new CallbackTokenService(new CallbackTokenLedgerRepository(jdbc), clock);
         var commands = new AdminCommandService(jdbc, manager, callbacks, new NotificationOutboxRepository(jdbc, manager), clock);
         var handler = new TelegramUpdateHandler(1001, 2002, commands, callbacks);
         jdbc.update("delete from availability_overrides");

@@ -39,6 +39,7 @@ class AvailabilityOverrideDataRepositoryTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired AvailabilityOverrideDataRepository springData;
     @Autowired dev.hugo.watcher.telegram.TelegramWebhookDataRepository webhookData;
+    @Autowired dev.hugo.watcher.notification.DecisionEligibilityDataRepository eligibilityData;
     @Autowired GlobalPolicyRepository policy;
     @Autowired PersistedPolicyRepository persistedPolicies;
 
@@ -204,5 +205,9 @@ class AvailabilityOverrideDataRepositoryTest {
                 String.class, 424242L));
         assertEquals(1, jdbc.queryForObject(
                 "select count(*) from telegram_webhook_inbox where update_id=?", Integer.class, 424242L));
+    }
+
+    @Test void unrecognizedDecisionFailsClosedInSpringDataEligibilityQuery() {
+        assertFalse(eligibilityData.isEligible(java.util.UUID.randomUUID()));
     }
 }
