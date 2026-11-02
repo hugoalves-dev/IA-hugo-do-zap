@@ -25,9 +25,10 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Telegram webhook ingress: Spring Data JDBC `TelegramWebhookDataRepository.insertIfAbsent`, preserving atomic `ON CONFLICT` (CI #41499750493, 472 tests green)
 - Telegram webhook worker: `TelegramWebhookInboxRepository` encapsulates `FOR UPDATE SKIP LOCKED`, failure backoff, completion and retention; ACK only after commit (CI #41499750493)
+- Telegram admin polling: `TelegramAdminPollingRepository` keeps the session-scoped advisory lock and durable offset mutations, with handler+offset transaction unchanged (latest CI pending)
 - Telegram confirmation tokens: `CallbackTokenLedgerRepository` encapsulates `UPDATE ... RETURNING`, hash-only storage and exactly-once consumption (CI #41499750493)
-- Real-action eligibility: Spring Data JDBC `DecisionEligibilityDataRepository` preserves production-mode, consent-related and confidence gates, defaulting to deny (CI #41499750493)
-- Simulation scheduler due-time metric: Spring Data JDBC `SimulationBatchDueRepository`; observability failures still do not block processing (latest CI pending)
+- Real-action eligibility: Spring Data JDBC `DecisionEligibilityDataRepository` preserves production-mode, AI-availability and confidence checks, defaulting to deny (CI #41499750493)
+- Simulation scheduler due-time metric: Spring Data JDBC `SimulationBatchDueRepository`; observability failures still do not block processing (CI #41500191945 green)
 
 ## Still requiring migration and compatibility tests
 
@@ -37,7 +38,7 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 | Ingest/job/outbox | `JdbcInboxRepository`, `JdbcJobRepository`, `NotificationOutboxRepository`, `EvolutionJobProcessor` | Lease/claim, `SKIP LOCKED`, idempotency, restart, ordered processing |
 | Notification delivery | `NotificationService`, `IntelligentAlertService`, `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionDeliveryCoordinator`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
 | Simulation and AI | `DebounceService`, `SimulationService`, `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
-| Telegram admin | `AdminCommandService`, `ShadowDecisionQuery`, `TelegramUpdatePollingService` | Authorize before action, durable inbox, offsets, callback replay prevention |
+| Telegram admin | `AdminCommandService`, `ShadowDecisionQuery` | Authorize before action, durable inbox, offsets, callback replay prevention |
 | Other | `QuarantineWriter`, remaining historical JDBC compatibility facades | Bounded retention, no sensitive payload leaks |
 
 Source of truth for completion: [issue #24](https://github.com/hugoalves-dev/IA-hugo-do-zap/issues/24).
