@@ -52,6 +52,12 @@ class MessageServiceTest {
         messages = new MessageService(jdbc, manager, identities, properties, archiveModes);
     }
 
+    @Test void messageServiceDoesNotOwnJdbc() {
+        assertTrue(java.util.Arrays.stream(MessageService.class.getDeclaredFields())
+                .noneMatch(field -> JdbcTemplate.class.isAssignableFrom(field.getType())),
+                "MessageService must use repositories for persistence");
+    }
+
     @Test void allModeAcceptsUnknownArchiveStateAndDeduplicatesMessage() {
         var result = messages.accept(message("m-unknown", "5511999999999@s.whatsapp.net", Map.of("conversation", "Oi")));
 
