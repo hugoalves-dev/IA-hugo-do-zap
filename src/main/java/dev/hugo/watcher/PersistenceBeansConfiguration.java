@@ -96,4 +96,14 @@ class PersistenceBeansConfiguration {
         return new ChatStateService(snapshots, transactions, identities, archiveModes);
     }
 
+    @Bean
+    MessageService messageService(MessagePersistenceRepository persistence, PlatformTransactionManager transactions,
+                                  IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
+                                  dev.hugo.watcher.simulation.DebounceService debounce,
+                                  WatcherSimulationProperties simulationProperties,
+                                  @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
+        return new MessageService(persistence, transactions, identities, properties, archiveModes,
+                debounce, simulationProperties, realModeEnabled);
+    }
+
 }
