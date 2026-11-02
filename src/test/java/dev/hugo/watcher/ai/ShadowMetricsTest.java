@@ -40,6 +40,26 @@ class ShadowMetricsTest {
     }
 
     @Test
+    void exposesSpecificPreflightReasonsWithoutHighCardinalityLabels() {
+        var registry = new SimpleMeterRegistry();
+        var metrics = new ShadowMetrics(registry);
+        for (String diagnostic : java.util.List.of(
+                "batch_missing", "batch_chat_mismatch", "batch_status_ineligible",
+                "batch_expired", "archive_settings_missing", "archive_state_unknown",
+                "archive_scope_excluded", "ai_classification_disabled",
+                "kill_switch_enabled", "group_trigger_missing", "consent_missing")) {
+            metrics.decision("classification_unavailable", diagnostic);
+            assertEquals(1, registry.get("watcher.shadow.decisions")
+                    .tags("reason", "classification_unavailable", "diagnostic", diagnostic)
+                    .counter().count());
+            assertEquals(diagnostic, ShadowMetrics.safeReason(diagnostic));
+        }
+        assertEquals("other", ShadowMetrics.safeReason("person@s.whatsapp.net"));
+        assertNull(registry.find("watcher.shadow.decisions")
+                .tag("diagnostic", "person@s.whatsapp.net").counter());
+    }
+
+    @Test
     void extractsProviderUsageWithoutLabelingMessageOrModelContent() {
         var registry = new SimpleMeterRegistry();
         {
