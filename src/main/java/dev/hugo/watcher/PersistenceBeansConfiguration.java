@@ -89,4 +89,11 @@ class PersistenceBeansConfiguration {
         return new BudgetService(ledger, transactions, metrics);
     }
 
+    @Bean
+    ChatStateService chatStateService(ChatSnapshotRepository snapshots,
+                                      PlatformTransactionManager transactions,
+                                      IdentityService identities, ArchiveModeService archiveModes) {
+        return new ChatStateService(snapshots, transactions, identities, archiveModes);
+    }
+
 }
