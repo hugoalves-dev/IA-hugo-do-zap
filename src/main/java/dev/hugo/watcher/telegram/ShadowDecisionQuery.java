@@ -22,7 +22,8 @@ final class ShadowDecisionQuery {
         List<String> rows = jdbc.query("""
                 select d.batch_id,d.decided_at,d.classification_status,d.classification_urgency,d.classification_confidence,
                        d.would_alert,d.would_reply,d.blocked_reason,d.decision_state,d.classification_diagnostic,c.display_name,c.display_name_source,
-                       s.display_name as snapshot_name,e.result->>'provider' as provider
+                       s.display_name as snapshot_name,e.result->>'provider' as provider,
+                       e.result->>'requestDetected' as request_detected
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
                   left join contact_identity c on c.canonical_jid=b.chat_jid
                   left join chat_snapshot s on s.chat_jid=b.chat_jid and s.synchronized_snapshot=true
@@ -41,6 +42,7 @@ final class ShadowDecisionQuery {
                     + " · " + name + "\n" + rs.getString("classification_status") + " / " + rs.getString("classification_urgency")
                     + " / " + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
                     + " · provedor=" + provider(rs.getString("provider"))
+                    + " · pedido=" + (rs.getString("request_detected") == null ? "indisponível" : "true".equals(rs.getString("request_detected")) ? "sim" : "não")
                     + " · Shadow " + rs.getString("decision_state") + " · alerta=" + rs.getBoolean("would_alert")
                     + " resposta=" + rs.getBoolean("would_reply") + " · bloqueio=" + code(rs.getString("blocked_reason"))
                     + (rs.getString("classification_diagnostic") == null ? "" : " · diagnóstico=" + code(rs.getString("classification_diagnostic")));
@@ -54,7 +56,8 @@ final class ShadowDecisionQuery {
         String prefix=args.getFirst().toLowerCase(Locale.ROOT);
         var rows=jdbc.query("""
                 select d.*, b.chat_jid, e.result::text as evaluation,
-                       t.body as template_body, h.body as hypothetical_body
+                       t.body as template_body, h.body as hypothetical_body,
+                       h.enabled as hypothetical_template_enabled
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
                   left join simulation_ai_evaluations e on e.batch_id=d.batch_id
                   left join response_templates t on d.template_id=t.template_id || '@v' || t.version::text
@@ -64,9 +67,9 @@ final class ShadowDecisionQuery {
                     and exists(select 1 from chat_automation_authorizations a where a.chat_jid=b.chat_jid
                         and a.situation=t.situation and a.template_id=t.template_id and a.template_version=t.version)
                   left join lateral (
-                    select rt.body from chat_automation_authorizations a
+                    select rt.body, rt.enabled from chat_automation_authorizations a
                       join response_templates rt on rt.template_id=a.template_id and rt.version=a.template_version and rt.situation=a.situation
-                     where a.chat_jid=b.chat_jid and rt.enabled and rt.identifies_automation
+                     where a.chat_jid=b.chat_jid and rt.identifies_automation
                        and lower(ltrim(rt.body)) like 'resposta automática:%'
                        and a.situation=case when b.chat_jid like '%@g.us' then 'GROUP_TRIGGER' else 'CONTACT_REQUEST' end
                        and e.result->>'requestDetected'='true'
@@ -88,10 +91,12 @@ final class ShadowDecisionQuery {
             };
             String evaluation=rs.getString("evaluation");
             String provider="indisponível", situations="indisponível", context="limites de contexto não armazenados";
+            String requestDetected="indisponível";
             if(evaluation!=null) {
                 var json=tools.jackson.databind.json.JsonMapper.builder().build().readTree(evaluation);
                 provider=escape(json.path("provider").asString("indisponível"));
                 situations=escape(json.path("situations").toString());
+                requestDetected=json.has("requestDetected") ? (json.path("requestDetected").asBoolean(false) ? "sim" : "não") : "indisponível";
                 int count=json.path("contextCount").asInt(-1), hours=json.path("contextWindowHours").asInt(-1);
                 if (count >= 0 && count <= 5 && hours >= 1 && hours <= 168)
                     context="contexto: " + count + " mensagens; janela até " + hours + " h";
@@ -100,10 +105,12 @@ final class ShadowDecisionQuery {
             String body=reply ? rs.getString("template_body") : rs.getString("hypothetical_body");
             String preview=body != null ? (reply ? "Prévia de ação prevista: " : "Prévia hipotética se habilitado: ")
                     + escape(body.length()>500 ? body.substring(0,500) : body)
-                    : "Prévia indisponível: template elegível, autorização, política ou classificação ausente.";
+                    + (!reply && !rs.getBoolean("hypothetical_template_enabled") ? " (template atualmente inativo)" : "")
+                    : "Prévia indisponível: template aprovado, autorização da conversa, política ou classificação ausente.";
             return "Decisão " + rs.getString("batch_id") + "\nSituação persistida: " + situations + " · provedor: " + provider
                     + "\nClassificação: " + rs.getString("classification_status") + " / " + urgency + " / "
                     + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
+                    + "\nSolicitação detectada: " + requestDetected
                     + "\n" + context
                     + "\nRubrica geral: " + explanation + "; " + (rs.getString("classification_diagnostic") == null
                         ? "motivo específico não armazenado." : "diagnóstico=" + code(rs.getString("classification_diagnostic")) + ".")
@@ -112,7 +119,7 @@ final class ShadowDecisionQuery {
                     + "; blocked_reason: " + escape(safe(rs.getString("blocked_reason")))
                     + "; real_blocked_reason: " + escape(safe(rs.getString("real_blocked_reason")))
                     + "\nproduction_mode: " + production + "; ação real autorizada no registro: " + (allowed && production)
-                    + "\n" + preview;
+                    + "\n" + preview + "\nPrévia informativa; não autoriza envio automático.";
         },Timestamp.from(clock.instant()),prefix+"%");
         if(rows.isEmpty()) return "Decisão não encontrada ou expirada pela retenção.";
         if(rows.size()>1) return "ID ambíguo; informe mais caracteres.";
