@@ -11,6 +11,9 @@ import dev.hugo.watcher.policy.PersistedPolicyRepository;
 import dev.hugo.watcher.policy.PolicyProfileDataRepository;
 import dev.hugo.watcher.policy.PolicyResolver;
 import dev.hugo.watcher.simulation.WatcherSimulationProperties;
+import dev.hugo.watcher.notification.ReportQueryRepository;
+import dev.hugo.watcher.notification.ReportService;
+import java.time.Clock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -69,5 +72,12 @@ class PersistenceBeansConfiguration {
     RetentionService retentionService(RetentionRepository retentionRepository,
                                       PlatformTransactionManager transactions) {
         return new RetentionService(retentionRepository, transactions);
+    }
+
+    @Bean
+    ReportService reportService(ReportQueryRepository queries,
+                                PlatformTransactionManager transactions,
+                                NotificationOutboxRepository outbox, Clock clock) {
+        return new ReportService(queries, transactions, outbox, clock);
     }
 }
