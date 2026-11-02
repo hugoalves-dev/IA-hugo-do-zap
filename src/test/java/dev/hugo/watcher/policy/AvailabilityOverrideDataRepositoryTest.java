@@ -173,4 +173,23 @@ class AvailabilityOverrideDataRepositoryTest {
             jdbc.update("update archive_monitor_settings set mode='ALL' where singleton_id=1");
         }
     }
+
+    @Autowired dev.hugo.watcher.OperationalState operationalState;
+    @Autowired dev.hugo.watcher.OperationalRestrictionDataRepository restrictionData;
+
+    @Test void operationalLatchesRemainFailClosedWithSpringData() {
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false where singleton_id=1");
+        try {
+            assertFalse(operationalState.emergency());
+            assertFalse(operationalState.simulationPaused());
+            jdbc.update("update operational_restrictions set emergency_latched=true,simulation_paused=true where singleton_id=1");
+            assertTrue(operationalState.emergency());
+            assertTrue(operationalState.simulationPaused());
+            var restriction = restrictionData.findById(1).orElseThrow();
+            assertTrue(restriction.emergencyLatched());
+            assertTrue(restriction.simulationPaused());
+        } finally {
+            jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false where singleton_id=1");
+        }
+    }
 }
