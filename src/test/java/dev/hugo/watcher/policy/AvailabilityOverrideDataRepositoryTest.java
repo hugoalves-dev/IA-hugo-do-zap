@@ -38,11 +38,13 @@ class AvailabilityOverrideDataRepositoryTest {
 
     @Autowired JdbcTemplate jdbc;
     @Autowired AvailabilityOverrideDataRepository springData;
+    @Autowired dev.hugo.watcher.telegram.TelegramWebhookDataRepository webhookData;
     @Autowired GlobalPolicyRepository policy;
     @Autowired PersistedPolicyRepository persistedPolicies;
 
     @BeforeEach void clear() {
         jdbc.update("delete from availability_overrides");
+        jdbc.update("delete from telegram_webhook_inbox");
         jdbc.update("delete from chat_policy_overrides");
         jdbc.update("delete from identity_aliases");
         jdbc.update("delete from holiday_calendar");
@@ -191,5 +193,16 @@ class AvailabilityOverrideDataRepositoryTest {
         } finally {
             jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false where singleton_id=1");
         }
+    }
+
+    @Test void springDataTelegramWebhookInsertIsDurableAndIdempotent() {
+        String payload = "{\"update_id\":424242,\"message\":{\"message_id\":1}}";
+        assertEquals(1, webhookData.insertIfAbsent(424242L, payload));
+        assertEquals(0, webhookData.insertIfAbsent(424242L, payload));
+        assertEquals("424242", jdbc.queryForObject(
+                "select payload->>'update_id' from telegram_webhook_inbox where update_id=?",
+                String.class, 424242L));
+        assertEquals(1, jdbc.queryForObject(
+                "select count(*) from telegram_webhook_inbox where update_id=?", Integer.class, 424242L));
     }
 }
