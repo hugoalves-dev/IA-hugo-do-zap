@@ -9,7 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 class TelegramPersistenceBoundaryTest {
     @Test void telegramHandlersKeepPersistenceInRepositories() {
         for (Class<?> type : new Class<?>[] {
-                TelegramWebhookController.class, TelegramWebhookWorker.class, CallbackTokenService.class
+                TelegramWebhookController.class, TelegramWebhookWorker.class, CallbackTokenService.class,
+                TelegramUpdatePollingService.class
         }) {
             for (var field : type.getDeclaredFields()) {
                 assertFalse(JdbcTemplate.class.isAssignableFrom(field.getType()),
