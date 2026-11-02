@@ -1,6 +1,9 @@
 package dev.hugo.watcher;
 
 import dev.hugo.watcher.ai.AiClassificationProperties;
+import dev.hugo.watcher.ai.BudgetLedgerRepository;
+import dev.hugo.watcher.ai.BudgetService;
+import io.micrometer.core.instrument.MeterRegistry;
 import dev.hugo.watcher.policy.AvailabilityOverrideDataRepository;
 import dev.hugo.watcher.policy.ChatPolicyOverrideDataRepository;
 import dev.hugo.watcher.policy.GlobalPolicyDataRepository;
@@ -80,4 +83,10 @@ class PersistenceBeansConfiguration {
                                 NotificationOutboxRepository outbox, Clock clock) {
         return new ReportService(queries, transactions, outbox, clock);
     }
+    @Bean
+    BudgetService budgetService(BudgetLedgerRepository ledger, PlatformTransactionManager transactions,
+                                MeterRegistry metrics) {
+        return new BudgetService(ledger, transactions, metrics);
+    }
+
 }
