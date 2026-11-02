@@ -115,4 +115,22 @@ class PersistenceBeansConfiguration {
     }
 
 
+    @Bean
+    dev.hugo.watcher.notification.DecisionDeliveryCoordinator decisionDeliveryCoordinator(
+            org.springframework.jdbc.core.JdbcTemplate jdbc, PlatformTransactionManager transactions) {
+        return new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, transactions);
+    }
+
+    @Bean
+    NotificationService notificationService(NotificationQueueQueryRepository queries,
+                                            PlatformTransactionManager transactions,
+                                            NotificationOutboxRepository outbox,
+                                            TelegramTransport telegram, TelegramMessageFormatter telegramFormatter,
+                                            WatcherProperties properties, Clock clock, ArchiveModeService archiveModes,
+                                            dev.hugo.watcher.notification.IntelligentAlertService intelligentAlerts,
+                                            dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
+        return new NotificationService(queries, transactions, outbox, telegram, telegramFormatter, properties,
+                clock, archiveModes, intelligentAlerts, deliveries);
+    }
+
 }
