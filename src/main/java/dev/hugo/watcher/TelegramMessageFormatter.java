@@ -33,6 +33,9 @@ public class TelegramMessageFormatter {
                 default -> "📬 O watcher registrou uma nova atualização do WhatsApp.";
             };
         } catch (RuntimeException ex) {
+            if (action != null && ("telegram_admin_reply".equals(action.actionType())
+                    || "telegram_admin_edit".equals(action.actionType())))
+                return BotReplyFormatter.telegramAdmin("Não foi possível formatar a resposta administrativa.");
             return "⚠️ O watcher registrou uma atualização do WhatsApp, mas não conseguiu formatar os detalhes.";
         }
     }
