@@ -49,7 +49,7 @@ Updated through the 2026-11-03 PR continuation; source of truth is the current P
 
 - WhatsApp dispatch: `WhatsAppActionDispatchRepository` owns the conditional PENDING→DISPATCHED claim, delivery acknowledgement, cooldown, expiry and status persistence. Dispatcher keeps transport calls outside transactions and never retries UNKNOWN outcomes.
 
-- Legacy SQLite import: `LegacySqliteSnapshotReader` owns read-only input SQL; `LegacyImportPersistenceRepository` owns PostgreSQL reconciliation, alias collision checks and idempotent upserts. The service retains conflict detection, dry-run and all-or-nothing rollback policy.
+- Legacy SQLite import: `LegacySqliteSnapshotRepository` owns read-only input SQL; `LegacyImportPersistenceRepository` owns PostgreSQL reconciliation, alias collision checks and idempotent upserts. The service retains conflict detection, dry-run and all-or-nothing rollback policy.
 
 - AI classification: `AiClassificationEvaluationRepository` owns claim, evaluation-result CAS, consent and batch-scope SQL; managed `ConversationContextRepository` and `PersonalReferenceEvidenceRepository` own context and reference projections. `AiSimulationClassifier` keeps provider calls outside SQL transactions and revalidates consents before use.
 
@@ -57,9 +57,17 @@ Updated through the 2026-11-03 PR continuation; source of truth is the current P
 
 - Quarantine: `QuarantineEventRepository` now exclusively owns the redacted `quarantined_events` insert, ID normalization and bounded expiry; the legacy `QuarantineWriter` is a SQL-free compatibility bridge.
 
+## Completed Java source SQL-boundary sweep (2026-11-03)
+
+- Reviewed the SQL-executing service, worker, controller, scheduler, AI, notification and legacy-import paths. All remaining PostgreSQL `JdbcTemplate` execution is located in the Spring Data JDBC or custom PostgreSQL repository layer.
+- Deleted the non-repository `DecisionEligibilityJdbcReader` adapter. Standalone acceptance tests reuse the `@Query` SQL from `DecisionEligibilityDataRepository`; full Spring Boot/PostgreSQL integration coverage validates the actual Spring Data repository, including denial of shadow decisions.
+- Renamed and annotated the SQLite snapshot reader as `LegacySqliteSnapshotRepository` (`@Repository`). The read-only connection, SQLite `query_only` enforcement and legacy schema/retention checks remain unchanged.
+- Added a repository-boundary regression test scanning all production Java sources, including unannotated classes, for direct JDBC execution, raw JDBC connections, owned JDBC clients and SQL statement literals.
+- SQL in tests and Flyway migrations is intentional. Native SQL inside custom repositories remains necessary for PostgreSQL locks, JSONB, leases and atomic claims/ACKs. This is a **code-structure audit**, not independent authorization to merge or deploy.
+
 ## Automated structural boundary gate
 
-- `PersistenceSqlBoundaryTest` scans source-annotated application services/components/controllers and rejects direct JdbcTemplate calls or JDBC client fields. Legacy JDBC constructor signatures stay permitted temporarily, but they cannot own query execution.
+- `PersistenceSqlBoundaryTest` scans **all** production Java files (including unannotated helpers), rejects JDBC calls/clients/raw connections and native SQL literals outside repositories, and ensures the legacy eligibility adapter cannot return. Legacy JDBC constructor signatures remain temporarily for tests but must not execute SQL in services.
 - The gate is intentionally narrow: syntax-only heuristics do not replace database behavior tests, a complete manual SQL inventory, or code review of repository-native operations.
 
 ## Shared dispatch admission and constructor discipline
