@@ -1,7 +1,9 @@
 # Issue #24 SQL migration inventory (2026-11-02)
 
 Baseline audited: PR #28 at `1ba61ef3d0baa3cd5747de6d274dd4f28b642fad`.
-This is a **work-in-progress inventory**, not a declaration that every JDBC call has been eliminated.
+This is a **work-in-progress inventory**, not a declaration that the release acceptance criteria have passed.
+
+Updated through the 2026-11-03 PR continuation; source of truth is the current PR head and CI, not the historical baseline.
 
 ## Architecture gate
 
@@ -32,12 +34,12 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Evolution webhook processing: `EvolutionJobEnvelopeRepository` owns locked envelope read, post-lock lease/expiry validation, expired payload scrubbing, and quarantine. `EvolutionJobProcessor` remains the transaction and message-processing coordinator ([CI #41506619110](https://github.com/hugoalves-dev/IA-hugo-do-zap/actions/runs/41506619110): 475 tests green)
 - Telegram admin commands: `TelegramAdminPersistenceRepository` contains availability, profiles, templates, holidays, budget, safety-toggle and audit SQL. The service still owns confirmation and the transaction; read-only decision details remain in `ShadowDecisionQuery`.
-- Identity contact and merge: `IdentityMergeRepository` now encapsulates canonical alias locks/reads, contact-name precedence persistence, snapshot/pending rekey, quarantine, and processed-message dedup. `IdentityService` keeps merge policy and aggregate decisions without owning JDBC statements (subject to full CI).
+- Identity contact and merge: `IdentityMergeRepository` now encapsulates canonical alias locks/reads, contact-name precedence persistence, snapshot/pending rekey, quarantine, and processed-message dedup. `IdentityService` keeps merge policy and aggregate decisions without owning JDBC statements (validated by CI #41641682019).
 - Personal reference evidence: `PersonalReferenceEvidenceRepository` provides source-message and owner-message-reference projections; hash verification and the fail-closed proof rule remain in the domain utility.
 - Delivery runtime gate: `DecisionRuntimeQueryRepository` owns current-decision and data-consent SQL, while the gate resolves policy/availability through managed services, preserving fail-closed authorization.
 - Intelligent alerts: `IntelligentAlertPersistenceRepository` owns advisory locking, outbox verification and evidence queries; `IntelligentAlertService` retains authorization, formatting and transaction orchestration.
 - Delivery admission: `DeliveryAdmissionRepository` owns the locked outbox token, chat claim, cooldown and dispatched-attempt persistence, with the existing coordinator transaction and HTTP-outside-transaction boundary intact.
-- Notification queue projection: `NotificationQueueQueryRepository` owns due-notification SQL, blocked-group deletion and connection alert generation lookup. Formatting, filtering and outbox transitions stay in `NotificationService` ([CI #41507350751](https://github.com/hugoalves-dev/IA-hugo-do-zap/actions/runs/41507350751): pending)
+- Notification queue projection: `NotificationQueueQueryRepository` owns due-notification SQL, blocked-group deletion and connection alert generation lookup. Formatting, filtering and outbox transitions stay in `NotificationService` (later full CI runs passed)
 
 - Debounce simulation capture/claim: `DebouncePersistenceRepository` owns PostgreSQL-native aliases, advisory locks, batch scheduling, SKIP LOCKED, retry and retention SQL. `DebounceService` retains serialization, policy window decisions and the original transaction boundaries.
 
@@ -55,18 +57,20 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Quarantine: `QuarantineEventRepository` now exclusively owns the redacted `quarantined_events` insert, ID normalization and bounded expiry; the legacy `QuarantineWriter` is a SQL-free compatibility bridge.
 
-## Still requiring migration and compatibility tests
+## Remaining release gates and justified native repositories
 
-| Area | Files still with SQL in the baseline | Primary correctness requirements |
+The remaining `Jdbc*` classes are themselves repositories, not SQL in business services. These PostgreSQL-specific operations are **intentional exceptions** under issue #24 and must not be replaced with naive entity `save()` operations. Spring Data JDBC `@Modifying` does not provide arbitrary `INSERT ... RETURNING` projections (see official query-method documentation).
+
+| Existing PostgreSQL repository | Native operation retained | Validation required before merge |
 | --- | --- | --- |
-| Identity and contact | `IdentityService`, `LegacyImportService` | Canonical aliases, LID/PN/JID merge, contact-name precedence, collision rejection |
-| Ingest/job/outbox | `JdbcInboxRepository`, `JdbcJobRepository`, `NotificationOutboxRepository` | Lease/claim, `SKIP LOCKED`, idempotency, restart, ordered processing |
-| Notification delivery | `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
-| Simulation and AI | `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
-| Telegram admin | `ShadowDecisionQuery` | Authorize before action, durable inbox, offsets, callback replay prevention |
-| Other | `QuarantineWriter`, remaining historical JDBC compatibility facades | Bounded retention, no sensitive payload leaks |
+| `JdbcInboxRepository` | Atomic `ON CONFLICT DO NOTHING RETURNING id` + creation of READY job in one transaction | Duplicate event, rollback, restart and no double processing |
+| `JdbcJobRepository` | `FOR UPDATE SKIP LOCKED`, `UPDATE ... RETURNING`, lease token checks | Competing workers, lease expiry, stale completion and retry |
+| `NotificationOutboxRepository` | Locked Telegram rate-limit singleton, `SKIP LOCKED`, token CAS, ACK and pending-generation compare-and-delete | No duplicate sends, ambiguous ACK, rate-limit retry and restart |
+| Other custom `@Repository` implementations | Advisory locks, JSONB, conditional upsert / delete, sensitive retention | Existing Testcontainers/PostgreSQL-17 integration suites and independent diff review |
 
-Source of truth for completion: [issue #24](https://github.com/hugoalves-dev/IA-hugo-do-zap/issues/24).
+`ShadowDecisionQuery` is an explicitly annotated read-only query repository. `QuarantineWriter` is a SQL-free compatibility bridge to `QuarantineEventRepository`. Standalone-test JDBC constructors remain for compatibility and should only be deleted when tests are moved to managed production constructors; they do not issue SQL in the services.
+
+**Not yet accepted:** an independent reviewer must confirm the complete SQL inventory, Testcontainers concurrency/restart cases, immutable image rollback, and production metrics. The release remains blocked even when CI passes. See [rollout checklist](issue-24-rollout-checklist.md). Leave issue #24 open and the PR as Draft.
 
 ## Must-pass release gate
 
