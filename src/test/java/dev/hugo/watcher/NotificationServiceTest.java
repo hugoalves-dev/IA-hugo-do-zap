@@ -90,6 +90,48 @@ class NotificationServiceTest {
         alerts.configureRuntimeGate(TestOperational.gate(jdbc,clock,"15550000000@s.whatsapp.net")); return alerts;
     }
 
+    @Test void routesDigestAndMenuHtmlButPreservesLiteralAdminRepliesAndOutboxAck() throws Exception {
+        List<String> routes = new java.util.ArrayList<>();
+        TelegramTransport transport = new TelegramTransport() {
+            @Override public TelegramDeliveryResult send(String text) {
+                routes.add("plain:" + text); return TelegramDeliveryResult.success();
+            }
+            @Override public TelegramDeliveryResult sendHtml(String html) {
+                routes.add("html:" + html); return TelegramDeliveryResult.success();
+            }
+            @Override public TelegramDeliveryResult sendAdmin(String text, String payload) {
+                routes.add("admin:" + text); return TelegramDeliveryResult.success();
+            }
+            @Override public TelegramDeliveryResult editAdminHtml(String html, String payload) {
+                routes.add("admin-edit-html:" + html); return TelegramDeliveryResult.success();
+            }
+        };
+        notifications = new NotificationService(jdbc, manager, outbox, transport,
+                new TelegramMessageFormatter(), properties, clock, archiveModes, configuredAlerts());
+        Instant expires = NOW.plus(Duration.ofDays(1));
+        outbox.enqueue("html:daily", "simulation_daily_summary",
+                "{\"eventType\":\"simulation_daily_summary\",\"decisionCount\":4}", "[]", NOW, expires);
+        outbox.enqueue("admin:literal", "telegram_admin_reply",
+                "{\"eventType\":\"telegram_admin_reply\",\"text\":\"<b>literal</b>\"}", "[]", NOW, expires);
+        outbox.enqueue("admin:menu", "telegram_admin_edit",
+                JSON.writeValueAsString(Map.of("eventType", "telegram_admin_edit",
+                        "text", "⚙️ Administração Hugo do Zap\nEscolha <uma> & opção:",
+                        "messageId", 10, "keyboard", List.of(List.of(Map.of("text", "Status", "data", "status"))))),
+                "[]", NOW, expires);
+
+        notifications.flush(NOW);
+
+        assertEquals(3, routes.size());
+        assertTrue(routes.stream().anyMatch(route ->
+                route.startsWith("html:<b>📊 Resumo diário de simulação</b>")));
+        assertTrue(routes.contains("admin:[🤖 HUGO ZAP BOT]: <b>literal</b>"));
+        assertTrue(routes.stream().anyMatch(route ->
+                route.startsWith("admin-edit-html:[🤖 HUGO ZAP BOT]: <b>⚙️ Administração Hugo do Zap</b>")
+                        && route.contains("Escolha &lt;uma&gt; &amp; opção:")));
+        assertEquals(3, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'",
+                Integer.class));
+    }
+
     @Test void sendsAReadableTelegramSummaryAndAcknowledgesItsSnapshot() {
         seed("5511999999999@s.whatsapp.net", "Ana", false, 2, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "Oi, tudo bem?", NOW);
         seed("120363000000000000@g.us", "Equipe", true, 3, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "[Image]", NOW);
