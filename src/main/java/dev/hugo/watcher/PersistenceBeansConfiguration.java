@@ -90,6 +90,16 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
+    dev.hugo.watcher.ai.AiSimulationClassifier aiSimulationClassifier(
+            dev.hugo.watcher.ai.AiClassificationEvaluationRepository persistence,
+            dev.hugo.watcher.ai.ConversationContextRepository context,
+            dev.hugo.watcher.simulation.PersonalReferenceEvidenceRepository references,
+            BudgetService budget, Clock clock, AiClassificationProperties properties) {
+        return new dev.hugo.watcher.ai.AiSimulationClassifier(
+                persistence, context, references, budget, clock, properties, null);
+    }
+
+    @Bean
     dev.hugo.watcher.simulation.SimulationService simulationService(
             dev.hugo.watcher.simulation.SimulationPersistenceRepository persistence,
             PlatformTransactionManager transactions, Clock clock,

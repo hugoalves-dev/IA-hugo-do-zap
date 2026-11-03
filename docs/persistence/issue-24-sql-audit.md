@@ -49,6 +49,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Legacy SQLite import: `LegacySqliteSnapshotReader` owns read-only input SQL; `LegacyImportPersistenceRepository` owns PostgreSQL reconciliation, alias collision checks and idempotent upserts. The service retains conflict detection, dry-run and all-or-nothing rollback policy.
 
+- AI classification: `AiClassificationEvaluationRepository` owns claim, evaluation-result CAS, consent and batch-scope SQL; managed `ConversationContextRepository` and `PersonalReferenceEvidenceRepository` own context and reference projections. `AiSimulationClassifier` keeps provider calls outside SQL transactions and revalidates consents before use.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |
