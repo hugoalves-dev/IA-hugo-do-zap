@@ -99,8 +99,9 @@ class PersistenceBeansConfiguration {
     NotificationOutboxRepository notificationOutboxRepository(
             org.springframework.jdbc.core.JdbcTemplate jdbc,
             PlatformTransactionManager transactions,
-            dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
-        return new NotificationOutboxRepository(jdbc, transactions, deliveries);
+            dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries,
+            org.springframework.beans.factory.ObjectProvider<RabbitEventPublisher> publisher) {
+        return new NotificationOutboxRepository(jdbc, transactions, deliveries, publisher.getIfAvailable());
     }
 
     @Bean

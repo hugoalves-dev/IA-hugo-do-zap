@@ -1,6 +1,8 @@
 package dev.hugo.watcher;
 
 import org.springframework.dao.DataAccessException;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -21,12 +23,26 @@ public class EvolutionWebhookController {
     private final InboxRepository inbox;
     private final EvolutionWebhookProperties properties;
     private final ConnectionService connections;
+    private final RabbitEventPublisher publisher;
+
+    @Autowired
+    public EvolutionWebhookController(InboxRepository inbox, EvolutionWebhookProperties properties,
+                                      ConnectionService connections, ObjectProvider<RabbitEventPublisher> publisher) {
+        this(inbox, properties, connections, publisher.getIfAvailable());
+    }
 
     public EvolutionWebhookController(InboxRepository inbox, EvolutionWebhookProperties properties,
-                                      ConnectionService connections) {
+                                      ConnectionService connections, RabbitEventPublisher publisher) {
         this.inbox = inbox;
         this.properties = properties;
         this.connections = connections;
+        this.publisher = publisher;
+    }
+
+    /** Legacy ingress constructor retained while RabbitMQ is not enabled in local/test profiles. */
+    public EvolutionWebhookController(InboxRepository inbox, EvolutionWebhookProperties properties,
+                                      ConnectionService connections) {
+        this(inbox, properties, connections, (RabbitEventPublisher) null);
     }
 
     @PostMapping(value = "/internal/evolution/webhook", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -50,28 +66,43 @@ public class EvolutionWebhookController {
         String instance = stringValue(payload.get("instance"));
         if (!properties.getInstance().equals(instance)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         String eventType = stringValue(payload.get("event"));
+        String externalId = externalId(payload);
+        if ("contacts.upsert".equals(eventType) || "contacts.update".equals(eventType)) {
+            // Evolution contact events have no stable event ID; every observation must remain replayable.
+            externalId = java.util.UUID.randomUUID().toString();
+        }
+        if ("connection.update".equals(eventType)) externalId = sha256(body);
+        if (eventType != null && eventType.startsWith("chats.")) {
+            if (publisher != null) {
+                externalId = sha256(body);
+            } else {
+                try {
+                    inbox.quarantine("CHAT_STATE", null, "unverified_or_incomplete_state");
+                    return ResponseEntity.accepted().build();
+                } catch (DataAccessException ex) {
+                    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+                }
+            }
+        }
+        if (eventType == null || eventType.isBlank() || externalId == null || externalId.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        if (publisher != null) {
+            try {
+                publisher.publish("incoming", externalId, body);
+                return ResponseEntity.accepted().build();
+            } catch (RuntimeException ex) {
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+            }
+        }
+
         if ("connection.update".equals(eventType)) {
             try {
                 return receiveConnectionUpdate(payload);
             } catch (DataAccessException ex) {
                 return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
             }
-        }
-        String externalId = externalId(payload);
-        if ("contacts.upsert".equals(eventType) || "contacts.update".equals(eventType)) {
-            // Evolution contact events have no stable event ID; every observation must remain replayable.
-            externalId = java.util.UUID.randomUUID().toString();
-        }
-        if (eventType != null && eventType.startsWith("chats.")) {
-            try {
-                inbox.quarantine("CHAT_STATE", null, "unverified_or_incomplete_state");
-                return ResponseEntity.accepted().build();
-            } catch (DataAccessException ex) {
-                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
-            }
-        }
-        if (eventType == null || eventType.isBlank() || externalId == null || externalId.isBlank()) {
-            return ResponseEntity.badRequest().build();
         }
 
         try {
@@ -128,6 +159,15 @@ public class EvolutionWebhookController {
             }
         }
         return stringValue(payload.get("id"));
+    }
+
+    private static String sha256(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is not available", ex);
+        }
     }
 
     private static String stringValue(Object value) {

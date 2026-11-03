@@ -2,6 +2,7 @@ package dev.hugo.watcher;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
@@ -34,6 +35,8 @@ public class EvolutionJobProcessor {
     private final MessageService messages;
     private final IdentityService identities;
     private final Clock clock;
+    @Value("${watcher.rabbitmq.enabled:false}")
+    private boolean rabbitIngressEnabled;
 
     public EvolutionJobProcessor(JdbcTemplate jdbc, JobRepository jobs, EvolutionEventMapper mapper,
                                  MessageService messages, Clock clock, PlatformTransactionManager transactionManager) {
@@ -56,6 +59,7 @@ public class EvolutionJobProcessor {
 
     @Scheduled(fixedDelayString = "${watcher.job-delay:PT1S}")
     public void processScheduled() {
+        if (rabbitIngressEnabled) return;
         try {
             processAvailable();
         } catch (RuntimeException ex) {
@@ -65,6 +69,7 @@ public class EvolutionJobProcessor {
 
     /** Claims and processes one batch, returning the number of jobs completed in this pass. */
     public int processAvailable() {
+        if (rabbitIngressEnabled) jobs.makePendingImmediatelyAvailable(clock.instant());
         int completed = 0;
         for (int processed = 0; processed < MAX_JOBS_PER_PASS; processed++) {
             List<Job> claimed = jobs.claim(1, clock.instant(), LEASE);
@@ -75,6 +80,10 @@ public class EvolutionJobProcessor {
                 if (result == ProcessResult.COMPLETED) completed++;
                 if (result == ProcessResult.STALE_LEASE) return completed;
             } catch (RuntimeException ex) {
+                if (rabbitIngressEnabled) {
+                    jobs.retry(job.id(), job.leaseToken(), clock.instant(), clock.instant());
+                    throw ex;
+                }
                 long seconds = Math.min(900L, 10L << Math.min(7, Math.max(0, job.attempts() - 1)));
                 boolean rescheduled = jobs.retry(job.id(), job.leaseToken(), clock.instant(), clock.instant().plusSeconds(seconds));
                 LOG.log(System.Logger.Level.WARNING, "Webhook job processing failed: error={0}, retryScheduled={1}",
@@ -83,6 +92,10 @@ public class EvolutionJobProcessor {
             }
         }
         return completed;
+    }
+
+    public boolean isPending(String eventType, String externalId) {
+        return jobs.isPending(eventType, externalId);
     }
 
     @SuppressWarnings("unchecked")

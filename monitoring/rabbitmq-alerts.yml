@@ -1,0 +1,11 @@
+groups:
+  - name: watcher-rabbitmq
+    rules:
+      - alert: WatcherRabbitDeadLetterQueueNotEmpty
+        expr: watcher_rabbitmq_queue_messages{queue="dead-letter"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Watcher RabbitMQ dead-letter queue contains messages
+          description: Inspect the dead-letter payload and consumer logs before replaying messages.

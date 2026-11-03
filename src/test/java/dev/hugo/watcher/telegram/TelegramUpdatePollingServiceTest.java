@@ -6,6 +6,7 @@ import com.pengrad.telegrambot.model.Chat;
 import com.pengrad.telegrambot.model.Message;
 import com.pengrad.telegrambot.model.User;
 import dev.hugo.watcher.NotificationOutboxRepository;
+import dev.hugo.watcher.RabbitEventPublisher;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,6 +59,22 @@ class TelegramUpdatePollingServiceTest {
         assertEquals(42L, jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
         assertEquals(1, calls.get());
         verify(handler).handle(update);
+    }
+
+    @Test void publishesPollingUpdatesBeforeAdvancingTelegramOffsetWhenRabbitIsEnabled() {
+        Update update = mock(Update.class);
+        when(update.updateId()).thenReturn(41);
+        TelegramUpdatesClient client = offset -> List.of(update);
+        TelegramUpdateHandler handler = mock(TelegramUpdateHandler.class);
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+
+        new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), client, handler,
+                new DataSourceTransactionManager(source), null, publisher).poll();
+
+        verify(publisher).publish(eq("admin"), eq("41"), anyString());
+        verifyNoInteractions(handler);
+        assertEquals(42L, jdbc.queryForObject(
+                "select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
     }
 
     @Test void databaseAdvisoryLockAllowsOnlyOnePollingConsumer() throws Exception {

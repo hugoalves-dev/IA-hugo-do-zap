@@ -4,6 +4,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -23,45 +25,68 @@ public class NotificationOutboxRepository {
     private final TransactionTemplate transactions;
     private final Duration telegramSendInterval;
     private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
+    private final RabbitEventPublisher rabbitPublisher;
 
     /** Legacy constructor for standalone tests, preserving existing rate-limit behavior. */
     public NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager) {
-        this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL);
+        this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL,
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager), null);
     }
 
     NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager, Duration telegramSendInterval) {
         this(jdbc, manager, telegramSendInterval,
-                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager));
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager), null);
     }
 
     /** Production shares the same managed coordinator as WhatsApp dispatch and notifications. */
     public NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                         dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
-        this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL, deliveries);
+        this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL, deliveries, null);
+    }
+
+    public NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                                        dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries,
+                                        RabbitEventPublisher rabbitPublisher) {
+        this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL, deliveries, rabbitPublisher);
     }
 
     private NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                          Duration telegramSendInterval,
                                          dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
+        this(jdbc, manager, telegramSendInterval, deliveries, null);
+    }
+
+    private NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                                         Duration telegramSendInterval,
+                                         dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries,
+                                         RabbitEventPublisher rabbitPublisher) {
         if (telegramSendInterval.isNegative()) throw new IllegalArgumentException("telegram send interval cannot be negative");
         this.jdbc = java.util.Objects.requireNonNull(jdbc);
         this.deliveries = java.util.Objects.requireNonNull(deliveries);
+        this.rabbitPublisher = rabbitPublisher;
         this.transactions = new TransactionTemplate(manager);
         this.telegramSendInterval = telegramSendInterval;
     }
 
     public void enqueue(String actionKey, String actionType, String payload, String pendingSnapshot,
                         Instant createdAt, Instant sensitiveExpiresAt) {
+        enqueue(actionKey, actionType, payload, pendingSnapshot, createdAt, sensitiveExpiresAt, createdAt);
+    }
+
+    public void enqueue(String actionKey, String actionType, String payload, String pendingSnapshot,
+                        Instant createdAt, Instant sensitiveExpiresAt, Instant availableAt) {
         jdbc.update("""
                 insert into outbox_actions(action_key, action_type, payload, pending_snapshot, status,
-                    attempts, available_at, created_at, updated_at, sensitive_expires_at)
+                    attempts, available_at, created_at, updated_at, sensitive_expires_at,rabbit_ingress_at)
                 values (?, ?, ?::jsonb, ?::jsonb, 'PENDING', 0, ?, ?, ?,
-                    least(?::timestamptz, clock_timestamp() + interval '7 days', ?::timestamptz + interval '7 days'))
+                    least(?::timestamptz, clock_timestamp() + interval '7 days', ?::timestamptz + interval '7 days'),?)
                 on conflict (action_key) do update set
                     payload=excluded.payload,
                     pending_snapshot=excluded.pending_snapshot,
                     status='PENDING',
                     attempts=0,
+                    rabbit_confirmed_at=null,
+                    rabbit_ingress_at=excluded.rabbit_ingress_at,
                     available_at=excluded.available_at,
                     created_at=excluded.created_at,
                     updated_at=excluded.updated_at,
@@ -70,20 +95,138 @@ public class NotificationOutboxRepository {
                     lease_token=null,
                     lease_expires_at=null
                 where outbox_actions.status='ACKNOWLEDGED'
-                """, actionKey, actionType, payload, pendingSnapshot, Timestamp.from(createdAt),
+                """, actionKey, actionType, payload, pendingSnapshot, Timestamp.from(availableAt),
                 Timestamp.from(createdAt), Timestamp.from(createdAt), Timestamp.from(sensitiveExpiresAt),
-                Timestamp.from(createdAt));
+                Timestamp.from(createdAt), RabbitDeliveryContext.current() == null ? null
+                        : Timestamp.from(RabbitDeliveryContext.current()));
+        publishAfterCommit(actionKey);
+    }
+
+    public boolean rabbitDispatchEnabled() { return rabbitPublisher != null; }
+
+    /** Replays pending delivery state when an upstream RabbitMQ event is redelivered. */
+    public int publishPendingActions() {
+        if (rabbitPublisher == null) return 0;
+        List<String> keys = jdbc.query("""
+                select action_key from outbox_actions
+                where rabbit_confirmed_at is null
+                  and sensitive_expires_at>clock_timestamp()
+                  and (status='PENDING' or (status='PROCESSING' and lease_expires_at<=clock_timestamp()
+                    and (action_type<>'intelligent_alert' or not exists (
+                        select 1 from decision_delivery_attempts attempt where attempt.channel='TELEGRAM'
+                          and attempt.status in ('DISPATCHED','UNKNOWN')
+                          and attempt.decision_id::text=right(outbox_actions.action_key,36)))))
+                order by available_at,created_at,id limit 500
+                """, (rs, row) -> rs.getString(1));
+        keys.forEach(key -> {
+            jdbc.update("""
+                    update outbox_actions set status='PENDING',lease_token=null,lease_expires_at=null
+                    where action_key=? and status='PROCESSING' and lease_expires_at<=clock_timestamp()
+                    """, key);
+            publishAction(key);
+        });
+        return keys.size();
+    }
+
+    private void publishAfterCommit(String actionKey) {
+        if (rabbitPublisher == null) return;
+        Runnable publish = () -> publishAction(actionKey);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { publish.run(); }
+            });
+        } else {
+            publish.run();
+        }
+    }
+
+    private void publishAction(String actionKey) {
+        List<Object[]> publication = jdbc.query("""
+                select rabbit_ingress_at,available_at,action_type from outbox_actions where action_key=?
+                """, (rs, row) -> new Object[] {rs.getTimestamp(1), rs.getTimestamp(2), rs.getString(3)}, actionKey);
+        java.util.Map<String, Object> headers = new java.util.HashMap<>();
+        Timestamp ingress = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[0];
+        Timestamp availableAt = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[1];
+        String actionType = publication.isEmpty() ? null : (String) publication.getFirst()[2];
+        if (ingress != null) headers.put("x-ingress-at", ingress.toInstant().toString());
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
+        long delayMillis = availableAt == null ? 0
+                : java.time.Duration.between(databaseNow, availableAt.toInstant()).toMillis();
+        if (delayMillis > 0)
+            rabbitPublisher.publishDeferred("notifications", availableAt.toInstant(), actionKey, actionKey, headers);
+        else
+            rabbitPublisher.publish("notifications", actionKey, actionKey, headers);
+        jdbc.update("""
+                update outbox_actions set rabbit_confirmed_at=coalesce(rabbit_confirmed_at,clock_timestamp()),
+                    updated_at=clock_timestamp()
+                where action_key=?
+                """, actionKey);
     }
 
     public boolean hasActiveAction(String actionType, Instant now) {
         Integer count = jdbc.queryForObject("""
                 select count(*) from outbox_actions
-                where action_type=? and status in ('PENDING','PROCESSING') and sensitive_expires_at>clock_timestamp()
+                where action_type=? and status in ('PENDING','PROCESSING')
+                  and available_at<=clock_timestamp() and sensitive_expires_at>clock_timestamp()
                 """, Integer.class, actionType);
         return count != null && count > 0;
     }
 
+    public boolean hasActiveActionKey(String actionKey) {
+        Integer count = jdbc.queryForObject("""
+                select count(*) from outbox_actions
+                where action_key=? and status in ('PENDING','PROCESSING')
+                  and sensitive_expires_at>clock_timestamp()
+                """, Integer.class, actionKey);
+        return count != null && count > 0;
+    }
+
     public OutboxAction claimNext(Instant now) {
+        return claimNext(now, null);
+    }
+
+    public OutboxAction claimByKey(String actionKey, Instant now) {
+        if (actionKey == null || actionKey.isBlank()) return null;
+        OutboxAction claimed = claimNext(now, actionKey);
+        if (claimed != null) return claimed;
+        List<ActionAvailability> nextAttempt = jdbc.query("""
+                select outbox_actions.available_at,telegram_delivery_rate_limit.next_allowed_at
+                from outbox_actions cross join telegram_delivery_rate_limit
+                where outbox_actions.action_key=? and outbox_actions.status='PENDING'
+                  and outbox_actions.sensitive_expires_at>clock_timestamp()
+                  and telegram_delivery_rate_limit.singleton_id=1
+                """, (rs, row) -> new ActionAvailability(rs.getTimestamp(1).toInstant(),
+                        rs.getTimestamp(2) == null ? null : rs.getTimestamp(2).toInstant()), actionKey);
+        if (!nextAttempt.isEmpty()) {
+            Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
+            ActionAvailability availability = nextAttempt.getFirst();
+            Instant rateLimitedAt = availability.rateLimitedAt();
+            Instant target = rateLimitedAt == null || availability.availableAt().isAfter(rateLimitedAt)
+                    ? availability.availableAt() : rateLimitedAt;
+            long delay = java.time.Duration.between(databaseNow, target).toMillis();
+            if (delay > 0) {
+                NotificationDeferredException.Reason reason = rateLimitedAt != null
+                        && !availability.availableAt().isAfter(rateLimitedAt)
+                        ? NotificationDeferredException.Reason.RATE_LIMIT : NotificationDeferredException.Reason.SCHEDULED;
+                throw new NotificationDeferredException(delay + 25, reason,
+                        reason == NotificationDeferredException.Reason.SCHEDULED ? target : null);
+            }
+        }
+        List<Timestamp> activeLease = jdbc.query("""
+                select lease_expires_at from outbox_actions
+                where action_key=? and status='PROCESSING'
+                  and lease_expires_at>clock_timestamp()
+                """, (rs, row) -> rs.getTimestamp(1), actionKey);
+        if (!activeLease.isEmpty()) {
+            Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
+            long delay = java.time.Duration.between(databaseNow, activeLease.getFirst().toInstant()).toMillis();
+            if (delay > 0)
+                throw new NotificationDeferredException(delay + 25, NotificationDeferredException.Reason.ACTIVE_LEASE);
+        }
+        return null;
+    }
+
+    private OutboxAction claimNext(Instant now, String actionKey) {
         return transactions.execute(status -> {
             Timestamp nextAllowedAt = lockTelegramRateLimitRow();
             RateLimitState rateLimit = new RateLimitState(nextAllowedAt,
@@ -95,6 +238,7 @@ public class NotificationOutboxRepository {
                     select id,action_key,action_type,payload::text,pending_snapshot::text,attempts,created_at,sensitive_expires_at
                     from outbox_actions
                     where sensitive_expires_at > ? and available_at <= ?
+                      and (?::text is null or action_key=?)
                       and (status='PENDING' or (status='PROCESSING' and lease_expires_at <= ?
                         and (action_type<>'intelligent_alert' or not exists (
                             select 1 from decision_delivery_attempts attempt where attempt.channel='TELEGRAM'
@@ -107,7 +251,7 @@ public class NotificationOutboxRepository {
                     rs.getString("action_type"), rs.getString("payload"), rs.getString("pending_snapshot"),
                     rs.getInt("attempts"), rs.getTimestamp("created_at").toInstant(),
                     rs.getTimestamp("sensitive_expires_at").toInstant(), null),
-                    Timestamp.from(rateLimit.databaseNow()), Timestamp.from(rateLimit.databaseNow()),
+                    Timestamp.from(rateLimit.databaseNow()), Timestamp.from(rateLimit.databaseNow()), actionKey, actionKey,
                     Timestamp.from(rateLimit.databaseNow()));
             if (candidates.isEmpty()) return null;
 
@@ -167,6 +311,14 @@ public class NotificationOutboxRepository {
                 """, Timestamp.from(now), Timestamp.from(now), action.id(), action.leaseToken()) == 1;
     }
 
+    public boolean defer(OutboxAction action, Instant now, Instant availableAt) {
+        return jdbc.update("""
+                update outbox_actions set status='PENDING',available_at=?,lease_token=null,lease_expires_at=null,
+                    last_error='WorkWindowDeferred',updated_at=?
+                where id=? and status='PROCESSING' and lease_token=?::uuid
+                """, Timestamp.from(availableAt), Timestamp.from(now), action.id(), action.leaseToken()) == 1;
+    }
+
     /** Cancels unclaimed connection alerts on reconnect, leaving every other action untouched. */
     public int cancelPendingConnectionAlerts(Instant now) {
         return jdbc.update("""
@@ -206,6 +358,9 @@ public class NotificationOutboxRepository {
                 Duration delay = serverRequestedRetry ? retryAfter : DEFAULT_RATE_LIMIT_COOLDOWN;
                 retryAt = databaseNow.plus(delay).plus(RETRY_AFTER_MARGIN);
                 advanceTelegramRateLimit(retryAt);
+            } else if (rabbitPublisher != null) {
+                // RabbitMQ owns transient backoff; the database row remains immediately replayable.
+                retryAt = databaseNow;
             } else {
                 retryAt = databaseNow.plusSeconds(backoff);
             }
@@ -274,4 +429,5 @@ public class NotificationOutboxRepository {
                                    String lastMessageAt, Instant updatedAt, String generation) { }
 
     private record RateLimitState(Timestamp nextAllowedAt, Instant databaseNow) { }
+    private record ActionAvailability(Instant availableAt, Instant rateLimitedAt) { }
 }

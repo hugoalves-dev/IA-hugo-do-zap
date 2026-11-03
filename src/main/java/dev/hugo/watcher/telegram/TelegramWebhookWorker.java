@@ -5,6 +5,7 @@ import com.pengrad.telegrambot.utility.BotUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -19,6 +20,8 @@ public class TelegramWebhookWorker {
     private final TransactionTemplate transactions;
     private final TelegramUpdateHandler handler;
     private final TelegramCallbackAcknowledger callbacks;
+    @Value("${watcher.rabbitmq.enabled:false}")
+    private boolean rabbitIngressEnabled;
 
     public TelegramWebhookWorker(TelegramWebhookInboxRepository inbox, PlatformTransactionManager manager,
                                  TelegramUpdateHandler handler, TelegramCallbackAcknowledger callbacks) {
@@ -30,6 +33,7 @@ public class TelegramWebhookWorker {
 
     @Scheduled(fixedDelay = 1000)
     public void drain() {
+        if (rabbitIngressEnabled) return;
         for (int i = 0; i < 10; i++) {
             AtomicReference<Long> failedId = new AtomicReference<>();
             try {

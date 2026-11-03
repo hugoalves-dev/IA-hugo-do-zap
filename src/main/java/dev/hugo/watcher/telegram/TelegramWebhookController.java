@@ -3,6 +3,8 @@ package dev.hugo.watcher.telegram;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.utility.BotUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import dev.hugo.watcher.RabbitEventPublisher;
 
 /** ACK only after durable storage; downstream execution is performed by a separate worker. */
 @RestController
@@ -22,10 +25,23 @@ public class TelegramWebhookController {
     public static final String PATH = "/api/webhooks/telegram";
     private final byte[] secret;
     private final TelegramWebhookDataRepository inbox;
+    private final RabbitEventPublisher publisher;
 
-    public TelegramWebhookController(TelegramAdminProperties properties, TelegramWebhookDataRepository inbox) {
+    @Autowired
+    public TelegramWebhookController(TelegramAdminProperties properties, TelegramWebhookDataRepository inbox,
+                                     ObjectProvider<RabbitEventPublisher> publisher) {
+        this(properties, inbox, publisher.getIfAvailable());
+    }
+
+    public TelegramWebhookController(TelegramAdminProperties properties, TelegramWebhookDataRepository inbox,
+                                     RabbitEventPublisher publisher) {
         this.secret = properties.getWebhookSecret().getBytes(StandardCharsets.US_ASCII);
         this.inbox = inbox;
+        this.publisher = publisher;
+    }
+
+    public TelegramWebhookController(TelegramAdminProperties properties, TelegramWebhookDataRepository inbox) {
+        this(properties, inbox, (RabbitEventPublisher) null);
     }
 
     @PostMapping(value = PATH, consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -43,9 +59,13 @@ public class TelegramWebhookController {
             return ResponseEntity.badRequest().build();
         }
         try {
+            if (publisher != null) {
+                publisher.publish("admin", update.updateId().toString(), body);
+                return ResponseEntity.accepted().build();
+            }
             int inserted = inbox.insertIfAbsent(update.updateId().longValue(), body);
             return ResponseEntity.status(inserted == 1 ? HttpStatus.ACCEPTED : HttpStatus.OK).build();
-        } catch (DataAccessException ex) {
+        } catch (DataAccessException | IllegalStateException ex) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
     }

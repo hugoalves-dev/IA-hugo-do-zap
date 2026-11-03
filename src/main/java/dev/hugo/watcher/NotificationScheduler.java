@@ -30,7 +30,7 @@ public class NotificationScheduler {
         this.whatsappActions = null;
     }
 
-    @Scheduled(fixedDelayString = "${watcher.notification-delay:PT1M}")
+    @Scheduled(fixedDelayString = "${watcher.notification-delay:PT1S}")
     public void flushScheduled() {
         if (!running.compareAndSet(false, true)) return;
         Instant now = Instant.now();
