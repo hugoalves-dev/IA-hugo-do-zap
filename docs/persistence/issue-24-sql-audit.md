@@ -41,6 +41,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Debounce simulation capture/claim: `DebouncePersistenceRepository` owns PostgreSQL-native aliases, advisory locks, batch scheduling, SKIP LOCKED, retry and retention SQL. `DebounceService` retains serialization, policy window decisions and the original transaction boundaries.
 
+- Simulation decisions: `SimulationPersistenceRepository` owns snapshot reads, transaction-bound advisory locks, production-mode persistence, cooldown writes, template projections and batch completion. `SimulationService` keeps classification calls outside transactions and after-commit audit/metrics.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |
@@ -48,7 +50,7 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 | Identity and contact | `IdentityService`, `LegacyImportService` | Canonical aliases, LID/PN/JID merge, contact-name precedence, collision rejection |
 | Ingest/job/outbox | `JdbcInboxRepository`, `JdbcJobRepository`, `NotificationOutboxRepository` | Lease/claim, `SKIP LOCKED`, idempotency, restart, ordered processing |
 | Notification delivery | `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
-| Simulation and AI | `SimulationService`, `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
+| Simulation and AI | `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
 | Telegram admin | `ShadowDecisionQuery` | Authorize before action, durable inbox, offsets, callback replay prevention |
 | Other | `QuarantineWriter`, remaining historical JDBC compatibility facades | Bounded retention, no sensitive payload leaks |
 

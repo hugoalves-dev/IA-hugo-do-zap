@@ -90,6 +90,20 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
+    dev.hugo.watcher.simulation.SimulationService simulationService(
+            dev.hugo.watcher.simulation.SimulationPersistenceRepository persistence,
+            PlatformTransactionManager transactions, Clock clock,
+            dev.hugo.watcher.simulation.WatcherSimulationProperties properties,
+            dev.hugo.watcher.simulation.DecisionEngine decisions,
+            PersistedPolicyRepository policies, dev.hugo.watcher.policy.AvailabilityService availability,
+            WatcherProperties watcher, dev.hugo.watcher.ai.AiSimulationClassifier classifier,
+            dev.hugo.watcher.notification.DecisionActionProducer producer) {
+        return new dev.hugo.watcher.simulation.SimulationService(
+                persistence, transactions, clock, properties, decisions, policies,
+                availability, watcher, classifier, producer);
+    }
+
+    @Bean
     dev.hugo.watcher.simulation.DebounceService debounceService(
             dev.hugo.watcher.simulation.DebouncePersistenceRepository persistence,
             dev.hugo.watcher.simulation.WatcherSimulationProperties limits,
