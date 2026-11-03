@@ -57,6 +57,11 @@ Updated through the 2026-11-03 PR continuation; source of truth is the current P
 
 - Quarantine: `QuarantineEventRepository` now exclusively owns the redacted `quarantined_events` insert, ID normalization and bounded expiry; the legacy `QuarantineWriter` is a SQL-free compatibility bridge.
 
+## Automated structural boundary gate
+
+- `PersistenceSqlBoundaryTest` scans source-annotated application services/components/controllers and rejects direct JdbcTemplate calls or JDBC client fields. Legacy JDBC constructor signatures stay permitted temporarily, but they cannot own query execution.
+- The gate is intentionally narrow: syntax-only heuristics do not replace database behavior tests, a complete manual SQL inventory, or code review of repository-native operations.
+
 ## PostgreSQL integration coverage added during review
 
 - `JdbcInboxRepositoryContractTest`: concurrent identical webhook intake across independent transactions, and rollback of a failed transaction followed by a clean retry; verifies exactly one durable processing job.
