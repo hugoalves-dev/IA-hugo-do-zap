@@ -88,7 +88,8 @@ public class WhatsAppActionService {
                 || !latest.participantJid().equals(expected.participantJid())
                 || !latest.situation().equals(expected.situation())
                 || !latest.templateId().equals(expected.templateId())
-                || latest.templateVersion() != expected.templateVersion()) return null;
+                || latest.templateVersion() != expected.templateVersion()
+                || !latest.body().equals(expected.body())) return null;
         String deliveryBody = BotReplyFormatter.whatsAppTemplate(latest.body());
         if (deliveryBody == null) return null;
         return new AuthorizedAction(actionId, expected.decisionId(), expected.chatJid(), deliveryBody);
