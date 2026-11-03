@@ -25,7 +25,9 @@ class WhatsAppActionServiceTest {
     @Container static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
     private JdbcTemplate jdbc;
     private DataSourceTransactionManager tx;
-    private final Instant now = Instant.parse("2026-10-27T12:00:00Z");
+    // Admission queries validate expiry against PostgreSQL clock_timestamp(), not the injected clock.
+    // Fixed historical dates eventually expire and turn positive dispatch scenarios into false negatives.
+    private final Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     private UUID decisionId;
 
     @BeforeEach void migrateAndSeed() {
