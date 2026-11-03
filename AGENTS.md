@@ -4,7 +4,7 @@
 
 This repository implements a personal WhatsApp archived-chat watcher and controlled automation service. It receives WhatsApp events through Evolution API, persists operational state in PostgreSQL, and delivers notifications and administrative interactions through the Telegram Bot API. Safety, data privacy, and preservation of running production state take priority over convenience.
 
-Before changing code, inspect the current implementation, tests, `README.md`, `pom.xml`, `compose.yaml`, `.github/workflows/backend.yml`, and applicable runbooks. The code and current configuration are the source of truth; historical specifications, plans, and the legacy TypeScript README sections are not proof that a feature is active. Do not assume the state of a running VPS from repository contents.
+Before changing code, inspect the current implementation, tests, `README.md`, `pom.xml`, `compose.yaml`, `.github/workflows/backend.yml`, and applicable runbooks. The code and current configuration are the source of truth; historical specifications and migration plans are not proof that a feature is active. Do not assume the state of a running VPS from repository contents.
 
 ## Current stack and layout
 
@@ -17,7 +17,8 @@ Before changing code, inspect the current implementation, tests, `README.md`, `p
 - Database migrations: `src/main/resources/db/migration/`.
 - Runtime configuration: `src/main/resources/application.properties`, `.env.example`, `compose.yaml`.
 - CI/CD: `.github/workflows/backend.yml` and `scripts/deploy-vps.sh`.
-- Legacy rollback/reference implementation: `src/`, `tests/`, `package.json` (TypeScript/Baileys/SQLite). Do not treat it as the active Docker runtime or delete it without a separately approved retirement plan.
+- The previous TypeScript/Baileys watcher was retired in issue #39; no Node watcher sources, npm manifest or TypeScript tests belong to the active project. Historical plans remain for audit purposes.
+- The Java one-shot SQLite snapshot import (`LegacyImport*`, `LegacySqliteSnapshotRepository`, `sqlite-jdbc`) is a distinct migration tool, **not** the retired TypeScript watcher. Keep it until migration retirement is separately approved.
 - Relevant operational references: `docs/telegram-webhook-migration.md`, `docs/local-ai-activation-checklist.md`, and `docs/persistence/issue-24-rollout-checklist.md`.
 
 ## Working approach

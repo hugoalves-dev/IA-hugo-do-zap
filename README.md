@@ -4,7 +4,7 @@ Serviço Spring Boot 4 / Java 25 que recebe eventos da Evolution API, grava-os e
 
 No fluxo VPS, `COMPOSE_PROFILES=prod` ativa apenas `watcher` (imagem `ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest`) e `evolution-api`. O Compose usa o PostgreSQL já existente pela rede externa `infra_network`. Crie bancos e roles distintos para Spring e Evolution antes de uma implantação autorizada. A URL PostgreSQL da Evolution deve usar percent-encoding em senhas com caracteres reservados. Um profile `local-db` opcional fornece dois PostgreSQL isolados para desenvolvimento local; ele não substitui nem altera o PostgreSQL da VPS.
 
-O TypeScript legado permanece como referência e opção de rollback até o cutover ser validado. Ele implementa o watcher anterior baseado em Baileys; o Compose atual não compila nem inicia esse código. O runtime implantado é o serviço Spring Boot Java. Não remova o legado antes de validar o cutover e encerrar a janela de rollback.
+O watcher antigo em TypeScript/Node.js + Baileys foi removido do código versionado após autorização de aposentadoria. O único runtime mantido é Spring Boot Java com Evolution API e PostgreSQL. Documentação antiga permanece apenas como histórico. O importador Java de snapshots SQLite é uma ferramenta de migração separada, não um watcher em execução.
 
 ## Preparação operacional
 
@@ -42,13 +42,13 @@ O profile pode ser validado sem iniciar containers com `docker compose --env-fil
 
 O pareamento é sempre manual. O Compose inicia a API com cache local, mas não cria instância, não pede QR Code e não conecta a conta. A imagem fixada `evoapicloud/evolution-api:v2.3.7` inclui o Evolution Manager em `/manager`; a documentação oficial descreve `POST /instance/create` para criar instância e `GET /instance/connect/{instance}` para conectar e gerar QR Code ([criar instância](https://doc.evolution-api.com/v2/api-reference/instance-controller/create-instance-basic), [conectar](https://doc.evolution-api.com/v2/api-reference/instance-controller/instance-connect)). A versão da imagem está registrada no [release oficial v2.3.7](https://github.com/evolution-foundation/evolution-api/releases/tag/v2.3.7).
 
-1. Antes de trocar de cliente, revise a sessão TypeScript legada e planeje o cutover. Parear outro cliente pode desconectar uma sessão existente ou exigir novo vínculo. O estado de autenticação legado não é migrado pelo Compose; não copie arquivos de sessão entre Baileys e Evolution. Mantenha o rollback possível até validar a conexão e os eventos recebidos.
+1. Antes de conectar uma instância, verifique o vínculo atual da conta WhatsApp e planeje o pareamento. Associar outro cliente pode desconectar uma sessão existente ou exigir novo QR Code. Nunca copie arquivos de sessão entre integrações; valide a conexão e os eventos recebidos na Evolution.
 2. Configure uma `EVOLUTION_API_KEY` forte e exclusiva no `.env` local. Inicie `docker compose --env-file .env up -d evolution-api`. As flags de envio real do watcher continuam `false`.
 3. Se a API estiver na VPS, abra um túnel SSH autenticado a partir da sua máquina: `ssh -N -L 8080:127.0.0.1:8080 usuario@host-vps` (inclua `-p PORTA` se necessário). A porta pública não deve ser aberta no firewall nem publicada no endereço da VPS. Em ambiente local, use o mesmo endereço sem túnel.
 4. Abra `http://localhost:8080/manager`, autentique com a chave global `EVOLUTION_API_KEY` e crie uma instância chamada `watcher-evolution` com integração `WHATSAPP-BAILEYS`. Gere uma chave própria da instância se o Manager solicitar. Não reutilize a chave global como token da instância.
 5. No Manager, solicite a conexão (`GET /instance/connect/watcher-evolution`) e exiba o QR Code recém-gerado. No telefone, abra **WhatsApp → Aparelhos conectados → Conectar aparelho** (Android) ou **WhatsApp → Configurações → Aparelhos conectados → Conectar aparelho** (iPhone) e escaneie o QR Code. QR Codes expiram; gere outro pelo Manager se necessário. Nunca publique, envie em chat ou registre captura do QR Code: ele autoriza vínculo da conta.
 6. Confirme no Manager que o estado da instância é `open`. Depois configure o webhook da instância para `http://watcher:8080/internal/evolution/webhook`, com o evento necessário e o token de webhook separado `WATCHER_EVOLUTION_WEBHOOK_TOKEN`. Configure apenas eventos necessários; não habilite webhook global.
-7. Mantenha os três opt-ins de envio real desligados durante validação. Conectar uma conta não autoriza envio automático nem conclui o cutover do watcher.
+7. Mantenha os três opt-ins de envio real desligados durante validação. Conectar uma conta não autoriza envio automático nem prova o funcionamento do pipeline: confira eventos, persistência e notificações.
 
 O Manager e a API só ficam acessíveis localmente em `127.0.0.1:8080`. Em VPS, feche a porta no firewall e use o túnel SSH acima. Não use proxy público sem autenticação forte e TLS, e nunca exponha o QR Code.
 
@@ -202,7 +202,7 @@ docker compose --env-file .env run --rm --no-deps \
   --watcher.legacy-import.mode=APPLY
 ```
 
-O importador abre a cópia em modo SQLite read-only e `query_only`; repetições idênticas não duplicam linhas. Snippets vencidos são descartados, e a retenção máxima continua limitada a sete dias. Os arquivos legados originais permanecem versionados e não são alterados.
+O importador abre a cópia em modo SQLite read-only e `query_only`; repetições idênticas não duplicam linhas. Snippets vencidos são descartados, e a retenção máxima continua limitada a sete dias. Os snapshots SQLite privados permanecem fora do Git e não são incluídos no deploy. Preserve cópias de segurança conforme a política de retenção aprovada.
 
 ## Testes focados
 
