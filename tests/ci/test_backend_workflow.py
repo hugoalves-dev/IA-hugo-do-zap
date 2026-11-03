@@ -132,6 +132,7 @@ class BackendWorkflowContractTest(unittest.TestCase):
             "WATCHER_TELEGRAM_CHAT_ID": "123456789",
             "WATCHER_EVOLUTION_WEBHOOK_TOKEN": "synthetic-webhook-token",
             "EVOLUTION_API_KEY": "synthetic-evolution-api-key",
+            "RABBITMQ_PASSWORD": "synthetic-rabbitmq-password",
             "EVOLUTION_IMAGE": "evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339",
             "COMPOSE_PROFILES": "prod",
             "WATCHER_AI_ENABLED": "true",
@@ -163,13 +164,14 @@ class BackendWorkflowContractTest(unittest.TestCase):
                 return json.loads(result.stdout)
 
             default = config()
-            self.assertEqual({"watcher", "evolution-api"}, set(default["services"]))
+            self.assertEqual({"watcher", "evolution-api", "rabbitmq"}, set(default["services"]))
             self.assertEqual("evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339", default["services"]["evolution-api"]["image"])
             self.assertEqual("false", default["services"]["evolution-api"]["environment"]["CACHE_REDIS_ENABLED"])
             self.assertEqual("true", default["services"]["evolution-api"]["environment"]["CACHE_LOCAL_ENABLED"])
             self.assertNotIn("depends_on", default["services"]["evolution-api"])
             self.assertEqual("ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest", default["services"]["watcher"]["image"])
             self.assertEqual("127.0.0.1", default["services"]["evolution-api"]["ports"][0]["host_ip"])
+            self.assertEqual("synthetic-rabbitmq-password", default["services"]["rabbitmq"]["environment"]["RABBITMQ_DEFAULT_PASS"])
             self.assertIn("postgres.synthetic.invalid", default["services"]["watcher"]["environment"]["SPRING_DATASOURCE_URL"])
             watcher_env = default["services"]["watcher"]["environment"]
             for name in ("WATCHER_AI_ENABLED", "WATCHER_AI_GEMINIAPIKEY", "WATCHER_AI_GEMINIMODEL",

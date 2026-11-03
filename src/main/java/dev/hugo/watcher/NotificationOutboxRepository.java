@@ -153,8 +153,7 @@ public class NotificationOutboxRepository {
         long delayMillis = availableAt == null ? 0
                 : java.time.Duration.between(databaseNow, availableAt.toInstant()).toMillis();
         if (delayMillis > 0)
-            rabbitPublisher.publishDeferred(isAdminAction(actionType) ? "admin" : "notifications",
-                    availableAt.toInstant(), actionKey, actionKey, headers);
+            rabbitPublisher.publishDeferred("notifications", availableAt.toInstant(), actionKey, actionKey, headers);
         else
             rabbitPublisher.publish("notifications", actionKey, actionKey, headers);
         jdbc.update("""
@@ -162,10 +161,6 @@ public class NotificationOutboxRepository {
                     updated_at=clock_timestamp()
                 where action_key=?
                 """, actionKey);
-    }
-
-    private static boolean isAdminAction(String actionType) {
-        return "telegram_admin_reply".equals(actionType) || "telegram_admin_edit".equals(actionType);
     }
 
     public boolean hasActiveAction(String actionType, Instant now) {

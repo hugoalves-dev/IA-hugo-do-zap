@@ -58,7 +58,7 @@ public class NotificationRabbitConsumer {
             int retries = retryCount(message);
             if (retry.rateLimited()) {
                 retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey,
-                        retry.delayMillis(), isAdminAction(actionKey) ? "admin.rate-limited" : "notifications.rate-limited");
+                        retry.delayMillis(), "notifications.rate-limited");
             } else {
                 long delay = RETRY_DELAY_MILLIS[Math.min(retries, RETRY_DELAY_MILLIS.length - 1)];
                 retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, delay,
@@ -88,17 +88,15 @@ public class NotificationRabbitConsumer {
     }
 
     private static String deferredRoute(String actionKey, NotificationDeferredException.Reason reason) {
-        boolean admin = isAdminAction(actionKey);
         return switch (reason) {
             case WORK_WINDOW, SCHEDULED -> throw new IllegalArgumentException("scheduled actions use a date-specific queue");
-            case RATE_LIMIT -> admin ? "admin.rate-limited" : "notifications.rate-limited";
-            case ACTIVE_LEASE -> admin ? "admin.lease" : "notifications.lease";
+            case RATE_LIMIT -> "notifications.rate-limited";
+            case ACTIVE_LEASE -> "notifications.lease";
         };
     }
 
     private static String retryRoute(String actionKey, int attempt) {
-        String prefix = isAdminAction(actionKey) ? "admin.retry." : "notifications.retry.";
-        return prefix + Math.min(3, attempt);
+        return "notifications.retry." + Math.min(3, attempt);
     }
 
     private static Map<String, Object> deferredHeaders(Message message) {
