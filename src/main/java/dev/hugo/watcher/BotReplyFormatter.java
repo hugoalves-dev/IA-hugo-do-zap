@@ -27,7 +27,8 @@ public final class BotReplyFormatter {
         if (!value.regionMatches(true, 0, LEGACY_DISCLOSURE, 0, LEGACY_DISCLOSURE.length()))
             return null;
         String message = value.substring(LEGACY_DISCLOSURE.length()).stripLeading();
+        if (message.startsWith(PREFIX)) message = message.substring(PREFIX.length());
         if (message.isBlank()) return null;
-        return telegramAdmin(message);
+        return PREFIX + message;
     }
 }
