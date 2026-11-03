@@ -62,27 +62,41 @@ public class TelegramBotApiTransport implements TelegramTransport {
 
     @Override public TelegramDeliveryResult sendHtml(String html) { return sendWith(html, executeHtml); }
 
-    @Override
-    public TelegramDeliveryResult sendAdmin(String text, String payload) {
-        if (bot == null) return send(text);
+    @Override public TelegramDeliveryResult sendAdmin(String text, String payload) {
+        return sendAdminWith(text, payload, false);
+    }
+
+    @Override public TelegramDeliveryResult sendAdminHtml(String html, String payload) {
+        return sendAdminWith(html, payload, true);
+    }
+
+    private TelegramDeliveryResult sendAdminWith(String text, String payload, boolean html) {
+        if (bot == null) return html ? sendHtml(text) : send(text);
         try {
             InlineKeyboardMarkup markup = markup(payload);
-            if (markup == null) return send(text);
-            return sendWith(text, (id, body) -> bot.execute(message(id, body, false).replyMarkup(markup)));
+            if (markup == null) return html ? sendHtml(text) : send(text);
+            return sendWith(text, (id, body) -> bot.execute(message(id, body, html).replyMarkup(markup)));
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.WARNING, "Telegram admin markup failed: {0}", ex.getClass().getSimpleName());
             return TelegramDeliveryResult.failure();
         }
     }
 
-    @Override
-    public TelegramDeliveryResult editAdmin(String text, String payload) {
-        if (bot == null) return sendAdmin(text, payload);
+    @Override public TelegramDeliveryResult editAdmin(String text, String payload) {
+        return editAdminWith(text, payload, false);
+    }
+
+    @Override public TelegramDeliveryResult editAdminHtml(String html, String payload) {
+        return editAdminWith(html, payload, true);
+    }
+
+    private TelegramDeliveryResult editAdminWith(String text, String payload, boolean html) {
+        if (bot == null) return html ? sendAdminHtml(text, payload) : sendAdmin(text, payload);
         try {
             JsonNode node = JSON.readTree(payload);
             int messageId = node.path("messageId").asInt(0);
-            if (messageId <= 0) return sendAdmin(text, payload);
-            var request = new EditMessageText(chatId, messageId, text);
+            if (messageId <= 0) return html ? sendAdminHtml(text, payload) : sendAdmin(text, payload);
+            var request = editMessage(chatId, messageId, text, html);
             InlineKeyboardMarkup markup = markup(payload);
             if (markup != null) request.replyMarkup(markup);
             BaseResponse response = bot.execute(request);
@@ -92,6 +106,11 @@ public class TelegramBotApiTransport implements TelegramTransport {
             LOG.log(System.Logger.Level.WARNING, "Telegram admin message edit failed: {0}", ex.getClass().getSimpleName());
             return TelegramDeliveryResult.unknown();
         }
+    }
+
+    static EditMessageText editMessage(long chatId, int messageId, String text, boolean html) {
+        EditMessageText request = new EditMessageText(chatId, messageId, text);
+        return html ? request.parseMode(ParseMode.HTML) : request;
     }
 
     static InlineKeyboardMarkup markup(String payload) {
