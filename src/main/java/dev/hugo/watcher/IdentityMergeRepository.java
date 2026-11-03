@@ -3,6 +3,7 @@ package dev.hugo.watcher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -184,6 +185,126 @@ public class IdentityMergeRepository {
     public void lockSnapshot(String jid) {
         jdbc.query("select pg_advisory_xact_lock(hashtextextended(?, 0))", rs -> { }, jid);
     }
+
+
+    public List<ContactRow> contactsForCanonical(String canonical, boolean forUpdate) {
+        return jdbc.query("""
+                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at
+                  from contact_identity where canonical_jid=?
+                """ + (forUpdate ? " for update" : ""), IdentityMergeRepository::contact, canonical);
+    }
+
+    public List<ContactRow> contactsForCanonicals(List<String> canonicals) {
+        if (canonicals.isEmpty()) return List.of();
+        String params = String.join(",", java.util.Collections.nCopies(canonicals.size(), "?"));
+        return jdbc.query("""
+                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at
+                  from contact_identity where canonical_jid in (""" + params + ") order by canonical_jid for update",
+                IdentityMergeRepository::contact, canonicals.toArray());
+    }
+
+    public void upsertContactName(String target, String lid, String phone, String username,
+                                  String selectedName, ContactNameSource selectedSource) {
+        jdbc.update("""
+                insert into contact_identity(canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at)
+                values (?,?,?,?,?,?,?)
+                on conflict (canonical_jid) do update set
+                    lid_jid=coalesce(excluded.lid_jid,contact_identity.lid_jid),
+                    phone_jid=coalesce(excluded.phone_jid,contact_identity.phone_jid),
+                    username=coalesce(excluded.username,contact_identity.username),
+                    display_name=excluded.display_name,
+                    display_name_source=excluded.display_name_source,
+                    updated_at=excluded.updated_at
+                """, target, lid, phone, username, selectedName,
+                selectedSource == null ? null : selectedSource.name(), Timestamp.from(Instant.now()));
+    }
+
+    public void updateSnapshotDisplayName(String canonical, String displayName) {
+        jdbc.update("update chat_snapshot set display_name=? where chat_jid=?", displayName, canonical);
+    }
+
+    public void replaceContacts(List<String> candidates, String canonical, String lid, String phone,
+                                String username, String displayName, ContactNameSource source) {
+        if (candidates.isEmpty()) throw new IllegalArgumentException("Empty identity merge");
+        String params = String.join(",", java.util.Collections.nCopies(candidates.size(), "?"));
+        jdbc.update("delete from contact_identity where canonical_jid in (" + params + ")", candidates.toArray());
+        jdbc.update("""
+                insert into contact_identity(canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at)
+                values (?,?,?,?,?,?,?)
+                """, canonical, lid, phone, username, displayName, source == null ? null : source.name(),
+                Timestamp.from(Instant.now()));
+    }
+
+    public List<ChatSnapshotRow> snapshotsForUpdate(List<String> jids) {
+        if (jids.isEmpty()) return List.of();
+        String params = String.join(",", java.util.Collections.nCopies(jids.size(), "?"));
+        return jdbc.query("""
+                select chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot,last_read_at
+                  from chat_snapshot where chat_jid in (""" + params + ") order by chat_jid for update",
+                (rs, row) -> new ChatSnapshotRow(rs.getString("chat_jid"), (Boolean) rs.getObject("archived"),
+                        rs.getTimestamp("snapshot_at").toInstant(), rs.getString("display_name"),
+                        rs.getBoolean("is_group"), rs.getBoolean("synchronized_snapshot"),
+                        rs.getTimestamp("last_read_at") == null ? null : rs.getTimestamp("last_read_at").toInstant()),
+                jids.toArray());
+    }
+
+    public List<PendingRow> pendingForUpdate(List<String> jids) {
+        if (jids.isEmpty()) return List.of();
+        String params = String.join(",", java.util.Collections.nCopies(jids.size(), "?"));
+        return jdbc.query("""
+                select chat_jid,payload::text as payload,due_at,updated_at,expires_at
+                  from pending_notification where chat_jid in (""" + params + ") order by chat_jid for update",
+                (rs, row) -> new PendingRow(rs.getString("chat_jid"), rs.getString("payload"),
+                        rs.getTimestamp("due_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
+                        rs.getTimestamp("expires_at").toInstant()), jids.toArray());
+    }
+
+    public void replaceSnapshots(List<String> jids, String canonical, Boolean archived, Instant snapshotAt,
+                                 String displayName, boolean group, boolean synchronizedSnapshot, Instant lastReadAt) {
+        if (jids.isEmpty()) throw new IllegalArgumentException("Empty identity merge");
+        String params = String.join(",", java.util.Collections.nCopies(jids.size(), "?"));
+        jdbc.update("delete from chat_snapshot where chat_jid in (" + params + ")", jids.toArray());
+        jdbc.update("""
+                insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot,last_read_at)
+                values (?,?,?,?,?,?,?)
+                """, canonical, archived, Timestamp.from(snapshotAt), displayName, group,
+                synchronizedSnapshot, lastReadAt == null ? null : Timestamp.from(lastReadAt));
+    }
+
+    public void deletePending(List<String> jids) {
+        if (jids.isEmpty()) return;
+        String params = String.join(",", java.util.Collections.nCopies(jids.size(), "?"));
+        jdbc.update("delete from pending_notification where chat_jid in (" + params + ")", jids.toArray());
+    }
+
+    public void insertPending(String canonical, String json, Instant dueAt, Instant updatedAt, Instant expiresAt) {
+        jdbc.update("""
+                insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at)
+                values (?,?::jsonb,?,?,?)
+                """, canonical, json, Timestamp.from(dueAt), Timestamp.from(updatedAt), Timestamp.from(expiresAt));
+    }
+
+    public void quarantine(String kind, String externalId, String reason, Instant at) {
+        QuarantineWriter.write(jdbc, kind, externalId, reason, at);
+    }
+
+    private static ContactRow contact(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
+        return new ContactRow(rs.getString("canonical_jid"), rs.getString("lid_jid"),
+                rs.getString("phone_jid"), rs.getString("username"), rs.getString("display_name"),
+                source(rs.getString("display_name_source")), rs.getTimestamp("updated_at").toInstant());
+    }
+
+    private static ContactNameSource source(String value) {
+        if (value == null) return null;
+        try { return ContactNameSource.valueOf(value); }
+        catch (IllegalArgumentException ex) { return ContactNameSource.LEGACY; }
+    }
+
+    public record ContactRow(String canonicalJid, String lidJid, String phoneJid, String username,
+                             String displayName, ContactNameSource nameSource, Instant updatedAt) { }
+    public record ChatSnapshotRow(String chatJid, Boolean archived, Instant snapshotAt, String displayName,
+                                  boolean group, boolean synchronizedSnapshot, Instant lastReadAt) { }
+    public record PendingRow(String chatJid, String payload, Instant dueAt, Instant updatedAt, Instant expiresAt) { }
 
     public record AliasRow(String alias, String canonicalIdentity) { }
 

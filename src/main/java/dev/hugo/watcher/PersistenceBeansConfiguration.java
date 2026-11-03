@@ -90,10 +90,9 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
-    IdentityService identityService(org.springframework.jdbc.core.JdbcTemplate jdbc,
-                                    IdentityMergeRepository identityStorage,
+    IdentityService identityService(IdentityMergeRepository identityStorage,
                                     PlatformTransactionManager transactions) {
-        return new IdentityService(jdbc, identityStorage, transactions);
+        return new IdentityService(identityStorage, transactions);
     }
 
     @Bean
