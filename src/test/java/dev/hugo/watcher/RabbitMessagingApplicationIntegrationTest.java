@@ -65,6 +65,10 @@ class RabbitMessagingApplicationIntegrationTest {
         assertTrue(listeners.getListenerContainers().stream().allMatch(
                 org.springframework.amqp.rabbit.listener.MessageListenerContainer::isRunning));
         try {
+            java.time.Instant availableAt = java.time.Instant.now().plusSeconds(30);
+            String deferredQueueName = "watcher.notifications.deferred." + availableAt.toEpochMilli();
+            publisher.publishDeferred(availableAt, "deferred-topology-check", "{}", java.util.Map.of());
+
             String queues = rabbit.execInContainer("rabbitmqctl", "list_queues", "-p", "watcher", "name", "arguments")
                     .getStdout();
             String retryQueue = java.util.Arrays.stream(queues.split("\\R"))
@@ -72,7 +76,7 @@ class RabbitMessagingApplicationIntegrationTest {
                     .findFirst().orElseThrow();
             assertTrue(retryQueue.contains("x-message-ttl") && retryQueue.contains("1000"));
             String deferredQueue = java.util.Arrays.stream(queues.split("\\R"))
-                    .filter(line -> line.startsWith("watcher.notifications.deferred"))
+                    .filter(line -> line.startsWith(deferredQueueName))
                     .findFirst().orElseThrow();
             assertFalse(deferredQueue.contains("x-message-ttl"),
                     "long work-window deferrals use their own queue, not a shared short retry TTL");

@@ -67,7 +67,7 @@ class RabbitPublisherIntegrationTest {
 
         properties.setExchange("watcher.events");
         properties.setConfirmTimeout(Duration.ofSeconds(5));
-        RabbitEventPublisher publisher = new RabbitEventPublisher(template, properties);
+        RabbitEventPublisher publisher = new RabbitEventPublisher(template, properties, admin);
         try {
             String id = UUID.randomUUID().toString();
             publisher.publish("incoming", id, "{\"event\":\"messages.upsert\"}");
