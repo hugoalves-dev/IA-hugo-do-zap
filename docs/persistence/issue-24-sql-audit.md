@@ -62,6 +62,10 @@ Updated through the 2026-11-03 PR continuation; source of truth is the current P
 - `PersistenceSqlBoundaryTest` scans source-annotated application services/components/controllers and rejects direct JdbcTemplate calls or JDBC client fields. Legacy JDBC constructor signatures stay permitted temporarily, but they cannot own query execution.
 - The gate is intentionally narrow: syntax-only heuristics do not replace database behavior tests, a complete manual SQL inventory, or code review of repository-native operations.
 
+## Production dependency injection acceptance
+
+- `EvolutionWebhookControllerTest.productionBeansUseManagedPersistenceAndSharedSafetyGates` verifies that the live Spring Boot context uses managed persistence repositories rather than compatibility JDBC constructors, and that WhatsApp/Telegram real-send paths share the same runtime authorization gate and delivery admission coordinator.
+
 ## PostgreSQL integration coverage added during review
 
 - `JdbcInboxRepositoryContractTest`: concurrent identical webhook intake across independent transactions, and rollback of a failed transaction followed by a clean retry; verifies exactly one durable processing job.

@@ -4,6 +4,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -25,6 +27,7 @@ import dev.hugo.watcher.notification.EvolutionActionTransport;
 import dev.hugo.watcher.notification.IntelligentAlertService;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 
 @Testcontainers(disabledWithoutDocker = true)
@@ -59,6 +62,7 @@ class EvolutionWebhookControllerTest {
         registry.add("watcher.telegram.intelligent-alerts-enabled", () -> "true");
     }
 
+    @Autowired ApplicationContext context;
     @Autowired JdbcTemplate jdbc;
     @Autowired EvolutionJobProcessor jobs;
     @Autowired IntelligentAlertService alerts;
@@ -76,6 +80,36 @@ class EvolutionWebhookControllerTest {
         jdbc.update("delete from processing_jobs");
         jdbc.update("delete from inbox_events");
         jdbc.update("delete from quarantined_events");
+    }
+
+    @Test void productionBeansUseManagedPersistenceAndSharedSafetyGates() {
+        var gate = context.getBean(dev.hugo.watcher.notification.DecisionRuntimeGate.class);
+        var deliveries = context.getBean(dev.hugo.watcher.notification.DecisionDeliveryCoordinator.class);
+
+        var whatsapp = context.getBean(dev.hugo.watcher.notification.WhatsAppActionService.class);
+        assertSame(context.getBean(dev.hugo.watcher.notification.WhatsAppActionPersistenceRepository.class),
+                ReflectionTestUtils.getField(whatsapp, "persistence"));
+        assertSame(gate, ReflectionTestUtils.getField(whatsapp, "runtimeGate"));
+
+        var dispatcher = context.getBean(dev.hugo.watcher.notification.WhatsAppActionDispatcher.class);
+        assertSame(context.getBean(dev.hugo.watcher.notification.WhatsAppActionDispatchRepository.class),
+                ReflectionTestUtils.getField(dispatcher, "persistence"));
+        assertSame(deliveries, ReflectionTestUtils.getField(dispatcher, "deliveries"));
+
+        assertSame(context.getBean(dev.hugo.watcher.notification.IntelligentAlertPersistenceRepository.class),
+                ReflectionTestUtils.getField(alerts, "persistence"));
+        assertSame(gate, ReflectionTestUtils.getField(alerts, "runtimeGate"));
+
+        assertSame(context.getBean(IdentityMergeRepository.class),
+                ReflectionTestUtils.getField(context.getBean(IdentityService.class), "identityStorage"));
+        assertSame(context.getBean(dev.hugo.watcher.simulation.DebouncePersistenceRepository.class),
+                ReflectionTestUtils.getField(context.getBean(dev.hugo.watcher.simulation.DebounceService.class), "persistence"));
+        assertSame(context.getBean(dev.hugo.watcher.simulation.SimulationPersistenceRepository.class),
+                ReflectionTestUtils.getField(context.getBean(dev.hugo.watcher.simulation.SimulationService.class), "persistence"));
+        assertSame(context.getBean(dev.hugo.watcher.ai.AiClassificationEvaluationRepository.class),
+                ReflectionTestUtils.getField(context.getBean(dev.hugo.watcher.ai.AiSimulationClassifier.class), "persistence"));
+        assertSame(context.getBean(LegacyImportPersistenceRepository.class),
+                ReflectionTestUtils.getField(context.getBean(LegacyImportService.class), "persistence"));
     }
 
     @Test void onlyBearerAuthenticatedWebhookCanCreateOwnReplyReference() throws Exception {
