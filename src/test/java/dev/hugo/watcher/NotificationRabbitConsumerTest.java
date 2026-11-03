@@ -150,7 +150,7 @@ class NotificationRabbitConsumerTest {
         consumer.receive(message("archived_messages:work-only", 0), channel);
 
         verify(publisher).publishDeferred(eq(availableAt), eq("archived_messages:work-only"),
-                eq("archived_messages:work-only"), Map.of("x-retry-count", 0));
+                eq("archived_messages:work-only"), eq(Map.of("x-retry-count", 0)));
         verify(channel).basicAck(17L, false);
     }
 
