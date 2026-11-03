@@ -30,6 +30,7 @@ public class TelegramMessageFormatter {
                 case ConnectionService.ACTION_TYPE -> connection(payload);
                 case "simulation_daily_summary" -> dailySummary(payload);
                 case "intelligent_alert" -> intelligentAlert(payload);
+                case "simulation_reply_preview" -> simulationReplyPreview(payload);
                 default -> "📬 O watcher registrou uma nova atualização do WhatsApp.";
             };
         } catch (RuntimeException ex) {
@@ -38,6 +39,26 @@ public class TelegramMessageFormatter {
                 return BotReplyFormatter.telegramAdmin("Não foi possível formatar a resposta administrativa.");
             return "⚠️ O watcher registrou uma atualização do WhatsApp, mas não conseguiu formatar os detalhes.";
         }
+    }
+
+    /** Only the structured /menu reply needs rich admin formatting; all other commands stay literal text. */
+    boolean isHtmlAdmin(OutboxAction action) {
+        if (action == null || !List.of("telegram_admin_reply", "telegram_admin_edit").contains(action.actionType()))
+            return false;
+        try {
+            return JSON.readTree(action.payload()).path("text").asString("")
+                    .startsWith("⚙️ Administração Hugo do Zap\n");
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
+    String formatAdminHtml(OutboxAction action) {
+        String plain = format(action);
+        String title = BotReplyFormatter.PREFIX + "⚙️ Administração Hugo do Zap";
+        if (!plain.startsWith(title)) return escape(plain);
+        return escape(BotReplyFormatter.PREFIX) + "<b>⚙️ Administração Hugo do Zap</b>"
+                + escape(plain.substring(title.length()));
     }
 
     int includedArchivedChats(String payload) {
@@ -52,7 +73,7 @@ public class TelegramMessageFormatter {
         };
         int totalChats = payload.path("totalChats").asInt(0);
         int totalMessages = payload.path("totalMessages").asInt(0);
-        StringBuilder text = new StringBuilder(title).append("\n").append(totalChats)
+        StringBuilder text = new StringBuilder("<b>").append(title).append("</b>\n").append(totalChats)
                 .append(totalChats == 1 ? " conversa · " : " conversas · ").append(totalMessages)
                 .append(totalMessages == 1 ? " mensagem" : " mensagens");
         int includedChats = 0;
@@ -66,14 +87,15 @@ public class TelegramMessageFormatter {
             if (!chat.path("isGroup").asBoolean(false) && phone != null)
                 name = "<a href=\"https://wa.me/" + phone + "\">" + name + "</a>";
             int count = chat.path("messageCount").asInt(0);
-            StringBuilder line = new StringBuilder("\n• ").append(name).append(" — ").append(count)
-                    .append(count == 1 ? " mensagem" : " mensagens");
+            StringBuilder line = new StringBuilder("\n\n<b>• ").append(name).append(" — ").append(count)
+                    .append(count == 1 ? " mensagem</b>" : " mensagens</b>");
             try {
                 Instant last = Instant.parse(chat.path("lastMessageAt").asString(""));
-                line.append("\n  Última: ").append(LOCAL_DATE.withZone(timezone).format(last));
+                line.append("\nÚltima: ").append(LOCAL_DATE.withZone(timezone).format(last));
             } catch (RuntimeException ignored) { }
-            String preview = clean(chat.path("lastMessagePreview").asString(""));
-            if (!preview.isEmpty()) line.append("\n  ").append(escape(limit(preview, MAX_PREVIEW_LENGTH)));
+            String preview = cleanPreview(chat.path("lastMessagePreview").asString(""));
+            if (!preview.isEmpty()) line.append("\n<blockquote>")
+                    .append(escape(limit(preview, MAX_PREVIEW_LENGTH))).append("</blockquote>");
             if (text.length() + line.length() > MAX_MESSAGE_LENGTH) {
                 if (text.length() < MAX_MESSAGE_LENGTH) text.append("…");
                 break;
@@ -87,7 +109,7 @@ public class TelegramMessageFormatter {
     private record ArchivedRendering(String text, int includedChats) { }
 
     private static String escape(String value) {
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
     }
 
     private String connection(JsonNode payload) {
@@ -100,7 +122,7 @@ public class TelegramMessageFormatter {
     }
 
     private String dailySummary(JsonNode payload) {
-        return "📊 Resumo diário de simulação — " + clean(payload.path("date").asString(""))
+        return "<b>📊 Resumo diário de simulação</b> — " + escape(limit(clean(payload.path("date").asString("")), 80))
                 + "\nDecisões: " + payload.path("decisionCount").asLong(0)
                 + " · alertas previstos: " + payload.path("predictedAlerts").asLong(0)
                 + " · respostas previstas: " + payload.path("predictedReplies").asLong(0)
@@ -124,8 +146,62 @@ public class TelegramMessageFormatter {
         String reference = clean(payload.path("reference").asString(""));
         if (!List.of("HIGH", "CRITICAL").contains(urgency) || !reference.matches("[0-9a-fA-F-]{36}"))
             return "⚠️ O watcher bloqueou um alerta sem classificação ou referência válida.";
-        return "⚠️ Alerta inteligente — urgência " + urgency + "\nReferência da decisão: " + reference
+        return "<b>⚠️ Alerta inteligente</b> — urgência " + escape(urgency) + "\nReferência da decisão: " + escape(reference)
                 + ". Sem conteúdo de conversa.";
+    }
+
+    /**
+     * Presentation-only consumer of a future #31 outbox event; it never generates or sends a reply.
+     * The producer must authorize and supply the exact approved template body.
+     */
+    private String simulationReplyPreview(JsonNode payload) {
+        String decisionId = clean(payload.path("decisionId").asString(""));
+        if (!decisionId.matches("[0-9a-fA-F-]{36}"))
+            return "<b>⚠️ Prévia de simulação indisponível</b>\nReferência inválida.";
+        String name = escape(limit(clean(payload.path("displayName").asString("Conversa")), MAX_NAME_LENGTH));
+        String urgency = escape(limit(clean(payload.path("urgency").asString("UNCERTAIN")), 32));
+        StringBuilder text = new StringBuilder("<b>🧪 SIMULAÇÃO — não enviada no WhatsApp</b>")
+                .append("\nContato: ").append(name.isBlank() ? "Conversa" : name)
+                .append("\nUrgência: ").append(urgency)
+                .append("\nDecisão: ").append(escape(decisionId));
+        try {
+            Instant at = Instant.parse(payload.path("timestamp").asString(""));
+            text.append("\nHorário: ").append(LOCAL_DATE.withZone(timezone).format(at));
+        } catch (RuntimeException ignored) { }
+        String reason = clean(payload.path("reason").asString(""));
+        if (!reason.isEmpty()) text.append("\nMotivo: ").append(escape(limit(reason, 200)));
+        String template = cleanPreview(payload.path("templatePreview").asString(""));
+        if (!template.isBlank()) {
+            String opening = "\n<b>Prévia do template aprovado:</b>\n<blockquote>";
+            String closing = "</blockquote>";
+            int budget = MAX_MESSAGE_LENGTH - text.length() - opening.length() - closing.length();
+            if (budget > 0) text.append(opening).append(escapeWithin(template, budget)).append(closing);
+        } else {
+            text.append("\nResposta recomendada, mas template aprovado ausente.");
+        }
+        return text.toString();
+    }
+
+    /** Escape per code point and reserve space for an ellipsis without splitting a surrogate pair. */
+    private static String escapeWithin(String value, int budget) {
+        StringBuilder escaped = new StringBuilder();
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            int next = offset + Character.charCount(codePoint);
+            String part = escape(new String(Character.toChars(codePoint)));
+            if (escaped.length() + part.length() + (next < value.length() ? 1 : 0) > budget) {
+                if (escaped.length() < budget) escaped.append("…");
+                break;
+            }
+            escaped.append(part);
+            offset = next;
+        }
+        return escaped.toString();
+    }
+
+    private static String cleanPreview(String value) {
+        return value == null ? "" : value.replace("\r\n", "\n").replace('\r', '\n')
+                .replaceAll("[\\p{Cntrl}&&[^\\n]]", " ").strip();
     }
 
     private static String cleanAdmin(String value) {
