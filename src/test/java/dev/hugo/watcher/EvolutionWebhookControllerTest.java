@@ -27,6 +27,7 @@ import dev.hugo.watcher.notification.EvolutionActionTransport;
 import dev.hugo.watcher.notification.IntelligentAlertService;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 
@@ -64,6 +65,7 @@ class EvolutionWebhookControllerTest {
 
     @Autowired ApplicationContext context;
     @Autowired JdbcTemplate jdbc;
+    @Autowired dev.hugo.watcher.notification.DecisionEligibilityDataRepository eligibility;
     @Autowired EvolutionJobProcessor jobs;
     @Autowired IntelligentAlertService alerts;
     @Autowired EvolutionActionTransport evolutionActionTransport;
@@ -162,6 +164,11 @@ class EvolutionWebhookControllerTest {
                 chat, "CONTACT_REQUEST", Timestamp.from(expiry), chat, "CRITICAL_URGENCY", Timestamp.from(expiry));
         jdbc.update("update archive_monitor_settings set mode='ALL'");
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','http_alert_test',1)", chat);
+        assertFalse(eligibility.isEligible(UUID.randomUUID()));
+        assertTrue(eligibility.isEligible(decision));
+        jdbc.update("update simulation_decisions set production_mode=false where batch_id=?", decision);
+        assertFalse(eligibility.isEligible(decision), "shadow decisions must not be eligible");
+        jdbc.update("update simulation_decisions set production_mode=true where batch_id=?", decision);
         assertTrue(alerts.enqueue(decision).accepted());
     }
 

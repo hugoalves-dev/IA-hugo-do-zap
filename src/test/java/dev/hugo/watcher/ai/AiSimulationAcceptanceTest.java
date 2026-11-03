@@ -815,13 +815,29 @@ class AiSimulationAcceptanceTest {
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CRITICAL_URGENCY','openrouter',true,now()+interval '1 day')",chat);
     }
     private ProviderTransport critical() { return (request,timeout,max) -> { calls.incrementAndGet(); return openrouter(valid().replace("NORMAL","CRITICAL")); }; }
+    /**
+     * Uses the same @Query SQL as the production Spring Data repository, without
+     * resurrecting a production JDBC adapter in the standalone acceptance fixture.
+     */
+    private dev.hugo.watcher.notification.DecisionEligibilityReader standaloneEligibilityReader() {
+        var query = java.util.Arrays.stream(
+                        dev.hugo.watcher.notification.DecisionEligibilityDataRepository.class.getDeclaredMethods())
+                .filter(method -> method.getName().equals("isEligible"))
+                .findFirst().orElseThrow()
+                .getAnnotation(org.springframework.data.jdbc.repository.query.Query.class);
+        if (query == null) throw new IllegalStateException("Production eligibility @Query is missing");
+        var named = new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(jdbc);
+        return decisionId -> Boolean.TRUE.equals(named.queryForObject(
+                query.value(), java.util.Map.of("decisionId", decisionId), Boolean.class));
+    }
+
     private SimulationService producingService(boolean real, ProviderTransport transport) {
         var alerts = new dev.hugo.watcher.notification.IntelligentAlertService(jdbc,manager,new dev.hugo.watcher.NotificationOutboxRepository(jdbc,manager),clock,true,"owner@s.whatsapp.net");
         alerts.configureRuntimeGate(gate());
         var actions = new dev.hugo.watcher.notification.WhatsAppActionService(jdbc,manager,clock,true,"owner@s.whatsapp.net");
         actions.configureRuntimeGate(gate());
         var producer = new dev.hugo.watcher.notification.DecisionActionProducer(
-                new dev.hugo.watcher.notification.DecisionEligibilityJdbcReader(jdbc), alerts, actions, real);
+                standaloneEligibilityReader(), alerts, actions, real);
         return prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(), new DecisionEngine(),
                 new PersistedPolicyRepository(jdbc,new PolicyResolver()),new AvailabilityService(new HolidayService(jdbc)),new WatcherProperties(),classifier(true,transport),producer));
     }
