@@ -1,6 +1,7 @@
 package dev.hugo.watcher.notification;
 
 import dev.hugo.watcher.OutboxAction;
+import static dev.hugo.watcher.notification.IntelligentAlertService.ACTION_TYPE;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -11,7 +12,7 @@ import java.util.UUID;
 
 /** PostgreSQL-native eligibility and outbox persistence; transactions are owned by IntelligentAlertService. */
 @Repository
-public final class IntelligentAlertPersistenceRepository {
+public class IntelligentAlertPersistenceRepository {
     private final JdbcTemplate jdbc;
 
     public IntelligentAlertPersistenceRepository(JdbcTemplate jdbc) {

@@ -14,7 +14,7 @@ import java.util.UUID;
  * Do not replace the locked claims with ordinary entity save().
  */
 @Repository
-public final class DeliveryAdmissionRepository {
+public class DeliveryAdmissionRepository {
     private final JdbcTemplate jdbc;
 
     public DeliveryAdmissionRepository(JdbcTemplate jdbc) {
