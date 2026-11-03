@@ -166,6 +166,15 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
+    dev.hugo.watcher.notification.WhatsAppActionService whatsAppActionService(
+            dev.hugo.watcher.notification.WhatsAppActionPersistenceRepository persistence,
+            PlatformTransactionManager transactions, Clock clock,
+            @Value("${watcher.whatsapp-actions.real-send-enabled:false}") boolean realSendEnabled) {
+        return new dev.hugo.watcher.notification.WhatsAppActionService(
+                persistence, transactions, clock, realSendEnabled);
+    }
+
+    @Bean
     dev.hugo.watcher.notification.IntelligentAlertService intelligentAlertService(
             dev.hugo.watcher.notification.IntelligentAlertPersistenceRepository persistence,
             PlatformTransactionManager transactions, NotificationOutboxRepository outbox, Clock clock,

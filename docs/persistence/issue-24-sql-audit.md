@@ -43,6 +43,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Simulation decisions: `SimulationPersistenceRepository` owns snapshot reads, transaction-bound advisory locks, production-mode persistence, cooldown writes, template projections and batch completion. `SimulationService` keeps classification calls outside transactions and after-commit audit/metrics.
 
+- WhatsApp action authorization and enqueue: `WhatsAppActionPersistenceRepository` owns advisory locks, queue/idempotency writes, current template authorization and pre-send action verification. `WhatsAppActionService` still owns safety decisions and transaction admission.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |
