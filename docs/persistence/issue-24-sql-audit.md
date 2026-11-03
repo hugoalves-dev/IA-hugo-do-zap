@@ -31,6 +31,7 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 - Simulation scheduler due-time metric: Spring Data JDBC `SimulationBatchDueRepository`; observability failures still do not block processing (CI #41500191945 green)
 
 - Evolution webhook processing: `EvolutionJobEnvelopeRepository` owns locked envelope read, post-lock lease/expiry validation, expired payload scrubbing, and quarantine. `EvolutionJobProcessor` remains the transaction and message-processing coordinator ([CI #41506619110](https://github.com/hugoalves-dev/IA-hugo-do-zap/actions/runs/41506619110): 475 tests green)
+- Intelligent alerts: `IntelligentAlertPersistenceRepository` owns advisory locking, outbox verification and evidence queries; `IntelligentAlertService` retains authorization, formatting and transaction orchestration.
 - Delivery admission: `DeliveryAdmissionRepository` owns the locked outbox token, chat claim, cooldown and dispatched-attempt persistence, with the existing coordinator transaction and HTTP-outside-transaction boundary intact.
 - Notification queue projection: `NotificationQueueQueryRepository` owns due-notification SQL, blocked-group deletion and connection alert generation lookup. Formatting, filtering and outbox transitions stay in `NotificationService` ([CI #41507350751](https://github.com/hugoalves-dev/IA-hugo-do-zap/actions/runs/41507350751): pending)
 
@@ -40,7 +41,7 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 | --- | --- | --- |
 | Identity and contact | `IdentityService`, `LegacyImportService` | Canonical aliases, LID/PN/JID merge, contact-name precedence, collision rejection |
 | Ingest/job/outbox | `JdbcInboxRepository`, `JdbcJobRepository`, `NotificationOutboxRepository` | Lease/claim, `SKIP LOCKED`, idempotency, restart, ordered processing |
-| Notification delivery | `IntelligentAlertService`, `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
+| Notification delivery | `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
 | Simulation and AI | `DebounceService`, `SimulationService`, `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
 | Telegram admin | `AdminCommandService`, `ShadowDecisionQuery` | Authorize before action, durable inbox, offsets, callback replay prevention |
 | Other | `QuarantineWriter`, remaining historical JDBC compatibility facades | Bounded retention, no sensitive payload leaks |

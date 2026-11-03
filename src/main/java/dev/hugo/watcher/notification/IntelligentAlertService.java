@@ -2,15 +2,15 @@ package dev.hugo.watcher.notification;
 
 import dev.hugo.watcher.NotificationOutboxRepository;
 import dev.hugo.watcher.OutboxAction;
+import dev.hugo.watcher.notification.IntelligentAlertPersistenceRepository.AlertContext;
+import dev.hugo.watcher.notification.IntelligentAlertPersistenceRepository.SourceMessage;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.JsonNode;
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -22,7 +22,7 @@ import java.util.UUID;
 public class IntelligentAlertService {
     public static final String ACTION_TYPE = "intelligent_alert";
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private final JdbcTemplate jdbc;
+    private final IntelligentAlertPersistenceRepository persistence;
     private final TransactionTemplate transactions;
     private final NotificationOutboxRepository outbox;
     private final Clock clock;
@@ -30,18 +30,25 @@ public class IntelligentAlertService {
     private final String ownerJid;
     private DecisionRuntimeGate runtimeGate;
 
-    @Autowired
-    public IntelligentAlertService(JdbcTemplate jdbc, PlatformTransactionManager manager,
+    /** Production constructor, wired explicitly without selecting the legacy JDBC adapter. */
+    public IntelligentAlertService(IntelligentAlertPersistenceRepository persistence,
+                                   PlatformTransactionManager manager,
                                    NotificationOutboxRepository outbox, Clock clock,
-                                   @Value("${watcher.telegram.intelligent-alerts-enabled:false}") boolean enabled,
-                                   @Value("${watcher.whatsapp-actions.owner-jid:}") String ownerJid) {
-        this.jdbc = jdbc;
+                                   boolean enabled, String ownerJid) {
+        this.persistence = persistence;
         this.transactions = new TransactionTemplate(manager);
         this.outbox = outbox;
         this.clock = clock;
         this.enabled = enabled;
         this.ownerJid = ownerJid == null ? "" : ownerJid.strip();
-        this.runtimeGate = new DecisionRuntimeGate(jdbc,clock,new dev.hugo.watcher.WatcherProperties(),this.ownerJid);
+    }
+
+    /** Legacy constructor retained for existing standalone tests during #24. */
+    public IntelligentAlertService(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                                   NotificationOutboxRepository outbox, Clock clock,
+                                   boolean enabled, String ownerJid) {
+        this(new IntelligentAlertPersistenceRepository(jdbc), manager, outbox, clock, enabled, ownerJid);
+        this.runtimeGate = new DecisionRuntimeGate(jdbc, clock, new dev.hugo.watcher.WatcherProperties(), this.ownerJid);
     }
 
     public IntelligentAlertService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -55,20 +62,19 @@ public class IntelligentAlertService {
         if (!enabled) return AlertEnqueueResult.rejected("ALERTS_DISABLED");
         if (persistedDecisionId == null) return AlertEnqueueResult.rejected("DECISION_NOT_FOUND");
         return transactions.execute(status -> {
-            jdbc.query("select pg_advisory_xact_lock(hashtextextended(?, 947223))", rs -> { }, persistedDecisionId.toString());
+            persistence.lockDecision(persistedDecisionId);
             String key = ACTION_TYPE + ":" + persistedDecisionId;
             List<OutboxAction> prior = findOutbox(key);
             if (!prior.isEmpty()) return AlertEnqueueResult.accepted(prior.getFirst());
-            Boolean alreadyEnqueued = jdbc.query("select intelligent_alert_enqueued from simulation_decisions where batch_id=?",
-                    rs -> rs.next() && rs.getBoolean(1), persistedDecisionId);
-            if (Boolean.TRUE.equals(alreadyEnqueued)) return AlertEnqueueResult.rejected("DECISION_ALREADY_PROCESSED");
+            boolean alreadyEnqueued = persistence.alreadyEnqueued(persistedDecisionId);
+            if (alreadyEnqueued) return AlertEnqueueResult.rejected("DECISION_ALREADY_PROCESSED");
             AlertContext context = eligible(persistedDecisionId);
             if (context == null) return AlertEnqueueResult.rejected("ALERT_POLICY_BLOCKED");
             Instant createdAt = clock.instant();
             String payload = JSON.writeValueAsString(Map.of("eventType", ACTION_TYPE,
                     "decisionId", persistedDecisionId.toString(), "urgency", context.urgency(),
                     "reference", persistedDecisionId.toString()));
-            jdbc.update("update simulation_decisions set intelligent_alert_enqueued=true where batch_id=?", persistedDecisionId);
+            persistence.markEnqueued(persistedDecisionId);
             outbox.enqueue(key, ACTION_TYPE, payload, "[]", createdAt, createdAt.plusSeconds(86_400));
             List<OutboxAction> created = findOutbox(key);
             if (created.isEmpty()) throw new IllegalStateException("intelligent alert was not persisted");
@@ -88,35 +94,14 @@ public class IntelligentAlertService {
                     || !ACTION_TYPE.equals(payload.path("eventType").asString(""))
                     || !decisionId.toString().equals(payload.path("reference").asString(""))) return false;
         } catch (RuntimeException invalidPayload) { return false; }
-        Integer pending = jdbc.queryForObject("select count(*) from outbox_actions where id=? and action_key=? and action_type=? and status='PROCESSING'",
-                Integer.class, action.id(), action.actionKey(), ACTION_TYPE);
-        if (pending == null || pending != 1) return false;
+        int pending = persistence.processingCount(action);
+        if (pending != 1) return false;
         return eligible(decisionId) != null;
     }
 
     private AlertContext eligible(UUID decisionId) {
-        if (!runtimeGate.allows(decisionId,true)) return null;
-        List<AlertContext> contexts = jdbc.query("""
-                select b.chat_jid,d.decision_state,d.real_action_allowed,d.would_alert,
-                       d.classification_status,d.classification_urgency,d.classification_confidence,
-                       d.intelligent_alert_reference_hash,d.intelligent_alert_enqueued,
-                       t.template_id,t.version,t.enabled,t.identifies_automation,t.body
-                  from simulation_decisions d
-                  join simulation_batches b on b.batch_id=d.batch_id
-                  cross join automation_settings s
-                  join chat_automation_authorizations a on a.chat_jid=b.chat_jid
-                    and a.situation='CRITICAL_URGENCY'
-                  join response_templates t on t.template_id=a.template_id and t.version=a.template_version
-                    and t.situation=a.situation and d.alert_template_reference=t.template_id || '@v' || t.version::text
-                 where d.batch_id=? and s.singleton_id=1
-                 order by t.template_id,t.version desc limit 1
-                """, (rs, row) -> new AlertContext(rs.getString("chat_jid"), rs.getString("decision_state"),
-                rs.getBoolean("real_action_allowed"), rs.getBoolean("would_alert"),
-                rs.getString("classification_status"), rs.getString("classification_urgency"),
-                rs.getDouble("classification_confidence"), rs.getString("intelligent_alert_reference_hash"),
-                rs.getBoolean("intelligent_alert_enqueued"),
-                rs.getString("template_id"), rs.getInt("version"), rs.getBoolean("enabled"),
-                rs.getBoolean("identifies_automation"), rs.getString("body")), decisionId);
+        if (runtimeGate == null || !runtimeGate.allows(decisionId,true)) return null;
+        List<AlertContext> contexts = persistence.eligibleContexts(decisionId);
         if (contexts.isEmpty()) return null;
         AlertContext c = contexts.getFirst();
         if (!"WOULD_ACT".equals(c.decisionState()) || !c.realActionAllowed() || !c.wouldAlert()
@@ -127,8 +112,7 @@ public class IntelligentAlertService {
                 || !c.templateEnabled() || !c.identifiesAutomation()
                 || !c.templateBody().stripLeading().toLowerCase(java.util.Locale.ROOT).startsWith("resposta automática:")) return null;
         if (!c.referenceHash().matches("[0-9a-fA-F]{64}")) return null;
-        List<SourceMessage> sources = jdbc.query("select external_id,chat_jid,payload::text from simulation_batch_messages where batch_id=?",
-                (rs, row) -> new SourceMessage(rs.getString("external_id"), rs.getString("chat_jid"), rs.getString("payload")), decisionId);
+        List<SourceMessage> sources = persistence.sourceMessages(decisionId);
         for (SourceMessage source : sources) {
             if (hash(source.externalId()).equalsIgnoreCase(c.referenceHash()) && isPersonalReference(source)) return c;
         }
@@ -149,11 +133,8 @@ public class IntelligentAlertService {
                 }
                 String stanzaId = context.path("stanzaId").stringValueOpt().orElse("");
                 if (!stanzaId.isBlank()) {
-                    Integer references = jdbc.queryForObject("""
-                            select count(*) from whatsapp_owner_message_references
-                             where chat_jid=? and external_id=? and expires_at > ?
-                            """, Integer.class, source.chatJid(), stanzaId, Timestamp.from(clock.instant()));
-                    if (references != null && references == 1) return true;
+                    int references = persistence.referenceCount(source.chatJid(), stanzaId, clock.instant());
+                    if (references == 1) return true;
                 }
             }
         } catch (RuntimeException invalidEvidence) { return false; }
@@ -161,18 +142,11 @@ public class IntelligentAlertService {
     }
 
     private boolean isOutboxAlreadyProcessing(UUID decisionId) {
-        Integer count = jdbc.queryForObject("select count(*) from outbox_actions where action_key=? and status='PROCESSING'",
-                Integer.class, ACTION_TYPE + ":" + decisionId);
-        return count != null && count > 0;
+        return persistence.isOutboxAlreadyProcessing(decisionId);
     }
 
     private List<OutboxAction> findOutbox(String key) {
-        return jdbc.query("""
-                select id,action_key,action_type,payload::text,pending_snapshot::text,attempts,created_at,sensitive_expires_at
-                  from outbox_actions where action_key=?
-                """, (rs, row) -> new OutboxAction(rs.getLong("id"), rs.getString("action_key"), rs.getString("action_type"),
-                rs.getString("payload"), rs.getString("pending_snapshot"), rs.getInt("attempts"),
-                rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("sensitive_expires_at").toInstant(), null), key);
+        return persistence.findOutbox(key);
     }
 
     private static String hash(String value) {
@@ -181,10 +155,4 @@ public class IntelligentAlertService {
         catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
 
-    private record AlertContext(String chatJid, String decisionState, boolean realActionAllowed, boolean wouldAlert,
-                                String classificationStatus, String urgency, double confidence, String referenceHash,
-                                boolean enqueued,
-                                String templateId, int templateVersion, boolean templateEnabled,
-                                boolean identifiesAutomation, String templateBody) { }
-    private record SourceMessage(String externalId, String chatJid, String payload) { }
 }

@@ -116,6 +116,16 @@ class PersistenceBeansConfiguration {
 
 
     @Bean
+    dev.hugo.watcher.notification.IntelligentAlertService intelligentAlertService(
+            dev.hugo.watcher.notification.IntelligentAlertPersistenceRepository persistence,
+            PlatformTransactionManager transactions, NotificationOutboxRepository outbox, Clock clock,
+            @Value("${watcher.telegram.intelligent-alerts-enabled:false}") boolean enabled,
+            @Value("${watcher.whatsapp-actions.owner-jid:}") String ownerJid) {
+        return new dev.hugo.watcher.notification.IntelligentAlertService(
+                persistence, transactions, outbox, clock, enabled, ownerJid);
+    }
+
+    @Bean
     dev.hugo.watcher.notification.DecisionDeliveryCoordinator decisionDeliveryCoordinator(
             dev.hugo.watcher.notification.DeliveryAdmissionRepository admission, PlatformTransactionManager transactions) {
         return new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(admission, transactions);
