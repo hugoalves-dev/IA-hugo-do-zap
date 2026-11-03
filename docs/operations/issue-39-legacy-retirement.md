@@ -1,13 +1,13 @@
 # Issue #39 — Aposentadoria do watcher TypeScript/Baileys/SQLite
 
-**Status: BLOQUEADO para exclusão do legado até comprovação do cutover e encerramento do rollback.**
+**Status: remoção do código-fonte TypeScript autorizada pelo proprietário em 2026-11-03.** A ausência de container legado na VPS foi informada pelo proprietário; a validação do fluxo Java em produção, backups e encerramento formal de rollback **não foram atestados nesta sessão**. Nenhum dado ou sessão na VPS deve ser apagado por este PR.
 
 Este documento é o procedimento operacional para [#39](https://github.com/hugoalves-dev/IA-hugo-do-zap/issues/39). O repositório, por si só, **não comprova** o estado da VPS. Nenhuma verificação descrita abaixo foi atestada na VPS pela criação deste documento.
 
 ## 1. Inventário técnico antes de qualquer exclusão
 
 - Runtime atual versionado: `Dockerfile` executa JAR Java 25; `compose.yaml` tem `watcher` Spring e `evolution-api`; CI em `.github/workflows/backend.yml` executa `mvn -B -ntp verify` e publica/deploya em push de `main`.
-- Legado executável separado: `src/*.ts`, `tests/*.ts`, `package.json`, `package-lock.json`, `tsconfig.json` (confirmar arquivos efetivamente presentes antes de remover).
+- Legado executável removido nesta branch: 13 arquivos `src/*.ts`, `tests/watcher.test.ts`, `package.json`, `package-lock.json` e `tsconfig.json`. O histórico Git preserva a referência necessária à auditoria.
 - **Não remover** `src/main/`, `src/test/`, `pom.xml`, `tests/ci/`, Dockerfile, Compose, GH Actions ou scripts de deploy Java.
 - **SQLite ainda tem uso no código Java**: `LegacyImportRunner`, `LegacyImportService`, `LegacySqliteSnapshotRepository` e a dependência `org.xerial:sqlite-jdbc` em `pom.xml`. Decidir separadamente quando aposentar a ferramenta de importação de snapshots. Não remover essa dependência apenas por remover o watcher Node.
 - Os arquivos de `docs/superpower/`, `docs/superpowers/` e `.superpowers/` são históricos/evidência: preservar com identificação clara, não executá-los como instruções de produção.
@@ -26,7 +26,7 @@ Este documento é o procedimento operacional para [#39](https://github.com/hugoa
 | Backups | Backup PostgreSQL + Evolution + dados/sessões legadas identificados, protegidos e com restauração validada | PENDENTE |
 | Rollback | Digest anterior, estratégia de restauração e responsável registrados; janela de rollback formalmente encerrada | PENDENTE |
 
-**Regra:** qualquer `PENDENTE` impede a remoção destrutiva e o merge do PR de limpeza. Evidência negativa também bloqueia. Para evitar expor dados, registrar horários, IDs técnicos mínimos, resultados agregados e links internos restritos, nunca tokens, mensagens ou dumps.
+**Regra:** o proprietário autorizou a exclusão reversível de código-fonte exclusivamente legado do Git. Os itens `PENDENTE` continuam bloqueando exclusão de dados/sessões na VPS e devem ser considerados antes de promover o PR para `main`, cujo push dispara deploy automático. Evidência negativa exige investigação. Para evitar expor dados, registrar horários, IDs técnicos mínimos, resultados agregados e links internos restritos, nunca tokens, mensagens ou dumps.
 
 ### Comandos de inspeção somente leitura (na VPS, pelo operador autorizado)
 
@@ -46,12 +46,12 @@ crontab -l || true
 
 A inspeção de logs deve ser feita **sem exportar texto sensível**. Conferir `/actuator/health/readiness` no namespace/rede apropriado, sem expor Actuator publicamente. Queries no PostgreSQL devem ser somente leitura, usando os nomes/tabelas efetivos do schema Flyway e sem consultar payloads pessoais. Confirmar a execução real do fluxo antes de atribuir `PASS`.
 
-## 3. Limpeza versionada, depois dos gates
+## 3. Limpeza versionada nesta branch e validação antes do merge
 
-1. Criar branch específica e comparar com `main`. Excluir **somente** os arquivos TS e testes TS comprovadamente exclusivos do watcher antigo; conferir utilitários compartilhados.
-2. Remover `package.json`, lockfile e `tsconfig.json` se não houver consumidores atuais. **Não remover Node do frontend**, se existir.
-3. Ajustar `README.md`, `.env.example`, `.dockerignore`, `.gitignore` e scripts somente onde estiverem referenciando o executor TS; conservar histórico de migração e mecanismos Java de importação ainda necessários.
-4. Atualizar `tests/ci` quando testes de contrato ainda exigirem frases do README sobre TypeScript como opção de rollback. Preservar todos os testes de contrato de segurança e deploy.
+1. **Realizado nesta branch:** remover arquivos TS e testes TS exclusivos do watcher antigo. A árvore Java continua preservada.
+2. **Realizado nesta branch:** remover `package.json`, `package-lock.json` e `tsconfig.json` sem afetar serviços Java. Um eventual frontend moderno deverá ter seu próprio ciclo de build, separado.
+3. **Realizado:** atualizar `README.md`, `AGENTS.md`, `.dockerignore`, `.gitignore` e `tests/ci` somente nos pontos referentes ao executor TS. `.env.example`, deploy e Dockerfile não contêm runtime TS e permanecem inalterados.
+4. **Realizado:** remover as asserções antigas de rollback TypeScript do README e acrescentar teste de ausência dos arquivos legados.
 5. Verificar que nenhuma referência a `src/*.ts`, `npm`, `ts-node`, `Baileys` ou `better-sqlite3` sobrevive **no caminho de execução**. Referências históricas podem permanecer se marcadas como históricas.
 6. Rodar os gates locais e CI no commit exato:
 

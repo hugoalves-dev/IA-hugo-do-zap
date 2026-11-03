@@ -20,6 +20,16 @@ class BackendWorkflowContractTest(unittest.TestCase):
         self.assertIsNotNone(match, name)
         return match.group(1)
 
+    def test_retired_typescript_watcher_not_present_in_current_runtime(self):
+        self.assertEqual([], list((ROOT / "src").glob("*.ts")), "TypeScript sources must not survive in src/")
+        self.assertEqual([], list((ROOT / "tests").glob("*.ts")), "Legacy TypeScript tests must not survive")
+        for filename in ("package.json", "package-lock.json", "tsconfig.json"):
+            self.assertFalse((ROOT / filename).exists(), f"Retired Node manifest still present: {filename}")
+        self.assertTrue((ROOT / "src/main/java").is_dir(), "Java runtime must remain intact")
+        self.assertTrue((ROOT / "src/test/java").is_dir(), "Java tests must remain intact")
+        pom = (ROOT / "pom.xml").read_text(encoding="utf-8")
+        self.assertIn("sqlite-jdbc", pom, "Java-only snapshot import remains separately supported")
+
     def test_push_main_deploys_automatically_after_tests_and_publish(self):
         self.assertRegex(WORKFLOW, r"(?s)on:\n  push:\n    branches: \[main\]")
         self.assertIn("mvn -B -ntp verify", self.job("test-and-build"))
@@ -183,8 +193,8 @@ class BackendWorkflowContractTest(unittest.TestCase):
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for required_text in (
-            "TypeScript legado",
-            "opção de rollback até o cutover ser validado",
+            "Spring Boot 4 / Java 25",
+            "O watcher antigo em TypeScript/Node.js + Baileys foi removido",
             "--profile local-db",
             "POST /instance/create",
             "GET /instance/connect/watcher-evolution",
