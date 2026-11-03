@@ -5,11 +5,11 @@ import dev.hugo.watcher.simulation.Batch;
 import dev.hugo.watcher.simulation.Classification;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import dev.hugo.watcher.ai.AiClassificationEvaluationRepository.BatchScope;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 import java.net.URI;
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.*;
@@ -18,7 +18,9 @@ import java.util.*;
 @Service
 public final class AiSimulationClassifier {
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private final JdbcTemplate jdbc;
+    private final AiClassificationEvaluationRepository persistence;
+    private final ConversationContextRepository context;
+    private final dev.hugo.watcher.simulation.PersonalReferenceEvidenceRepository referenceEvidence;
     private final BudgetService budgets;
     private final Clock clock;
     private final AiClassificationProperties properties;
@@ -34,14 +36,32 @@ public final class AiSimulationClassifier {
     }
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
-    @Autowired public AiSimulationClassifier(JdbcTemplate jdbc, BudgetService budgets, Clock clock,
-                                             AiClassificationProperties properties) {
+    /** Production collaborators keep SQL and message-history reads in repositories. */
+    public AiSimulationClassifier(AiClassificationEvaluationRepository persistence,
+                                  ConversationContextRepository context,
+                                  dev.hugo.watcher.simulation.PersonalReferenceEvidenceRepository referenceEvidence,
+                                  BudgetService budgets, Clock clock,
+                                  AiClassificationProperties properties, ProviderTransport transport) {
+        this.persistence = persistence;
+        this.context = context;
+        this.referenceEvidence = referenceEvidence;
+        this.budgets = budgets;
+        this.clock = clock;
+        this.properties = properties;
+        this.transport = transport;
+    }
+
+    /** Compatibility constructors for isolated provider and acceptance tests. */
+    public AiSimulationClassifier(JdbcTemplate jdbc, BudgetService budgets, Clock clock,
+                                  AiClassificationProperties properties) {
         this(jdbc, budgets, clock, properties, null);
     }
     public AiSimulationClassifier(JdbcTemplate jdbc, BudgetService budgets, Clock clock,
                                   AiClassificationProperties properties, ProviderTransport transport) {
-        this.jdbc = jdbc; this.budgets = budgets; this.clock = clock;
-        this.properties = properties; this.transport = transport;
+        this(new AiClassificationEvaluationRepository(jdbc),
+                new ConversationContextRepository(jdbc, java.time.Duration.ofHours(24)),
+                new dev.hugo.watcher.simulation.PersonalReferenceEvidenceRepository(jdbc),
+                budgets, clock, properties, transport);
     }
 
     public Classification classify(Batch batch) {
@@ -60,18 +80,14 @@ public final class AiSimulationClassifier {
             return unavailable(batch.chatJid().endsWith("@g.us") && consentedPurposes.contains(Situation.GROUP_TRIGGER)
                     ? "group_trigger_missing" : "consent_missing");
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
-        ClassificationInput input = new ConversationContextRepository(jdbc, java.time.Duration.ofHours(contextWindowHours)).input(batch, clock.instant());
+        ClassificationInput input = context.input(batch, clock.instant(), java.time.Duration.ofHours(contextWindowHours));
         if (input.messages().isEmpty()) return unavailable("no_eligible_text");
         if (input.contextEntries().isEmpty() && needsContext(input.target())) return unavailable("context_insufficient");
         UUID token = UUID.randomUUID();
         Instant deadline = clock.instant().plus(properties.timeout().multipliedBy(3)).plusSeconds(30);
-        int claimed = jdbc.update("""
-                insert into simulation_ai_evaluations(batch_id,lease_token,expires_at) values (?,?,?)
-                on conflict(batch_id) do nothing
-                """, batch.id(), token, Timestamp.from(deadline));
+        int claimed = persistence.claim(batch.id(), token, deadline);
         if (claimed == 0) {
-            var previous = jdbc.query("select result::text,expires_at from simulation_ai_evaluations where batch_id=?",
-                    (rs, row) -> new Prior(rs.getString(1), rs.getTimestamp(2).toInstant()), batch.id()).getFirst();
+            var previous = persistence.prior(batch.id()).getFirst();
             if (previous.result() != null) return authorizedStored(batch, previous.result());
             if (clock.instant().isBefore(previous.expires())) throw new IllegalStateException("AI batch evaluation in progress");
             return Classification.unavailable(); // crashed/ambiguous claim is never redispatched automatically
@@ -89,8 +105,9 @@ public final class AiSimulationClassifier {
                 (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
         ClassificationResult result = new ClassificationService(primary, fallback, metrics).classify(input);
         Classification classification = authorized(batch, usedProvider.get(), purposes) ? convert(batch, result, purposes) : Classification.unavailable();
-        int saved = jdbc.update("update simulation_ai_evaluations set result=?::jsonb where batch_id=? and lease_token=? and expires_at>?",
-                encode(classification, usedProvider.get(), purposes, input.contextEntries().size(), contextWindowHours), batch.id(), token, Timestamp.from(clock.instant()));
+        int saved = persistence.saveIfCurrent(batch.id(), token,
+                encode(classification, usedProvider.get(), purposes, input.contextEntries().size(), contextWindowHours),
+                clock.instant());
         Classification finalResult = saved == 1 ? classification : Classification.unavailable();
         if (metrics != null) metrics.classification(finalResult.status());
         return finalResult;
@@ -114,8 +131,7 @@ public final class AiSimulationClassifier {
         return revalidate(batch, Classification.unavailable());
     }
     public Classification revalidate(Batch batch, Classification attempted) {
-        var rows = jdbc.query("select result::text from simulation_ai_evaluations where batch_id=? and result is not null",
-                (rs, row) -> rs.getString(1), batch.id());
+        var rows = persistence.storedResults(batch.id());
         return rows.isEmpty() ? (attempted.available() ? Classification.unavailable() : attempted) : authorizedStored(batch, rows.getFirst());
     }
     private Classification authorizedStored(Batch batch, String stored) {
@@ -180,8 +196,7 @@ public final class AiSimulationClassifier {
         return properties.requireChatConsent() ? consents(batch.chatJid(), provider) : EnumSet.allOf(Situation.class);
     }
     private Set<Situation> consents(String chat, String provider) {
-        return new HashSet<>(jdbc.query("select situation from ai_data_consents where chat_jid=? and provider=? and privacy_approved=true and expires_at>?",
-                (rs, row) -> Situation.valueOf(rs.getString(1)), chat, provider, Timestamp.from(clock.instant())));
+        return new HashSet<>(persistence.consentedSituations(chat, provider, clock.instant()));
     }
     private boolean eligible(Batch batch) {
         return eligibilityDiagnostic(batch) == null;
@@ -195,16 +210,7 @@ public final class AiSimulationClassifier {
         if (operational == null || !operational.classification())
             return operational != null && operational.killSwitch()
                     ? "kill_switch_enabled" : "ai_classification_disabled";
-        List<BatchScope> scopes = jdbc.query("""
-                select b.chat_jid,b.status,b.expires_at,s.mode,c.archived,
-                       coalesce(c.synchronized_snapshot,false) synchronized_snapshot
-                  from simulation_batches b
-                  left join archive_monitor_settings s on s.singleton_id=1
-                  left join chat_snapshot c on c.chat_jid=b.chat_jid
-                 where b.batch_id=?
-                """, (rs, row) -> new BatchScope(rs.getString("chat_jid"), rs.getString("status"),
-                rs.getTimestamp("expires_at").toInstant(), rs.getString("mode"),
-                (Boolean) rs.getObject("archived"), rs.getBoolean("synchronized_snapshot")), batch.id());
+        List<BatchScope> scopes = persistence.scopes(batch.id());
         if (scopes.isEmpty()) return "batch_missing";
         BatchScope scope = scopes.getFirst();
         if (!scope.chatJid().equals(batch.chatJid())) return "batch_chat_mismatch";
@@ -217,9 +223,6 @@ public final class AiSimulationClassifier {
                 ("UNARCHIVED_ONLY".equals(scope.mode()) && !scope.archived())) return null;
         return "archive_scope_excluded";
     }
-
-    private record BatchScope(String chatJid, String status, Instant expiresAt, String mode,
-                              Boolean archived, boolean synchronizedSnapshot) { }
 
     private Classification convert(Batch batch, ClassificationResult result, Set<Situation> purposes) {
         if (result.status() != ClassificationResult.Status.CLASSIFIED)
@@ -234,7 +237,7 @@ public final class AiSimulationClassifier {
                 result.urgency(), result.confidence(), result.status(), referenceHash(batch));
     }
     private String referenceHash(Batch batch) {
-        return dev.hugo.watcher.simulation.PersonalReferenceEvidence.findHash(jdbc,batch.id(),properties.ownJid(),clock.instant());
+        return dev.hugo.watcher.simulation.PersonalReferenceEvidence.findHash(referenceEvidence, batch.id(), properties.ownJid(), clock.instant());
     }
     private boolean structuredMention(Batch batch) { return referenceHash(batch) != null; }
     private static String encode(Classification result, String provider, Set<Situation> purposes, int contextCount, long contextWindowHours) {
@@ -260,5 +263,4 @@ public final class AiSimulationClassifier {
                 ClassificationResult.Status.valueOf(Objects.toString(result.get("status"),"UNCERTAIN")),
                 (String)result.get("personalReferenceHash"), (String)result.get("diagnostic"));
     }
-    private record Prior(String result, Instant expires) { }
 }

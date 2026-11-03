@@ -1,7 +1,6 @@
 package dev.hugo.watcher;
 
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -25,15 +24,28 @@ public class NotificationOutboxRepository {
     private final Duration telegramSendInterval;
     private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
 
-    @Autowired
+    /** Legacy constructor for standalone tests, preserving existing rate-limit behavior. */
     public NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager) {
         this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL);
     }
 
     NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager, Duration telegramSendInterval) {
+        this(jdbc, manager, telegramSendInterval,
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager));
+    }
+
+    /** Production shares the same managed coordinator as WhatsApp dispatch and notifications. */
+    public NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                                        dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
+        this(jdbc, manager, DEFAULT_TELEGRAM_SEND_INTERVAL, deliveries);
+    }
+
+    private NotificationOutboxRepository(JdbcTemplate jdbc, PlatformTransactionManager manager,
+                                         Duration telegramSendInterval,
+                                         dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
         if (telegramSendInterval.isNegative()) throw new IllegalArgumentException("telegram send interval cannot be negative");
-        this.jdbc = jdbc;
-        this.deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc,manager);
+        this.jdbc = java.util.Objects.requireNonNull(jdbc);
+        this.deliveries = java.util.Objects.requireNonNull(deliveries);
         this.transactions = new TransactionTemplate(manager);
         this.telegramSendInterval = telegramSendInterval;
     }

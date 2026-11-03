@@ -2,8 +2,6 @@ package dev.hugo.watcher;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataAccessException;
-import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
@@ -29,7 +27,6 @@ import java.util.regex.Pattern;
 import dev.hugo.watcher.notification.IntelligentAlertService;
 
 /** Persists notification payloads before Telegram delivery and acknowledges snapshots conditionally. */
-@Service
 public class NotificationService {
     public static final String ARCHIVED_MESSAGES = "archived_messages";
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -37,7 +34,7 @@ public class NotificationService {
     private static final long MAX_RETENTION_SECONDS = 7 * 86_400L;
     private static final DateTimeFormatter LOCAL_ISO = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ssXXX");
 
-    private final JdbcTemplate jdbc;
+    private final NotificationQueueQueryRepository queries;
     private final TransactionTemplate transactions;
     private final NotificationOutboxRepository outbox;
     private final TelegramTransport telegram;
@@ -49,12 +46,21 @@ public class NotificationService {
     private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
     private final AtomicBoolean flushing = new AtomicBoolean();
 
-    @Autowired
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                                NotificationOutboxRepository outbox, TelegramTransport telegram,
                                TelegramMessageFormatter telegramFormatter, WatcherProperties properties,
                                Clock clock, ArchiveModeService archiveModes, IntelligentAlertService intelligentAlerts) {
-        this.jdbc = jdbc;
+        this(new NotificationQueueQueryRepository(jdbc), manager, outbox, telegram,
+                telegramFormatter, properties, clock, archiveModes, intelligentAlerts,
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager));
+    }
+
+    public NotificationService(NotificationQueueQueryRepository queries, PlatformTransactionManager manager,
+                               NotificationOutboxRepository outbox, TelegramTransport telegram,
+                               TelegramMessageFormatter telegramFormatter, WatcherProperties properties,
+                               Clock clock, ArchiveModeService archiveModes, IntelligentAlertService intelligentAlerts,
+                               dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
+        this.queries = queries;
         this.transactions = new TransactionTemplate(manager);
         this.outbox = outbox;
         this.telegram = telegram;
@@ -63,7 +69,7 @@ public class NotificationService {
         this.clock = clock;
         this.archiveModes = archiveModes;
         this.intelligentAlerts = intelligentAlerts;
-        this.deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc,manager);
+        this.deliveries = deliveries;
     }
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -217,11 +223,7 @@ public class NotificationService {
         if (!isConnectionAlert(action) || !action.actionKey().startsWith(prefix)) return false;
         try {
             long expectedGeneration = Long.parseLong(action.actionKey().substring(prefix.length()));
-            List<ConnectionState> current = jdbc.query("""
-                    select connection_state,outage_generation from watcher_connection_state where singleton_id=1
-                    """, (rs, row) -> new ConnectionState(rs.getString("connection_state"), rs.getLong("outage_generation")));
-            return !current.isEmpty() && "DISCONNECTED".equals(current.getFirst().connectionState())
-                    && current.getFirst().generation() == expectedGeneration;
+            return queries.currentOutageGeneration(expectedGeneration);
         } catch (NumberFormatException ex) {
             return false;
         }
@@ -243,7 +245,7 @@ public class NotificationService {
             if (row.group() && !properties.isIncludeGroups()) continue;
             String displayName = resolveDisplayName(row);
             if (row.group() && isBlockedGroup(displayName)) {
-                jdbc.update("delete from pending_notification where chat_jid=?", row.chatJid());
+                queries.discardBlockedGroup(row.chatJid());
                 continue;
             }
             String policy = isWorkOnly(displayName) ? "WORK_ONLY" : "ANYTIME";
@@ -287,21 +289,7 @@ public class NotificationService {
     }
 
     private List<PendingRow> readPending(Instant now, ArchiveMode mode) {
-        List<PendingRow> rows = jdbc.query("""
-                select p.chat_jid, p.generation::text as pending_generation, p.payload::text as payload, p.updated_at, p.expires_at,
-                       s.archived, coalesce(s.synchronized_snapshot, false) as synchronized_snapshot,
-                       s.display_name as chat_name, coalesce(s.is_group, p.chat_jid like '%@g.us') as is_group,
-                       coalesce(alias.canonical_identity, p.chat_jid) as canonical_jid,
-                       identity.display_name as identity_name, identity.phone_jid,
-                       identity.lid_jid, identity.username
-                from pending_notification p
-                left join chat_snapshot s on s.chat_jid=p.chat_jid
-                left join identity_aliases alias on alias.alias=p.chat_jid
-                left join contact_identity identity
-                    on identity.canonical_jid=coalesce(alias.canonical_identity, p.chat_jid)
-                where p.due_at <= ? and p.expires_at > ?
-                order by p.due_at,p.chat_jid
-                """, (rs, rowNum) -> {
+        List<PendingRow> rows = queries.duePending(now, (rs, rowNum) -> {
             String payloadText = rs.getString("payload");
             Map<String, Object> payload = readObject(payloadText);
             Instant last = parseInstant(payload.get("lastMessageAt"));
@@ -323,7 +311,7 @@ public class NotificationService {
                     first, last, preview, previewExpiry, rs.getTimestamp("updated_at").toInstant(),
                 rs.getTimestamp("expires_at").toInstant(), rs.getString("pending_generation"),
                 (Boolean) rs.getObject("archived"), rs.getBoolean("synchronized_snapshot"));
-        }, Timestamp.from(now), Timestamp.from(now));
+        });
         return rows.stream().filter(row -> mode.accepts(row.archived(), row.synchronizedSnapshot())).toList();
     }
 
@@ -477,6 +465,5 @@ public class NotificationService {
                               Instant firstMessageAt, Instant lastMessageAt, String preview, Instant previewExpiry,
                               Instant updatedAt, Instant expiresAt, String generation, Boolean archived,
                               boolean synchronizedSnapshot) { }
-    private record ConnectionState(String connectionState, long generation) { }
     private record LegacyChat(int messageCount, Map<String, Object> payload) { }
 }

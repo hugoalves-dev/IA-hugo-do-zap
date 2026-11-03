@@ -37,6 +37,12 @@ class BudgetServiceTest {
         budgets = new BudgetService(jdbc, new DataSourceTransactionManager(source), new SimpleMeterRegistry());
     }
 
+    @Test void budgetServiceDelegatesPersistenceToRepository() {
+        assertTrue(java.util.Arrays.stream(BudgetService.class.getDeclaredFields())
+                .noneMatch(field -> JdbcTemplate.class.isAssignableFrom(field.getType())),
+                "BudgetService must not own JdbcTemplate: SQL belongs in a repository");
+    }
+
     @Test void missingDailyOrMonthlyLimitBlocksReservation() {
         assertThrows(BudgetExceededException.class, () -> budgets.reserve(new EstimatedCost(1), now));
         setLimits(10L, null);

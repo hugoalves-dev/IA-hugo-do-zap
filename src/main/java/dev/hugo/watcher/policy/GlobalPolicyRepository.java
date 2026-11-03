@@ -1,20 +1,38 @@
 package dev.hugo.watcher.policy;
 
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-@Repository
+/**
+ * Compatibility facade during the incremental migration in issue #24.
+ * Spring-managed callers use Spring Data JDBC; the JDBC constructor remains for
+ * existing explicit legacy construction sites and tests until their own migration.
+ */
 public class GlobalPolicyRepository {
     private final JdbcTemplate jdbc;
+    private final AvailabilityOverrideDataRepository data;
 
-    public GlobalPolicyRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public GlobalPolicyRepository(AvailabilityOverrideDataRepository data) {
+        this.data = Objects.requireNonNull(data, "data");
+        this.jdbc = null;
+    }
+
+    public GlobalPolicyRepository(JdbcTemplate jdbc) {
+        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+        this.data = null;
+    }
 
     public Optional<TemporaryAvailabilityOverride> temporaryAvailabilityOverride() {
+        if (data != null) {
+            return data.findById((short) 1).map(row -> new TemporaryAvailabilityOverride(
+                    AvailabilityState.valueOf(row.state()),
+                    row.startsAt().toInstant(), row.expiresAt().toInstant()));
+        }
         List<TemporaryAvailabilityOverride> rows = jdbc.query("""
                 select state, starts_at, expires_at
                   from availability_overrides
@@ -27,6 +45,13 @@ public class GlobalPolicyRepository {
 
     public void saveTemporaryAvailabilityOverride(TemporaryAvailabilityOverride override) {
         Objects.requireNonNull(override, "override");
+        if (data != null) {
+            int affected = data.upsert(override.state().name(),
+                    override.startsAt().atOffset(ZoneOffset.UTC),
+                    override.expiresAt().atOffset(ZoneOffset.UTC));
+            if (affected != 1) throw new IllegalStateException("availability override upsert affected " + affected + " rows");
+            return;
+        }
         jdbc.update("""
                 insert into availability_overrides(singleton_id, state, starts_at, expires_at, updated_at)
                 values (1, ?, ?, ?, now())

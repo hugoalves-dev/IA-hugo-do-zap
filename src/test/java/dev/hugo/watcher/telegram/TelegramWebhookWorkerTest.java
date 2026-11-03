@@ -34,7 +34,7 @@ class TelegramWebhookWorkerTest {
         when(handler.handle(any())).thenReturn(AdminResult.accepted("ok"));
         jdbc.update("insert into telegram_webhook_inbox(update_id,payload) values(?,?::jsonb)",
                 101L, "{\"update_id\":101,\"message\":{\"message_id\":1,\"chat\":{\"id\":2002,\"type\":\"private\"},\"from\":{\"id\":1001},\"text\":\"/status\"}}");
-        var worker = new TelegramWebhookWorker(jdbc, manager, handler, callbacks);
+        var worker = new TelegramWebhookWorker(new TelegramWebhookInboxRepository(jdbc), manager, handler, callbacks);
         worker.drain();
         worker.drain();
         assertEquals("DONE", jdbc.queryForObject("select status from telegram_webhook_inbox where update_id=101", String.class));
@@ -47,7 +47,7 @@ class TelegramWebhookWorkerTest {
         when(handler.handle(any())).thenReturn(AdminResult.accepted("ok"));
         jdbc.update("insert into telegram_webhook_inbox(update_id,payload) values(?,?::jsonb)",
                 102L, "{\"update_id\":102,\"callback_query\":{\"id\":\"cb-102\",\"from\":{\"id\":1001},\"message\":{\"message_id\":2,\"chat\":{\"id\":2002,\"type\":\"private\"}},\"data\":\"opaque\"}}");
-        new TelegramWebhookWorker(jdbc, manager, handler, callbacks).drain();
+        new TelegramWebhookWorker(new TelegramWebhookInboxRepository(jdbc), manager, handler, callbacks).drain();
         assertEquals("DONE", jdbc.queryForObject("select status from telegram_webhook_inbox where update_id=102", String.class));
         verify(callbacks).answer(eq("cb-102"), anyString());
     }
@@ -56,7 +56,7 @@ class TelegramWebhookWorkerTest {
         when(handler.handle(any())).thenThrow(new IllegalStateException("simulated failure"));
         jdbc.update("insert into telegram_webhook_inbox(update_id,payload) values(?,?::jsonb)",
                 103L, "{\"update_id\":103,\"message\":{\"message_id\":1,\"chat\":{\"id\":2002,\"type\":\"private\"},\"from\":{\"id\":1001},\"text\":\"/status\"}}");
-        new TelegramWebhookWorker(jdbc, manager, handler, callbacks).drain();
+        new TelegramWebhookWorker(new TelegramWebhookInboxRepository(jdbc), manager, handler, callbacks).drain();
         assertEquals("PENDING", jdbc.queryForObject("select status from telegram_webhook_inbox where update_id=103", String.class));
         assertEquals(1, jdbc.queryForObject("select attempts from telegram_webhook_inbox where update_id=103", Integer.class));
         verifyNoInteractions(callbacks);

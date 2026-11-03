@@ -1,11 +1,11 @@
 package dev.hugo.watcher;
 
+import dev.hugo.watcher.MessagePersistenceRepository.ChatSnapshot;
+import dev.hugo.watcher.MessagePersistenceRepository.Pending;
+
 import dev.hugo.watcher.simulation.DebounceService;
 import dev.hugo.watcher.simulation.WatcherSimulationProperties;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.JacksonException;
@@ -23,14 +23,13 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-@Service
 public class MessageService {
     public enum Acceptance { ACCEPTED, DUPLICATE, IGNORED, QUARANTINED }
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final Set<String> NON_USER_CONTENT = Set.of("protocolMessage", "senderKeyDistributionMessage",
             "messageContextInfo", "reactionMessage", "pollUpdateMessage");
     private static final Set<String> MEDIA_FALLBACKS = Set.of("imageMessage", "videoMessage", "documentMessage");
-    private final JdbcTemplate jdbc;
+    private final MessagePersistenceRepository persistence;
     private final TransactionTemplate transactions;
     private final IdentityService identities;
     private final WatcherProperties properties;
@@ -56,12 +55,19 @@ public class MessageService {
         this(jdbc, manager, identities, properties, archiveModes, debounce, simulationProperties, false);
     }
 
-    @Autowired
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                           IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
                           DebounceService debounce, WatcherSimulationProperties simulationProperties,
-                          @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
-        this.jdbc = jdbc;
+                          boolean realModeEnabled) {
+        this(new MessagePersistenceRepository(jdbc), manager,
+                identities, properties, archiveModes, debounce, simulationProperties, realModeEnabled);
+    }
+
+    public MessageService(MessagePersistenceRepository persistence, PlatformTransactionManager manager,
+                          IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
+                          DebounceService debounce, WatcherSimulationProperties simulationProperties,
+                          boolean realModeEnabled) {
+        this.persistence = Objects.requireNonNull(persistence, "persistence");
         this.transactions = new TransactionTemplate(manager);
         this.identities = identities;
         this.properties = properties;
@@ -93,20 +99,13 @@ public class MessageService {
         String text = new dev.hugo.watcher.ai.ClassificationInput(List.of(
                 dev.hugo.watcher.ai.ClassificationInput.extractText(message.content()))).target();
         if (text.isBlank()) return;
-        List<String> aliases = jdbc.query("select canonical_identity from identity_aliases where alias=?",
-                (rs, row) -> rs.getString(1), message.chatJid());
-        String chat = aliases.isEmpty() ? message.chatJid() : aliases.getFirst();
-        List<ChatSnapshot> snapshots = jdbc.query("select archived,synchronized_snapshot,display_name,is_group,last_read_at from chat_snapshot where chat_jid=?",
-                (rs, row) -> new ChatSnapshot((Boolean)rs.getObject(1), rs.getBoolean(2), rs.getString(3), rs.getBoolean(4),
-                        rs.getTimestamp(5) == null ? null : rs.getTimestamp(5).toInstant()), chat);
+        String chat = persistence.canonicalChat(message.chatJid());
+        List<ChatSnapshot> snapshots = persistence.snapshot(chat, false);
         ArchiveMode mode = archiveModes.getMode();
         if (mode != ArchiveMode.ALL && (snapshots.isEmpty() || !mode.accepts(snapshots.getFirst().archived(), snapshots.getFirst().synchronizedSnapshot()))) return;
         Instant now = Instant.now();
-        jdbc.update("""
-                insert into simulation_owner_context(chat_jid,external_id,received_at,captured_at,expires_at,text)
-                values (?,?,?,?,?,?) on conflict do nothing
-                """, chat, id, Timestamp.from(message.receivedAt()), Timestamp.from(now),
-                Timestamp.from(now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L)), text);
+        persistence.captureOwnerContext(chat, id, message.receivedAt(), now,
+                now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L), text);
     }
 
     /** Stores minimal, short-lived provenance for an authenticated own outbound message. */
@@ -114,10 +113,7 @@ public class MessageService {
         if (!validChatJid(chatJid) || externalId == null || externalId.isBlank() || externalId.length() > 255
                 || observedAt == null) return;
         Instant expiresAt = observedAt.plusSeconds(7L * 86_400L);
-        jdbc.update("""
-                insert into whatsapp_owner_message_references(chat_jid,external_id,observed_at,expires_at)
-                values (?,?,?,?) on conflict (chat_jid,external_id) do nothing
-                """, chatJid, externalId, java.sql.Timestamp.from(observedAt), java.sql.Timestamp.from(expiresAt));
+        persistence.recordOutgoingReference(chatJid, externalId, observedAt, expiresAt);
     }
 
     private Acceptance acceptInTransaction(IncomingMessage message) {
@@ -148,12 +144,7 @@ public class MessageService {
             canonicalJid = identity.canonicalJid();
         }
 
-        List<ChatSnapshot> snapshots = jdbc.query("""
-                select archived, synchronized_snapshot, display_name, is_group, last_read_at
-                from chat_snapshot where chat_jid=? for update
-                """, (rs, row) -> new ChatSnapshot((Boolean) rs.getObject("archived"),
-                rs.getBoolean("synchronized_snapshot"), rs.getString("display_name"), rs.getBoolean("is_group"),
-                rs.getTimestamp("last_read_at") == null ? null : rs.getTimestamp("last_read_at").toInstant()), canonicalJid);
+        List<ChatSnapshot> snapshots = persistence.snapshot(canonicalJid, true);
         ArchiveMode archiveMode = archiveModes.getMode();
         if (snapshots.isEmpty() && archiveMode == ArchiveMode.ALL) {
             snapshots = List.of(new ChatSnapshot(null, false, null, group, null));
@@ -166,7 +157,7 @@ public class MessageService {
         ChatSnapshot chat = snapshots.getFirst();
         if (!archiveMode.accepts(chat.archived(), chat.synchronizedSnapshot())) return Acceptance.IGNORED;
         if (chat.group() && isBlockedGroup(chat.displayName())) {
-            jdbc.update("delete from pending_notification where chat_jid=?", canonicalJid);
+            persistence.deletePending(canonicalJid);
             return Acceptance.IGNORED;
         }
 
@@ -180,19 +171,16 @@ public class MessageService {
         }
         String dedupKey = sha256(canonicalJid + "\n" + externalId + "\n" + participant);
         String upstreamMessageKey = sha256(externalId);
-        if (jdbc.update("""
-                insert into processed_message(message_id, processed_at, canonical_chat_jid, upstream_message_key, canonical_participant_jid, shadow_payload, shadow_expires_at)
-                values (?, ?, ?, ?, ?, ?::jsonb, ?)
-                on conflict do nothing
-                """, dedupKey, Timestamp.from(now), canonicalJid, upstreamMessageKey, participant,
+        if (persistence.insertMessageDedup(dedupKey, now, canonicalJid, upstreamMessageKey, participant,
                 chat.lastReadAt() != null && !receivedAt.isAfter(chat.lastReadAt()) ? null
                         : shadowSnapshot(message, canonicalJid, participant, receivedAt),
-                Timestamp.from(now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L))) == 0) return Acceptance.DUPLICATE;
+                now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L)) == 0)
+            return Acceptance.DUPLICATE;
         if (chat.lastReadAt() != null && !receivedAt.isAfter(chat.lastReadAt())) return Acceptance.IGNORED;
 
         String preview = extractPreview(message.content());
         NotificationPolicy.Kind policy = classifyPolicy(chat.displayName());
-        Pending current = readPending(canonicalJid);
+        Pending current = persistence.readPendingForUpdate(canonicalJid);
         Instant lastAt = current == null || receivedAt.isAfter(current.lastAt()) ? receivedAt : current.lastAt();
         String lastPreview = current == null || !receivedAt.isBefore(current.lastAt()) ? preview : current.preview();
         int retentionDays = Math.min(7, Math.max(1, properties.getRetentionDays()));
@@ -207,16 +195,7 @@ public class MessageService {
         payload.put("previewExpiresAt", previewExpiresAt.toString());
         payload.put("isGroup", chat.group());
         payload.put("notificationPolicy", policy.name());
-        jdbc.update("""
-                insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
-                values (?, ?::jsonb, ?, ?, ?)
-                on conflict (chat_jid) do update set
-                    payload=excluded.payload,
-                    due_at=excluded.due_at,
-                    updated_at=excluded.updated_at,
-                    expires_at=excluded.expires_at
-                """, canonicalJid, toJson(payload), Timestamp.from(lastAt), Timestamp.from(now),
-                Timestamp.from(expiresAt));
+        persistence.upsertPending(canonicalJid, toJson(payload), lastAt, now, expiresAt);
         return Acceptance.ACCEPTED;
     }
 
@@ -227,21 +206,6 @@ public class MessageService {
                 isGroup(chat) ? Optional.of(participant) : Optional.empty(), Optional.empty(), Optional.empty(),
                 message.fromMe(), message.upsertType(), message.history(), message.content(), receivedAt);
         return JSON.writeValueAsString(snapshot);
-    }
-
-    private Pending readPending(String jid) {
-        List<Pending> rows = jdbc.query("""
-                select coalesce((payload->>'messageCount')::integer, 0) as message_count,
-                       payload->>'firstMessageAt' as first_message_at,
-                       payload->>'lastMessageAt' as last_message_at,
-                       payload->>'preview' as preview,
-                       payload->>'previewExpiresAt' as preview_expires_at,
-                       expires_at
-                from pending_notification where chat_jid=? for update
-                """, (rs, row) -> new Pending(rs.getInt("message_count"),
-                Instant.parse(rs.getString("first_message_at")), Instant.parse(rs.getString("last_message_at")),
-                rs.getString("preview"), parseInstant(rs.getString("preview_expires_at"), rs.getTimestamp("expires_at").toInstant())), jid);
-        return rows.isEmpty() ? null : rows.getFirst();
     }
 
     private boolean isBlockedGroup(String name) {
@@ -258,7 +222,7 @@ public class MessageService {
     }
 
     private void quarantine(String kind, String externalId, String reason, Instant now) {
-        QuarantineWriter.write(jdbc, kind, externalId, reason, now);
+        persistence.quarantine(kind, externalId, reason, now);
     }
 
     private static boolean hasUserContent(Map<String, Object> content) {
@@ -351,7 +315,4 @@ public class MessageService {
         catch (RuntimeException ignored) { return fallback; }
     }
 
-    private record ChatSnapshot(Boolean archived, boolean synchronizedSnapshot, String displayName, boolean group,
-                                Instant lastReadAt) { }
-    private record Pending(int count, Instant firstAt, Instant lastAt, String preview, Instant previewExpiresAt) { }
 }

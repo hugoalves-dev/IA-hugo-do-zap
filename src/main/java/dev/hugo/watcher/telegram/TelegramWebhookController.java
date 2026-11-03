@@ -7,25 +7,25 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
-/** Acknowledge only after durable storage; execution is delegated to a separate worker. */
+/** ACK only after durable storage; downstream execution is performed by a separate worker. */
 @RestController
 @ConditionalOnProperty(prefix = "watcher.telegram.admin", name = "webhook-enabled", havingValue = "true")
 public class TelegramWebhookController {
     public static final String PATH = "/api/webhooks/telegram";
     private final byte[] secret;
-    private final JdbcTemplate jdbc;
+    private final TelegramWebhookDataRepository inbox;
 
-    public TelegramWebhookController(TelegramAdminProperties properties, JdbcTemplate jdbc) {
+    public TelegramWebhookController(TelegramAdminProperties properties, TelegramWebhookDataRepository inbox) {
         this.secret = properties.getWebhookSecret().getBytes(StandardCharsets.US_ASCII);
-        this.jdbc = jdbc;
+        this.inbox = inbox;
     }
 
     @PostMapping(value = PATH, consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -43,10 +43,7 @@ public class TelegramWebhookController {
             return ResponseEntity.badRequest().build();
         }
         try {
-            int inserted = jdbc.update("""
-                    INSERT INTO telegram_webhook_inbox(update_id,payload)
-                    VALUES (?,?::jsonb) ON CONFLICT (update_id) DO NOTHING
-                    """, update.updateId().longValue(), body);
+            int inserted = inbox.insertIfAbsent(update.updateId().longValue(), body);
             return ResponseEntity.status(inserted == 1 ? HttpStatus.ACCEPTED : HttpStatus.OK).build();
         } catch (DataAccessException ex) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();

@@ -7,7 +7,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.sql.Timestamp;
+import dev.hugo.watcher.IdentityMergeRepository.AliasRow;
+import dev.hugo.watcher.IdentityMergeRepository.ContactRow;
+import dev.hugo.watcher.IdentityMergeRepository.ChatSnapshotRow;
+import dev.hugo.watcher.IdentityMergeRepository.PendingRow;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -30,11 +33,16 @@ public class IdentityService {
             "^(?:\\+?\\d+(?::\\d+)?@(lid|s\\.whatsapp\\.net|g\\.us|broadcast|hosted\\.lid|hosted)|\\d{7,}|@[\\p{L}\\p{N}._-]+)$|@(?:lid|s\\.whatsapp\\.net|g\\.us|broadcast|hosted\\.lid|hosted)$",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
-    private final JdbcTemplate jdbc;
+    private final IdentityMergeRepository identityStorage;
     private final TransactionTemplate transactions;
 
+    /** Legacy test adapter; production uses the managed repository constructor. */
     public IdentityService(JdbcTemplate jdbc, PlatformTransactionManager manager) {
-        this.jdbc = jdbc;
+        this(new IdentityMergeRepository(jdbc), manager);
+    }
+
+    public IdentityService(IdentityMergeRepository identityStorage, PlatformTransactionManager manager) {
+        this.identityStorage = identityStorage;
         this.transactions = new TransactionTemplate(manager);
     }
 
@@ -65,12 +73,7 @@ public class IdentityService {
         if (canonical == null) canonical = jid;
         String target = canonical;
         return Objects.requireNonNull(transactions.execute(status -> {
-            List<ContactRow> rows = jdbc.query("""
-                    select canonical_jid, lid_jid, phone_jid, username, display_name, display_name_source, updated_at
-                    from contact_identity where canonical_jid=? for update
-                    """, (rs, row) -> new ContactRow(rs.getString("canonical_jid"), rs.getString("lid_jid"),
-                    rs.getString("phone_jid"), rs.getString("username"), rs.getString("display_name"),
-                    source(rs.getString("display_name_source")), rs.getTimestamp("updated_at").toInstant()), target);
+            List<ContactRow> rows = identityStorage.contactsForCanonical(target, true);
             ContactRow current = rows.isEmpty() ? null : rows.getFirst();
             String validCandidate = validName(candidate);
             String selectedName = current == null ? null : validName(current.displayName());
@@ -84,20 +87,10 @@ public class IdentityService {
             String phone = current == null ? pnJid(target) : current.phoneJid();
             String username = current == null ? usernameFromJid(target) : cleanUsername(current.username());
             if (selectedName == null) selectedSource = null;
-            jdbc.update("""
-                    insert into contact_identity(canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at)
-                    values (?,?,?,?,?,?,?)
-                    on conflict (canonical_jid) do update set
-                        lid_jid=coalesce(excluded.lid_jid,contact_identity.lid_jid),
-                        phone_jid=coalesce(excluded.phone_jid,contact_identity.phone_jid),
-                        username=coalesce(excluded.username,contact_identity.username),
-                        display_name=excluded.display_name,
-                        display_name_source=excluded.display_name_source,
-                        updated_at=excluded.updated_at
-                    """, target, lid, phone, username, selectedName, selectedSource == null ? null : selectedSource.name(), Timestamp.from(Instant.now()));
+            identityStorage.upsertContactName(target, lid, phone, username, selectedName, selectedSource);
 
             String resolved = resolveName(selectedName, username, phone, target);
-            jdbc.update("update chat_snapshot set display_name=? where chat_jid=?", resolved.equals(target) ? null : resolved, target);
+            identityStorage.updateSnapshotDisplayName(target, resolved.equals(target) ? null : resolved);
             return resolved;
         }), "Contact-name transaction returned no result");
     }
@@ -106,40 +99,26 @@ public class IdentityService {
         String validJid = requireJid(jid);
         String canonical = lookupCanonical(validJid);
         if (canonical == null) canonical = validJid;
-        List<ContactRow> rows = jdbc.query("""
-                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at
-                from contact_identity where canonical_jid=?
-                """, (rs, row) -> new ContactRow(rs.getString("canonical_jid"), rs.getString("lid_jid"),
-                rs.getString("phone_jid"), rs.getString("username"), rs.getString("display_name"),
-                source(rs.getString("display_name_source")), rs.getTimestamp("updated_at").toInstant()), canonical);
+        List<ContactRow> rows = identityStorage.contactsForCanonical(canonical, false);
         if (rows.isEmpty()) return fallbackName(canonical);
         ContactRow contact = rows.getFirst();
         return resolveName(validName(contact.displayName()), cleanUsername(contact.username()), contact.phoneJid(), canonical);
     }
 
     private CanonicalIdentity observeSingle(String observedJid) {
-        jdbc.update("""
-                insert into identity_aliases(alias, canonical_identity) values (?, ?)
-                on conflict (alias) do nothing
-                """, observedJid, observedJid);
+        identityStorage.observeAliasIfAbsent(observedJid);
         String canonical = lookupCanonical(observedJid);
         if (canonical == null) canonical = observedJid;
         return identityForCanonical(canonical);
     }
 
     private CanonicalIdentity mergeAliases(String observedJid, Set<String> identities) {
-        // Serialize rare explicit merges with shadow workers, including captures not yet batched.
-        jdbc.query("select pg_advisory_xact_lock(947221, 2)", rs -> { });
-        // Explicit LID/PN pair merges are rare; keep the table lock off normal observations.
-        // SHARE ROW EXCLUSIVE permits readers while serializing alias-set rewrites.
-        jdbc.execute("lock table identity_aliases in share row exclusive mode");
+        // Serialize explicit LID/PN merges under the original advisory and table locks.
+        identityStorage.lockAliasMerge();
         CanonicalIdentity alreadyLinked = pairIfAlreadyLinked(identities);
         if (alreadyLinked != null) return alreadyLinked;
         List<String> ordered = new ArrayList<>(new TreeSet<>(identities));
-        String placeholders = String.join(",", java.util.Collections.nCopies(ordered.size(), "?"));
-        List<String> canonicalRows = jdbc.query(
-                "select canonical_identity from identity_aliases where alias in (" + placeholders + ") order by alias",
-                (rs, row) -> rs.getString(1), ordered.toArray());
+        List<String> canonicalRows = identityStorage.canonicalsForAliases(ordered);
         Set<String> oldCanonicals = new TreeSet<>(canonicalRows);
         String observedCanonical = lookupCanonical(observedJid);
         if (observedCanonical != null) oldCanonicals.add(observedCanonical);
@@ -148,128 +127,28 @@ public class IdentityService {
 
         Set<String> aliases = new TreeSet<>(ordered);
         if (!oldCanonicals.isEmpty()) {
-            String canonicalPlaceholders = String.join(",", java.util.Collections.nCopies(oldCanonicals.size(), "?"));
-            aliases.addAll(jdbc.query("select alias from identity_aliases where canonical_identity in (" + canonicalPlaceholders + ") order by alias",
-                    (rs, row) -> rs.getString(1), oldCanonicals.toArray()));
+            aliases.addAll(identityStorage.aliasesForCanonicals(oldCanonicals));
         }
         aliases.addAll(oldCanonicals);
 
         mergeContactNames(canonical, aliases);
         mergeChatSnapshotsAndPending(canonical, aliases);
-        mergeProcessedMessageIdentities(canonical, aliases);
-        mergeShadowIdentities(canonical, aliases);
+        identityStorage.mergeProcessedMessageIdentities(canonical, aliases);
+        identityStorage.mergeShadowIdentities(canonical, aliases);
         if (!oldCanonicals.isEmpty()) {
-            String oldPlaceholders = String.join(",", java.util.Collections.nCopies(oldCanonicals.size(), "?"));
-            jdbc.update("update identity_aliases set canonical_identity=? where canonical_identity in (" + oldPlaceholders + ")",
-                    prepend(canonical, oldCanonicals).toArray());
+            identityStorage.rekeyCanonicals(canonical, oldCanonicals);
         }
         for (String alias : aliases) {
-            jdbc.update("""
-                    insert into identity_aliases(alias,canonical_identity) values (?,?)
-                    on conflict (alias) do update set canonical_identity=excluded.canonical_identity
-                    """, alias, canonical);
+            identityStorage.upsertAlias(alias, canonical);
         }
         return identityForCanonical(canonical);
     }
 
-    private void mergeShadowIdentities(String canonical, Set<String> aliases) {
-        // Evidence is the same explicit alternate-JID pair required by the identity merge itself.
-        // Never infer identity from names, message content or similar phone numbers.
-        for (String alias : aliases) {
-            if (canonical.equals(alias)) continue;
-            jdbc.update("""
-                    insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version,authorized_at)
-                    select ?,situation,template_id,template_version,authorized_at from chat_automation_authorizations where chat_jid=?
-                    on conflict do nothing
-                    """, canonical, alias);
-            jdbc.update("delete from chat_automation_authorizations where chat_jid=?", alias);
-            jdbc.update("""
-                    insert into decision_cooldowns(chat_jid,participant_jid,last_simulation_action_at,last_real_action_at)
-                    select case when chat_jid=? then ? else chat_jid end,
-                           case when participant_jid=? then ? else participant_jid end,
-                           last_simulation_action_at,last_real_action_at
-                      from decision_cooldowns where chat_jid=? or participant_jid=?
-                    on conflict(chat_jid,participant_jid) do update set
-                        last_simulation_action_at=greatest(decision_cooldowns.last_simulation_action_at,excluded.last_simulation_action_at),
-                        last_real_action_at=greatest(decision_cooldowns.last_real_action_at,excluded.last_real_action_at)
-                    """, alias, canonical, alias, canonical, alias, alias);
-            jdbc.update("delete from decision_cooldowns where chat_jid=? or participant_jid=?", alias, alias);
-            // Keep both batches for audit. Close OPEN heads before rekeying to avoid unique-head conflicts.
-            jdbc.update("update simulation_batches set status='READY' where status='OPEN' and (chat_jid in (?,?) or participant_jid in (?,?))",
-                    alias, canonical, alias, canonical);
-            jdbc.update("update simulation_batches set chat_jid=? where chat_jid=?", canonical, alias);
-            jdbc.update("update simulation_batches set participant_jid=? where participant_jid=?", canonical, alias);
-            // Deduplicate only the same upstream message within the same canonical chat and sender.
-            jdbc.update("""
-                    delete from simulation_batch_messages old using simulation_batch_messages kept
-                     where (old.batch_id,old.external_id)<>(kept.batch_id,kept.external_id)
-                       and old.external_id=kept.external_id
-                       and (case when old.chat_jid=? then ? else old.chat_jid end)=(case when kept.chat_jid=? then ? else kept.chat_jid end)
-                       and (case when old.participant_jid=? then ? else old.participant_jid end)=(case when kept.participant_jid=? then ? else kept.participant_jid end)
-                       and old.batch_id>kept.batch_id
-                    """, alias, canonical, alias, canonical, alias, canonical, alias, canonical);
-            jdbc.update("update simulation_batch_messages set chat_jid=? where chat_jid=?", canonical, alias);
-            jdbc.update("update simulation_batch_messages set participant_jid=? where participant_jid=?", canonical, alias);
-            jdbc.update("""
-                    update processed_message set shadow_payload=jsonb_set(shadow_payload,'{chatJid}',to_jsonb(canonical_chat_jid))
-                    where shadow_payload is not null and canonical_chat_jid=?
-                    """, canonical);
-            jdbc.update("""
-                    update processed_message set shadow_payload=jsonb_set(shadow_payload,'{participantJid}',to_jsonb(canonical_participant_jid))
-                    where shadow_payload is not null and canonical_participant_jid=?
-                    """, canonical);
-        }
-        jdbc.update("""
-                update simulation_batches b set status='COMPLETED',claimed_at=null
-                 where b.status in ('OPEN','READY','CLAIMED')
-                   and not exists(select 1 from simulation_batch_messages m where m.batch_id=b.batch_id)
-                """);
-    }
-
-    private void mergeProcessedMessageIdentities(String canonical, Set<String> aliases) {
-        String placeholders = String.join(",", java.util.Collections.nCopies(aliases.size(), "?"));
-        List<MessageDedupRow> rows = jdbc.query("select id,canonical_chat_jid,upstream_message_key,canonical_participant_jid,processed_at "
-                        + "from processed_message where canonical_chat_jid in (" + placeholders
-                        + ") or canonical_participant_jid in (" + placeholders + ") order by id for update",
-                (rs, row) -> new MessageDedupRow(rs.getLong("id"), rs.getString("canonical_chat_jid"),
-                        rs.getString("upstream_message_key"), rs.getString("canonical_participant_jid"),
-                        rs.getTimestamp("processed_at").toInstant()), concat(aliases, aliases).toArray());
-        Map<MessageDedupKey, MessageDedupRow> latestByKey = new LinkedHashMap<>();
-        List<Long> duplicates = new ArrayList<>();
-        for (MessageDedupRow row : rows) {
-            MessageDedupKey key = new MessageDedupKey(
-                    aliases.contains(row.chatJid()) ? canonical : row.chatJid(), row.upstreamMessageKey(),
-                    aliases.contains(row.participantJid()) ? canonical : row.participantJid());
-            MessageDedupRow prior = latestByKey.get(key);
-            if (prior == null) latestByKey.put(key, row);
-            else if (row.processedAt().isAfter(prior.processedAt())) {
-                duplicates.add(prior.id());
-                latestByKey.put(key, row);
-            } else duplicates.add(row.id());
-        }
-        if (!duplicates.isEmpty()) {
-            String ids = String.join(",", java.util.Collections.nCopies(duplicates.size(), "?"));
-            jdbc.update("delete from processed_message where id in (" + ids + ")", duplicates.toArray());
-        }
-        for (Map.Entry<MessageDedupKey, MessageDedupRow> entry : latestByKey.entrySet()) {
-            MessageDedupKey key = entry.getKey();
-            jdbc.update("update processed_message set canonical_chat_jid=?, canonical_participant_jid=? where id=?",
-                    key.chatJid(), key.participantJid(), entry.getValue().id());
-        }
-    }
-
     private CanonicalIdentity pairIfAlreadyLinked(Set<String> identities) {
         List<String> ordered = new ArrayList<>(new TreeSet<>(identities));
-        String placeholders = String.join(",", java.util.Collections.nCopies(ordered.size(), "?"));
-        List<AliasRow> rows = jdbc.query("""
-                select alias,canonical_identity from identity_aliases
-                where alias in (""" + placeholders + ") order by alias",
-                (rs, row) -> new AliasRow(rs.getString("alias"), rs.getString("canonical_identity")), ordered.toArray());
+        List<AliasRow> rows = identityStorage.aliasRows(ordered, false);
         if (rows.size() != ordered.size() || rows.stream().map(AliasRow::canonicalIdentity).distinct().count() != 1) return null;
-        List<AliasRow> locked = jdbc.query("""
-                select alias,canonical_identity from identity_aliases
-                where alias in (""" + placeholders + ") order by alias for share",
-                (rs, row) -> new AliasRow(rs.getString("alias"), rs.getString("canonical_identity")), ordered.toArray());
+        List<AliasRow> locked = identityStorage.aliasRows(ordered, true);
         if (locked.size() != ordered.size() || locked.stream().map(AliasRow::canonicalIdentity).distinct().count() != 1) return null;
         return identityForCanonical(locked.getFirst().canonicalIdentity());
     }
@@ -277,13 +156,7 @@ public class IdentityService {
     private void mergeContactNames(String canonical, Set<String> aliases) {
         List<String> candidates = new ArrayList<>(aliases);
         candidates.add(canonical);
-        String placeholders = String.join(",", java.util.Collections.nCopies(candidates.size(), "?"));
-        List<ContactRow> rows = jdbc.query("""
-                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at
-                from contact_identity where canonical_jid in (""" + placeholders + ") order by canonical_jid for update",
-                (rs, row) -> new ContactRow(rs.getString("canonical_jid"), rs.getString("lid_jid"),
-                        rs.getString("phone_jid"), rs.getString("username"), rs.getString("display_name"),
-                        source(rs.getString("display_name_source")), rs.getTimestamp("updated_at").toInstant()), candidates.toArray());
+        List<ContactRow> rows = identityStorage.contactsForCanonicals(candidates);
 
         ContactRow selected = rows.stream().filter(row -> validName(row.displayName()) != null)
                 .max(Comparator.comparingInt(row -> row.nameSource() == null ? 0 : row.nameSource().rank()))
@@ -296,11 +169,8 @@ public class IdentityService {
         String username = rows.stream().map(ContactRow::username).map(IdentityService::cleanUsername)
                 .filter(Objects::nonNull).findFirst().orElseGet(() -> first(aliases, value -> usernameFromJid(value) != null));
 
-        jdbc.update("delete from contact_identity where canonical_jid in (" + placeholders + ")", candidates.toArray());
-        jdbc.update("""
-                insert into contact_identity(canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at)
-                values (?,?,?,?,?,?,?)
-                """, canonical, lid, phone, username, displayName, nameSource == null ? null : nameSource.name(), Timestamp.from(Instant.now()));
+        identityStorage.replaceContacts(candidates, canonical, lid, phone, username, displayName, nameSource);
+
     }
 
     private void mergeChatSnapshotsAndPending(String canonical, Set<String> aliases) {
@@ -308,48 +178,27 @@ public class IdentityService {
         keys.add(canonical);
         keys = keys.stream().distinct().sorted().toList();
         for (String key : keys) lockSnapshot(key);
-        String placeholders = String.join(",", java.util.Collections.nCopies(keys.size(), "?"));
-        List<ChatSnapshotRow> snapshots = jdbc.query("""
-                select chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot,last_read_at
-                from chat_snapshot where chat_jid in (""" + placeholders + ") order by chat_jid for update",
-                (rs, row) -> new ChatSnapshotRow(rs.getString("chat_jid"), (Boolean) rs.getObject("archived"),
-                        rs.getTimestamp("snapshot_at").toInstant(), rs.getString("display_name"), rs.getBoolean("is_group"),
-                        rs.getBoolean("synchronized_snapshot"), rs.getTimestamp("last_read_at") == null ? null : rs.getTimestamp("last_read_at").toInstant()),
-                keys.toArray());
-        List<PendingRow> pending = jdbc.query("""
-                select chat_jid,payload::text as payload,due_at,updated_at,expires_at
-                from pending_notification where chat_jid in (""" + placeholders + ") order by chat_jid for update",
-                (rs, row) -> new PendingRow(rs.getString("chat_jid"), rs.getString("payload"), rs.getTimestamp("due_at").toInstant(),
-                        rs.getTimestamp("updated_at").toInstant(), rs.getTimestamp("expires_at").toInstant()), keys.toArray());
+        List<ChatSnapshotRow> snapshots = identityStorage.snapshotsForUpdate(keys);
+        List<PendingRow> pending = identityStorage.pendingForUpdate(keys);
 
         if (!snapshots.isEmpty()) {
             ChatSnapshotRow latest = snapshots.stream().max(Comparator.comparing(ChatSnapshotRow::snapshotAt)
                     .thenComparing(row -> row.chatJid().equals(canonical) ? 1 : 0)).orElseThrow();
             Instant lastReadAt = snapshots.stream().map(ChatSnapshotRow::lastReadAt).filter(Objects::nonNull)
                     .max(Instant::compareTo).orElse(null);
-            List<String> nameParams = new ArrayList<>();
-            nameParams.add(canonical);
-            List<ContactRow> names = jdbc.query("select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at from contact_identity where canonical_jid=?",
-                    (rs, row) -> new ContactRow(rs.getString("canonical_jid"), rs.getString("lid_jid"), rs.getString("phone_jid"),
-                            rs.getString("username"), rs.getString("display_name"), source(rs.getString("display_name_source")),
-                            rs.getTimestamp("updated_at").toInstant()), nameParams.toArray());
+            List<ContactRow> names = identityStorage.contactsForCanonical(canonical, false);
             String displayName = names.isEmpty() || validName(names.getFirst().displayName()) == null
                     ? validName(latest.displayName()) : names.getFirst().displayName();
-            jdbc.update("delete from chat_snapshot where chat_jid in (" + placeholders + ")", keys.toArray());
-            jdbc.update("""
-                    insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot,last_read_at)
-                    values (?,?,?,?,?,?,?)
-                    """, canonical, latest.archived(), Timestamp.from(latest.snapshotAt()), displayName,
-                    snapshots.stream().anyMatch(ChatSnapshotRow::group), latest.synchronizedSnapshot(),
-                    lastReadAt == null ? null : Timestamp.from(lastReadAt));
+            identityStorage.replaceSnapshots(keys, canonical, latest.archived(), latest.snapshotAt(), displayName,
+                    snapshots.stream().anyMatch(ChatSnapshotRow::group), latest.synchronizedSnapshot(), lastReadAt);
         }
 
         if (!pending.isEmpty()) {
-            jdbc.update("delete from pending_notification where chat_jid in (" + placeholders + ")", keys.toArray());
+            identityStorage.deletePending(keys);
             ChatSnapshotRow latest = snapshots.stream().max(Comparator.comparing(ChatSnapshotRow::snapshotAt)
                     .thenComparing(row -> row.chatJid().equals(canonical) ? 1 : 0)).orElse(null);
             if (latest == null || latest.archived() == null || !latest.synchronizedSnapshot()) {
-                pending.forEach(row -> QuarantineWriter.write(jdbc, "PENDING_NOTIFICATION", null,
+                pending.forEach(row -> identityStorage.quarantine("PENDING_NOTIFICATION", null,
                         "alias_merge_state_unknown", Instant.now()));
             } else if (Boolean.TRUE.equals(latest.archived())) {
                 Instant lastReadAt = snapshots.stream().map(ChatSnapshotRow::lastReadAt).filter(Objects::nonNull)
@@ -360,11 +209,11 @@ public class IdentityService {
                     Instant firstMessageAt = strictTimestamp(payload.get("firstMessageAt"));
                     Instant lastMessageAt = strictTimestamp(payload.get("lastMessageAt"));
                     if (firstMessageAt == null || lastMessageAt == null || firstMessageAt.isAfter(lastMessageAt)) {
-                        QuarantineWriter.write(jdbc, "PENDING_NOTIFICATION", null,
+                        identityStorage.quarantine("PENDING_NOTIFICATION", null,
                                 "alias_merge_invalid_pending_timestamp", Instant.now());
                     } else if (lastReadAt != null && !firstMessageAt.isAfter(lastReadAt)) {
                         // Aggregate rows do not retain per-message timestamps; discard a row if READ overlaps it.
-                        QuarantineWriter.write(jdbc, "PENDING_NOTIFICATION", null,
+                        identityStorage.quarantine("PENDING_NOTIFICATION", null,
                                 "alias_merge_read_covered", Instant.now());
                     } else {
                         unread.add(row);
@@ -372,11 +221,8 @@ public class IdentityService {
                 }
                 if (!unread.isEmpty()) {
                     PendingMerge merged = combinePending(unread);
-                    jdbc.update("""
-                            insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at)
-                            values (?,?::jsonb,?,?,?)
-                            """, canonical, writeJson(merged.payload()), Timestamp.from(merged.dueAt()),
-                            Timestamp.from(merged.updatedAt()), Timestamp.from(merged.expiresAt()));
+                    identityStorage.insertPending(canonical, writeJson(merged.payload()),
+                            merged.dueAt(), merged.updatedAt(), merged.expiresAt());
                 }
             }
         }
@@ -417,32 +263,15 @@ public class IdentityService {
     }
 
     private CanonicalIdentity identityForCanonical(String canonical) {
-        List<String> aliases = jdbc.query("select alias from identity_aliases where canonical_identity=? order by alias",
-                (rs, row) -> rs.getString(1), canonical);
-        return new CanonicalIdentity(canonical, Set.copyOf(aliases));
+        return new CanonicalIdentity(canonical, Set.copyOf(identityStorage.aliasesFor(canonical)));
     }
 
     private String lookupCanonical(String alias) {
-        List<String> values = jdbc.query("select canonical_identity from identity_aliases where alias=?",
-                (rs, row) -> rs.getString(1), alias);
-        return values.isEmpty() ? null : values.getFirst();
+        return identityStorage.lookupCanonical(alias);
     }
 
     private void lockSnapshot(String jid) {
-        jdbc.query("select pg_advisory_xact_lock(hashtextextended(?, 0))", rs -> { }, jid);
-    }
-
-    private static List<Object> prepend(Object head, Set<String> rest) {
-        List<Object> values = new ArrayList<>();
-        values.add(head);
-        values.addAll(rest);
-        return values;
-    }
-
-    private static List<Object> concat(Set<String> first, Set<String> second) {
-        List<Object> result = new ArrayList<>(first);
-        result.addAll(second);
-        return result;
+        identityStorage.lockSnapshot(jid);
     }
 
     private static String first(Set<String> values, java.util.function.Predicate<String> predicate) {
@@ -493,12 +322,6 @@ public class IdentityService {
         return resolveName(null, usernameFromJid(jid), jid, jid);
     }
 
-    private static ContactNameSource source(String value) {
-        if (value == null) return null;
-        try { return ContactNameSource.valueOf(value); }
-        catch (IllegalArgumentException ex) { return ContactNameSource.LEGACY; }
-    }
-
     private static int integer(Object value) {
         if (value instanceof Number number) return number.intValue();
         if (value instanceof String string) {
@@ -543,13 +366,5 @@ public class IdentityService {
         return jid;
     }
 
-    private record ContactRow(String canonicalJid, String lidJid, String phoneJid, String username,
-                              String displayName, ContactNameSource nameSource, Instant updatedAt) { }
-    private record AliasRow(String alias, String canonicalIdentity) { }
-    private record ChatSnapshotRow(String chatJid, Boolean archived, Instant snapshotAt, String displayName,
-                                   boolean group, boolean synchronizedSnapshot, Instant lastReadAt) { }
-    private record PendingRow(String chatJid, String payload, Instant dueAt, Instant updatedAt, Instant expiresAt) { }
     private record PendingMerge(Map<String, Object> payload, Instant dueAt, Instant updatedAt, Instant expiresAt) { }
-    private record MessageDedupRow(long id, String chatJid, String upstreamMessageKey, String participantJid, Instant processedAt) { }
-    private record MessageDedupKey(String chatJid, String upstreamMessageKey, String participantJid) { }
 }

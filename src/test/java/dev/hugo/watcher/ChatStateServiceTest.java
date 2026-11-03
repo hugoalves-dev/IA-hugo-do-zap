@@ -45,6 +45,12 @@ class ChatStateServiceTest {
         chats = new ChatStateService(jdbc, manager, archiveModes);
     }
 
+    @Test void chatStateServiceDoesNotOwnJDBC() {
+        assertTrue(java.util.Arrays.stream(ChatStateService.class.getDeclaredFields())
+                .noneMatch(field -> JdbcTemplate.class.isAssignableFrom(field.getType())),
+                "All chat snapshot SQL must remain inside repositories");
+    }
+
     @Test void unknownArchiveStateIsQuarantinedAndCannotBootstrapAChat() {
         var result = chats.apply(new ChatUpdate("5511999999999@s.whatsapp.net", Optional.empty(),
                 Instant.parse("2026-10-26T10:00:00Z"), true, true, Optional.of("event-unknown"),

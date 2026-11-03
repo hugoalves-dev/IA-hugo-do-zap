@@ -2,32 +2,32 @@ package dev.hugo.watcher.ai;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.ConnectionCallback;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
 /** Serializes global daily and monthly reservations in PostgreSQL. Amounts are USD micros. */
-@Service
 public final class BudgetService {
-    private final JdbcTemplate jdbc;
+    private final BudgetLedgerRepository ledger;
     private final TransactionTemplate transactions;
     private final MeterRegistry metrics;
 
-    public BudgetService(JdbcTemplate jdbc, PlatformTransactionManager manager, MeterRegistry metrics) {
-        this.jdbc = Objects.requireNonNull(jdbc);
+    public BudgetService(BudgetLedgerRepository ledger, PlatformTransactionManager manager, MeterRegistry metrics) {
+        this.ledger = Objects.requireNonNull(ledger);
         this.transactions = new TransactionTemplate(Objects.requireNonNull(manager));
         // Accounting must survive a surrounding simulation transaction rolling back.
         this.transactions.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.metrics = Objects.requireNonNull(metrics);
+    }
+
+    /** Legacy constructor for standalone PostgreSQL integration tests. */
+    public BudgetService(JdbcTemplate jdbc, PlatformTransactionManager manager, MeterRegistry metrics) {
+        this(new BudgetLedgerRepository(jdbc), manager, metrics);
     }
 
     public Reservation reserve(EstimatedCost estimatedCost, Instant at) {
@@ -37,7 +37,8 @@ public final class BudgetService {
         LocalDate month = day.withDayOfMonth(1);
         Reservation reservation;
         try {
-            reservation = Objects.requireNonNull(transactions.execute(status -> reserveTransaction(estimatedCost, day, month, at)));
+            reservation = Objects.requireNonNull(transactions.execute(status ->
+                    reserveTransaction(estimatedCost, day, month, at)));
         } catch (BudgetExceededException blocked) {
             metrics.counter("ai.budget.reservations", "outcome", "blocked").increment();
             throw blocked;
@@ -47,35 +48,20 @@ public final class BudgetService {
     }
 
     private Reservation reserveTransaction(EstimatedCost estimate, LocalDate day, LocalDate month, Instant at) {
-        lockBudgetLedger();
-        List<Limits> limits = jdbc.query("""
-                select daily_limit_micros,monthly_limit_micros from ai_budget_limits
-                 where singleton_id=1 for update
-                """, (rs, row) -> new Limits((Long) rs.getObject(1), (Long) rs.getObject(2)));
+        ledger.lockLedger();
+        var limits = ledger.limitsForUpdate();
         if (limits.isEmpty() || limits.getFirst().dailyMicros() == null || limits.getFirst().monthlyMicros() == null)
             throw new BudgetExceededException();
-        Limits current = limits.getFirst();
-        long dailyUsed = used("reservation_day", day);
-        long monthlyUsed = used("reservation_month", month);
+        var current = limits.getFirst();
+        long dailyUsed = ledger.usedDaily(day);
+        long monthlyUsed = ledger.usedMonthly(month);
         if (exceeds(dailyUsed, estimate.micros(), current.dailyMicros())
                 || exceeds(monthlyUsed, estimate.micros(), current.monthlyMicros()))
             throw new BudgetExceededException();
 
         UUID id = UUID.randomUUID();
-        jdbc.update("""
-                insert into ai_budget_reservations(reservation_id,estimated_micros,reserved_micros,
-                    reservation_day,reservation_month,status,created_at,updated_at)
-                values (?,?,?,?,?,'RESERVED',?,?)
-                """, id, estimate.micros(), estimate.micros(), day, month, Timestamp.from(at), Timestamp.from(at));
+        ledger.insertReservation(id, estimate.micros(), day, month, at);
         return new Reservation(id, estimate.micros(), day, month);
-    }
-
-    private long used(String dateColumn, LocalDate date) {
-        if (!dateColumn.equals("reservation_day") && !dateColumn.equals("reservation_month"))
-            throw new IllegalArgumentException("invalid budget period");
-        Long result = jdbc.queryForObject("select coalesce(sum(reserved_micros),0) from ai_budget_reservations where "
-                + dateColumn + "=? and status <> 'RELEASED'", Long.class, date);
-        return result == null ? 0 : result;
     }
 
     private static boolean exceeds(long used, long requested, long limit) {
@@ -98,13 +84,10 @@ public final class BudgetService {
     private void transition(UUID id, String target, Long amount) {
         Objects.requireNonNull(id, "id");
         transactions.executeWithoutResult(status -> {
-            lockBudgetLedger();
-            List<Existing> rows = jdbc.query("""
-                    select status,reserved_micros,actual_micros from ai_budget_reservations
-                     where reservation_id=? for update
-                    """, (rs, row) -> new Existing(rs.getString(1), rs.getLong(2), (Long) rs.getObject(3)), id);
+            ledger.lockLedger();
+            var rows = ledger.reservationForUpdate(id);
             if (rows.isEmpty()) throw new IllegalArgumentException("budget reservation not found");
-            Existing existing = rows.getFirst();
+            var existing = rows.getFirst();
             if (existing.status().equals(target)) {
                 if (target.equals("SETTLED") && !Objects.equals(existing.actualMicros(), amount))
                     throw new IllegalStateException("reservation already settled with different cost");
@@ -126,25 +109,8 @@ public final class BudgetService {
                     throw new IllegalStateException("dispatched or uncertain reservation cannot be released");
             }
             long reserved = target.equals("SETTLED") ? amount : target.equals("RELEASED") ? 0 : existing.reservedMicros();
-            jdbc.update("""
-                    update ai_budget_reservations set status=?,reserved_micros=?,actual_micros=?,updated_at=now()
-                     where reservation_id=?
-                    """, target, reserved, target.equals("SETTLED") ? amount : null, id);
+            ledger.transition(id, target, reserved, target.equals("SETTLED") ? amount : null);
         });
         metrics.counter("ai.budget.reservation.transitions", "outcome", target.toLowerCase(java.util.Locale.ROOT)).increment();
     }
-
-    /** One transaction-scoped lock serializes reservations and all accounting corrections, even without a limits row. */
-    private void lockBudgetLedger() {
-        jdbc.execute((ConnectionCallback<Void>) connection -> {
-            try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(947221, 20)")) {
-                statement.execute();
-            }
-            return null;
-        });
-        jdbc.query("select singleton_id from ai_budget_limits where singleton_id=1 for update", rs -> { });
-    }
-
-    private record Limits(Long dailyMicros, Long monthlyMicros) { }
-    private record Existing(String status, long reservedMicros, Long actualMicros) { }
 }

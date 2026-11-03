@@ -36,7 +36,7 @@ class AdminCommandServiceTest {
         jdbc.update("delete from telegram_admin_audit");
         jdbc.update("delete from telegram_admin_callback_tokens");
         jdbc.update("delete from outbox_actions where action_type='telegram_admin_reply'");
-        tokens = new CallbackTokenService(jdbc, clock);
+        tokens = new CallbackTokenService(new CallbackTokenLedgerRepository(jdbc), clock);
         var outbox = new NotificationOutboxRepository(jdbc, new DataSourceTransactionManager(source));
         commands = new AdminCommandService(jdbc, new DataSourceTransactionManager(source), tokens, outbox, clock);
         commands.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));

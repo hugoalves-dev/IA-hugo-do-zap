@@ -3,6 +3,7 @@ package dev.hugo.watcher.ai;
 import dev.hugo.watcher.IncomingMessage;
 import dev.hugo.watcher.simulation.Batch;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
 import tools.jackson.databind.json.JsonMapper;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -12,10 +13,15 @@ import java.util.Comparator;
 import java.util.List;
 
 /** Reads only retained, previously captured messages for the same conversation. */
-final class ConversationContextRepository {
+@Repository
+public class ConversationContextRepository {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
     private final Duration window;
+    public ConversationContextRepository(JdbcTemplate jdbc) {
+        this(jdbc, Duration.ofHours(24));
+    }
+
     ConversationContextRepository(JdbcTemplate jdbc, Duration window) {
         if (window == null || window.isNegative() || window.isZero() || window.compareTo(Duration.ofDays(7)) > 0)
             throw new IllegalArgumentException("context window must be between zero and seven days");
@@ -24,6 +30,12 @@ final class ConversationContextRepository {
     }
 
     ClassificationInput input(Batch batch, Instant now) {
+        return input(batch, now, window);
+    }
+
+    public ClassificationInput input(Batch batch, Instant now, Duration window) {
+        if (window == null || window.isNegative() || window.isZero() || window.compareTo(Duration.ofDays(7)) > 0)
+            throw new IllegalArgumentException("context window must be between zero and seven days");
         ClassificationInput target = ClassificationInput.fromBatch(batch);
         if (target.target().isEmpty()) return target;
         if (batch.messages().isEmpty() || batch.chatJid().endsWith("@g.us") && batch.participantJid().isBlank())

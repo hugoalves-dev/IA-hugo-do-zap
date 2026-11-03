@@ -30,7 +30,7 @@ class CallbackTokenServiceTest {
         Flyway.configure().dataSource(source).load().migrate();
         jdbc = new JdbcTemplate(source);
         jdbc.update("delete from telegram_admin_callback_tokens");
-        tokens = new CallbackTokenService(jdbc, clock);
+        tokens = new CallbackTokenService(new CallbackTokenLedgerRepository(jdbc), clock);
     }
 
     @Test void tokenCanBeConsumedOnlyOnceByTheBoundUserAndPrivateChat() {

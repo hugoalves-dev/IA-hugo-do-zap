@@ -7,7 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Clock;
-import org.springframework.jdbc.core.JdbcTemplate;
+import java.time.Duration;
 
 @Component
 @ConditionalOnExpression("${watcher.simulation.enabled:true} or ${watcher.decision-producer.real-mode-enabled:false}")
@@ -15,42 +15,42 @@ public class SimulationScheduler {
     private final DebounceService debounce;
     private final SimulationService simulations;
     private final Clock clock;
-    private final JdbcTemplate jdbc;
+    private final SimulationBatchDueRepository dueDates;
     private final boolean realModeEnabled;
     private dev.hugo.watcher.ai.ShadowMetrics metrics;
-    @Autowired(required = false) public void configureMetrics(dev.hugo.watcher.ai.ShadowMetrics value) { this.metrics = value; }
+
+    @Autowired(required = false)
+    public void configureMetrics(dev.hugo.watcher.ai.ShadowMetrics value) { this.metrics = value; }
+
     private dev.hugo.watcher.OperationalState operational;
-    @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
     @Autowired
-    public SimulationScheduler(DebounceService debounce, SimulationService simulations, Clock clock, JdbcTemplate jdbc,
-                              @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
+    public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
+
+    public SimulationScheduler(DebounceService debounce, SimulationService simulations, Clock clock,
+                               SimulationBatchDueRepository dueDates,
+                               @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
         this.debounce = debounce;
         this.simulations = simulations;
         this.clock = clock;
-        this.jdbc = jdbc;
+        this.dueDates = dueDates;
         this.realModeEnabled = realModeEnabled;
     }
 
-    public SimulationScheduler(DebounceService debounce, SimulationService simulations, Clock clock, JdbcTemplate jdbc) {
-        this(debounce, simulations, clock, jdbc, false);
-    }
     @Scheduled(fixedDelayString = "${watcher.simulation.poll-delay:PT1S}")
     public void processReady() {
-        if (!realModeEnabled) {
-            if (operational == null || !operational.simulation()) return;
-        }
+        if (!realModeEnabled && (operational == null || !operational.simulation())) return;
         for (Batch batch : debounce.claimReady(clock.instant())) {
             if (metrics != null) {
-                // Queue time covers the READY deadline and sequential backlog, including the
-                // time claimed batches spend waiting their turn; never query message content.
+                // Observability must never prevent evaluation of a claimed batch.
                 try {
-                    java.sql.Timestamp due = jdbc.queryForObject(
-                            "select due_at from simulation_batches where batch_id=?", java.sql.Timestamp.class, batch.id());
-                    if (due != null && !clock.instant().isBefore(due.toInstant()))
-                        metrics.queueWait(java.time.Duration.between(due.toInstant(), clock.instant()));
+                    dueDates.findDueAt(batch.id()).ifPresent(due -> {
+                        var instant = due.toInstant();
+                        var now = clock.instant();
+                        if (!now.isBefore(instant)) metrics.queueWait(Duration.between(instant, now));
+                    });
                 } catch (RuntimeException ignored) {
-                    // Observability must never prevent evaluation of a claimed batch.
+                    // Ignore transient metrics failures.
                 }
             }
             simulations.evaluate(batch);

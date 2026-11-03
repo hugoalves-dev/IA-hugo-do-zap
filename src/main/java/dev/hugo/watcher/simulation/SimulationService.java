@@ -13,25 +13,26 @@ import java.time.ZoneId;
 import dev.hugo.watcher.policy.DecisionPolicy;
 import dev.hugo.watcher.policy.ResponseTemplate;
 import dev.hugo.watcher.policy.Situation;
-import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumMap;
+import dev.hugo.watcher.simulation.SimulationPersistenceRepository.Scope;
+import dev.hugo.watcher.simulation.SimulationPersistenceRepository.Settings;
+import dev.hugo.watcher.simulation.SimulationPersistenceRepository.Cooldowns;
 import java.util.List;
 import java.util.Objects;
 
 @Service
 public class SimulationService {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(SimulationService.class);
-    private final JdbcTemplate jdbc;
+    private final SimulationPersistenceRepository persistence;
     private final TransactionTemplate transactions;
     private final Clock clock;
     private final WatcherSimulationProperties properties;
@@ -47,13 +48,12 @@ public class SimulationService {
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
-    @Autowired
-    public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
+    public SimulationService(SimulationPersistenceRepository persistence, PlatformTransactionManager manager, Clock clock,
                              WatcherSimulationProperties properties, DecisionEngine decisions, PersistedPolicyRepository policies,
                              AvailabilityService availability, WatcherProperties watcher,
                              dev.hugo.watcher.ai.AiSimulationClassifier classifier,
                              dev.hugo.watcher.notification.DecisionActionProducer producer) {
-        this.jdbc = jdbc;
+        this.persistence = persistence;
         this.transactions = new TransactionTemplate(manager);
         this.clock = clock;
         this.properties = properties;
@@ -63,6 +63,16 @@ public class SimulationService {
         this.watcher = watcher;
         this.classifier = classifier;
         this.producer = producer;
+    }
+
+    /** Test adapter retaining the original constructors while migration #24 is unfinished. */
+    public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
+                             WatcherSimulationProperties properties, DecisionEngine decisions, PersistedPolicyRepository policies,
+                             AvailabilityService availability, WatcherProperties watcher,
+                             dev.hugo.watcher.ai.AiSimulationClassifier classifier,
+                             dev.hugo.watcher.notification.DecisionActionProducer producer) {
+        this(new SimulationPersistenceRepository(jdbc), manager, clock, properties, decisions, policies,
+                availability, watcher, classifier, producer);
     }
 
     public SimulationService(JdbcTemplate jdbc, PlatformTransactionManager manager, Clock clock,
@@ -97,8 +107,7 @@ public class SimulationService {
         long started = System.nanoTime();
         try {
             // Provider requests run without a database transaction or advisory lock held.
-            boolean existing = Boolean.TRUE.equals(jdbc.queryForObject(
-                    "select exists(select 1 from simulation_decisions where batch_id=?)", Boolean.class, batch.id()));
+            boolean existing = persistence.decisionExists(batch.id());
             Classification classification = classifier == null || existing ? Classification.unavailable() : classifier.classify(batch);
             long persistStarted = System.nanoTime();
             try {
@@ -114,22 +123,15 @@ public class SimulationService {
     }
 
     private SimulationDecision evaluateTransaction(Batch batch, Classification classification, Instant now) {
-        jdbc.query("select pg_advisory_xact_lock(947221, 2)", rs -> { });
-        List<Batch> current = jdbc.query("select chat_jid,participant_jid from simulation_batches where batch_id=?",
-                (rs, row) -> new Batch(batch.id(), rs.getString(1), rs.getString(2), batch.messages()), batch.id());
+        persistence.lockIdentityMerge();
+        List<Batch> current = persistence.currentBatch(batch);
         if (current.isEmpty()) throw new IllegalStateException("simulation batch missing");
         return evaluateCurrent(current.getFirst(), classification, now);
     }
 
     private SimulationDecision evaluateCurrent(Batch batch, Classification classification, Instant now) {
-        lockDecisionKey(batch);
-        List<Scope> scope = jdbc.query("""
-                select settings.mode, snapshot.archived, coalesce(snapshot.synchronized_snapshot,false) synchronized_snapshot
-                  from archive_monitor_settings settings
-                  left join chat_snapshot snapshot on snapshot.chat_jid=?
-                 where settings.singleton_id=1
-                """, (rs, row) -> new Scope(ArchiveMode.valueOf(rs.getString("mode")), (Boolean) rs.getObject("archived"),
-                rs.getBoolean("synchronized_snapshot")), batch.chatJid());
+        persistence.lockDecisionKey(batch.chatJid());
+        List<Scope> scope = persistence.scopes(batch.chatJid());
         if (scope.isEmpty()) throw new IllegalStateException("archive monitor settings missing");
         String scopeBlocked = blockedReason(scope.getFirst());
         EffectivePolicy resolved = policies.forChat(batch.chatJid(), fallbackProfile(batch.chatJid()));
@@ -143,26 +145,13 @@ public class SimulationService {
         SimulationDecision decision = new SimulationDecision(decided.wouldAlert(), decided.wouldReply(),
                 decided.templateReference(), decided.reason(), decided.blockedReason(),
                 decided.realActionAllowed(), decided.realBlockedReason(), decided.status());
-        int inserted = jdbc.update("""
-                insert into simulation_decisions(batch_id,would_alert,would_reply,template_id,decision_reason,blocked_reason,
-                    decided_at,metadata_expires_at,real_action_allowed,real_blocked_reason,decision_state,policy_snapshot,availability_state,availability_source,availability_reason,
-                    classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash,production_mode,alert_template_reference,classification_diagnostic)
-                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?) on conflict (batch_id) do nothing
-                """, batch.id(), decision.wouldAlert(), decision.wouldReply(), decision.templateId(), decision.decisionReason(),
-                decision.blockedReason(), Timestamp.from(now), Timestamp.from(now.plusSeconds(properties.getAuditRetentionDays() * 86_400L)),
-                decision.realActionAllowed(), decision.realBlockedReason(), decision.status().name(),
-                JSON.writeValueAsString(resolved.fields()), currentAvailability.state().name(),
-                currentAvailability.source().name(), currentAvailability.reason(),
-                verified.status().name(),verified.urgency().name(),verified.confidence(),verified.personalReferenceHash(),producer != null && producer.realModeEnabled(),
+        int inserted = persistence.insertDecision(batch.id(), decision, now,
+                now.plusSeconds(properties.getAuditRetentionDays() * 86_400L),
+                JSON.writeValueAsString(resolved.fields()), currentAvailability,
+                verified, producer != null && producer.realModeEnabled(),
                 effective.decisionPolicy().templates().containsKey(Situation.CRITICAL_URGENCY)
-                        ? effective.decisionPolicy().templates().get(Situation.CRITICAL_URGENCY).reference() : null, verified.diagnostic());
-        List<SimulationDecision> persisted = jdbc.query("""
-                select would_alert,would_reply,template_id,decision_reason,blocked_reason,real_action_allowed,real_blocked_reason,decision_state
-                  from simulation_decisions where batch_id=?
-                """, (rs, row) -> new SimulationDecision(rs.getBoolean("would_alert"), rs.getBoolean("would_reply"),
-                rs.getString("template_id"), rs.getString("decision_reason"), rs.getString("blocked_reason"),
-                rs.getBoolean("real_action_allowed"), rs.getString("real_blocked_reason"),
-                DecisionStatus.valueOf(rs.getString("decision_state"))), batch.id());
+                    ? effective.decisionPolicy().templates().get(Situation.CRITICAL_URGENCY).reference() : null);
+        List<SimulationDecision> persisted = persistence.persistedDecision(batch.id());
         if (persisted.isEmpty()) throw new IllegalStateException("simulation decision was not persisted");
         if (inserted == 1) {
             Classification completed = verified;
@@ -181,63 +170,36 @@ public class SimulationService {
                     });
         }
         if (inserted == 1 && (decision.wouldAlert() || decision.wouldReply())) {
-            jdbc.update("""
-                    insert into decision_cooldowns(chat_jid,participant_jid,last_simulation_action_at)
-                    values (?,?,?) on conflict(chat_jid,participant_jid) do update
-                    set last_simulation_action_at=excluded.last_simulation_action_at
-                    """, batch.chatJid(), "", Timestamp.from(now));
+            persistence.updateSimulatedCooldown(batch.chatJid(), now);
         }
-        jdbc.update("update simulation_batches set status='COMPLETED', claimed_at=null where batch_id=? and status='CLAIMED'", batch.id());
+        persistence.completeBatch(batch.id());
         if (producer != null && verified.available()) producer.produce(batch.id());
         return persisted.getFirst();
     }
 
     private String fallbackProfile(String chat) {
-        List<String> names = jdbc.query("select display_name from chat_snapshot where chat_jid=?", (rs, row) -> rs.getString(1), chat);
+        List<String> names = persistence.snapshotNames(chat);
         String name = names.isEmpty() || names.getFirst() == null ? "" : names.getFirst();
         return java.util.regex.Pattern.compile(watcher.getAllowedNameRegex(), java.util.regex.Pattern.CASE_INSENSITIVE)
                 .matcher(name).find() ? "WORK_ONLY" : "ANYTIME";
     }
 
     private DecisionPolicy loadDecisionPolicy(Batch batch) {
-        List<Settings> settings = jdbc.query("""
-                select simulation_cooldown_seconds,real_cooldown_seconds
-                  from automation_settings where singleton_id=1
-                """, (rs, row) -> new Settings(rs.getInt(1), rs.getInt(2)));
+        List<Settings> settings = persistence.settings();
         if (settings.isEmpty()) return DecisionPolicy.disabled();
         Settings current = settings.getFirst();
         EnumMap<Situation, ResponseTemplate> templates = new EnumMap<>(Situation.class);
-        jdbc.query("""
-                select a.situation,t.situation template_situation,t.template_id,t.version,t.body,t.identifies_automation
-                  from chat_automation_authorizations a
-                  join response_templates t on t.template_id=a.template_id and t.version=a.template_version
-                 where a.chat_jid=? and t.enabled=true
-                 order by a.situation,t.version desc,t.template_id
-                """, rs -> {
-            Situation situation = Situation.valueOf(rs.getString("situation"));
-            if (situation != Situation.valueOf(rs.getString("template_situation"))) return;
-            templates.putIfAbsent(situation, new ResponseTemplate(rs.getString("template_id"), rs.getInt("version"),
-                    situation, rs.getString("body"), rs.getBoolean("identifies_automation")));
-        }, batch.chatJid());
-        List<Cooldowns> cooldowns = jdbc.query("""
-                select last_simulation_action_at,last_real_action_at from decision_cooldowns
-                 where chat_jid=? and participant_jid=?
-                """, (rs, row) -> new Cooldowns(rs.getTimestamp(1) == null ? null : rs.getTimestamp(1).toInstant(),
-                rs.getTimestamp(2) == null ? null : rs.getTimestamp(2).toInstant()), batch.chatJid(), "");
+        for (var row : persistence.authorizedTemplates(batch.chatJid())) {
+            Situation situation = Situation.valueOf(row.situation());
+            if (situation != Situation.valueOf(row.templateSituation())) continue;
+            templates.putIfAbsent(situation, new ResponseTemplate(row.templateId(), row.version(),
+                    situation, row.body(), row.identifiesAutomation()));
+        }
+        List<Cooldowns> cooldowns = persistence.cooldowns(batch.chatJid());
         Cooldowns last = cooldowns.isEmpty() ? new Cooldowns(null, null) : cooldowns.getFirst();
         return new DecisionPolicy(operational != null && operational.classification(), operational != null && operational.simulatedAlerts(),
                 operational != null && operational.simulatedReplies(), operational == null || operational.killSwitch(), templates.keySet(), templates, Duration.ofSeconds(current.simulationCooldownSeconds()),
                 Duration.ofSeconds(current.realCooldownSeconds()), last.simulationAt(), last.realAt());
-    }
-
-    private void lockDecisionKey(Batch batch) {
-        jdbc.execute((ConnectionCallback<Void>) connection -> {
-            try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))")) {
-                statement.setString(1, "decision\n" + batch.chatJid());
-                statement.execute();
-            }
-            return null;
-        });
     }
 
     private static String blockedReason(Scope scope) {
@@ -247,7 +209,4 @@ public class SimulationService {
         return null;
     }
 
-    private record Scope(ArchiveMode mode, Boolean archived, boolean synchronizedSnapshot) { }
-    private record Settings(int simulationCooldownSeconds, int realCooldownSeconds) { }
-    private record Cooldowns(Instant simulationAt, Instant realAt) { }
 }

@@ -1,6 +1,7 @@
 package dev.hugo.watcher.telegram;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.ZoneId;
@@ -9,11 +10,12 @@ import java.util.List;
 import java.util.Locale;
 
 /** Read-only inspection of retained decisions; never re-evaluates a batch. */
-final class ShadowDecisionQuery {
+@Repository
+public class ShadowDecisionQuery {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy - HH:mm:ss").withZone(ZoneId.of("America/Sao_Paulo"));
     private final JdbcTemplate jdbc;
     private final Clock clock;
-    ShadowDecisionQuery(JdbcTemplate jdbc, Clock clock) { this.jdbc = jdbc; this.clock = clock; }
+    public ShadowDecisionQuery(JdbcTemplate jdbc, Clock clock) { this.jdbc = jdbc; this.clock = clock; }
 
     String recent(List<String> args) {
         if (args.size() > 1 || !args.isEmpty() && !args.getFirst().matches("(?:[1-9]|10)"))

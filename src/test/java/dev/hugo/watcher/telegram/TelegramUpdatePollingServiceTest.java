@@ -52,7 +52,8 @@ class TelegramUpdatePollingServiceTest {
         TelegramUpdatesClient client = offset -> { assertEquals(0, offset); calls.incrementAndGet(); return List.of(update); };
         TelegramUpdateHandler handler = mock(TelegramUpdateHandler.class);
 
-        new TelegramUpdatePollingService(jdbc, client, handler).poll();
+        new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), client, handler,
+                new DataSourceTransactionManager(source), null).poll();
 
         assertEquals(42L, jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
         assertEquals(1, calls.get());
@@ -64,7 +65,8 @@ class TelegramUpdatePollingServiceTest {
         TelegramUpdatesClient client = offset -> { calls.incrementAndGet(); return List.of(); };
         try (Connection owner = source.getConnection()) {
             owner.createStatement().execute("select pg_advisory_lock(73491,22)");
-            new TelegramUpdatePollingService(jdbc, client, mock(TelegramUpdateHandler.class)).poll();
+            new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), client,
+                mock(TelegramUpdateHandler.class), new DataSourceTransactionManager(source), null).poll();
             assertEquals(0, calls.get());
             owner.createStatement().execute("select pg_advisory_unlock(73491,22)");
         }
@@ -80,7 +82,8 @@ class TelegramUpdatePollingServiceTest {
             throw new IllegalStateException("simulate failure before offset commit");
         }).when(handler).handle(update);
 
-        new TelegramUpdatePollingService(jdbc, client, handler).poll();
+        new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), client, handler,
+                new DataSourceTransactionManager(source), null).poll();
 
         assertEquals(0, jdbc.queryForObject("select count(*) from telegram_admin_audit", Integer.class));
         assertEquals(0L, jdbc.queryForObject("select polling_offset from telegram_admin_settings where singleton_id=1", Long.class));
@@ -89,7 +92,7 @@ class TelegramUpdatePollingServiceTest {
     @Test void invalidConfirmedBudgetCommandIsAuditedAndDoesNotBlockLaterPollingUpdates() {
         Clock clock = Clock.systemUTC();
         var manager = new DataSourceTransactionManager(source);
-        var callbacks = new CallbackTokenService(jdbc, clock);
+        var callbacks = new CallbackTokenService(new CallbackTokenLedgerRepository(jdbc), clock);
         var outbox = new NotificationOutboxRepository(jdbc, manager);
         var commands = new AdminCommandService(jdbc, manager, callbacks, outbox, clock);
         var handler = new TelegramUpdateHandler(1001, 2002, commands, callbacks);
@@ -104,7 +107,8 @@ class TelegramUpdatePollingServiceTest {
             if (offset == 2) return List.of(messageUpdate(2, "/status"));
             return List.of();
         };
-        TelegramUpdatePollingService polling = new TelegramUpdatePollingService(jdbc, client, handler);
+        TelegramUpdatePollingService polling = new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), client, handler,
+                new DataSourceTransactionManager(source), null);
 
         polling.poll();
         polling.poll();
@@ -123,7 +127,7 @@ class TelegramUpdatePollingServiceTest {
     @Test void invalidDatesAreRejectedAndDoNotBlockEmergency() {
         Clock clock = Clock.systemUTC();
         var manager = new DataSourceTransactionManager(source);
-        var callbacks = new CallbackTokenService(jdbc, clock);
+        var callbacks = new CallbackTokenService(new CallbackTokenLedgerRepository(jdbc), clock);
         var commands = new AdminCommandService(jdbc, manager, callbacks, new NotificationOutboxRepository(jdbc, manager), clock);
         var handler = new TelegramUpdateHandler(1001, 2002, commands, callbacks);
         jdbc.update("delete from availability_overrides");
@@ -141,7 +145,8 @@ class TelegramUpdatePollingServiceTest {
             if (offset == 4) return List.of(messageUpdate(4, "/emergencia"));
             return List.of();
         };
-        var polling = new TelegramUpdatePollingService(jdbc, client, handler);
+        var polling = new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), client, handler,
+                new DataSourceTransactionManager(source), null);
         for (int i = 0; i < 4; i++) {
             polling.poll();
             if (i == 1 || i == 3) assertEquals(1, jdbc.queryForObject(
@@ -173,7 +178,7 @@ class TelegramUpdatePollingServiceTest {
             return null;
         }).when(acknowledger).answer("callback-91", "✅ Comando recebido.");
 
-        var polling = new TelegramUpdatePollingService(jdbc, offset -> List.of(update),
+        var polling = new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), offset -> List.of(update),
                 handler, new DataSourceTransactionManager(source), acknowledger);
         polling.poll();
 
@@ -192,7 +197,7 @@ class TelegramUpdatePollingServiceTest {
         when(handler.handle(update)).thenReturn(AdminResult.rejected("Confirmação inválida."));
         TelegramCallbackAcknowledger acknowledger = mock(TelegramCallbackAcknowledger.class);
 
-        var polling = new TelegramUpdatePollingService(jdbc, offset -> List.of(update),
+        var polling = new TelegramUpdatePollingService(new TelegramAdminPollingRepository(jdbc), offset -> List.of(update),
                 handler, new DataSourceTransactionManager(source), acknowledger);
         polling.poll();
 
