@@ -90,6 +90,15 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
+    dev.hugo.watcher.simulation.DebounceService debounceService(
+            dev.hugo.watcher.simulation.DebouncePersistenceRepository persistence,
+            dev.hugo.watcher.simulation.WatcherSimulationProperties limits,
+            PlatformTransactionManager transactions,
+            @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
+        return new dev.hugo.watcher.simulation.DebounceService(persistence, limits, transactions, realModeEnabled);
+    }
+
+    @Bean
     IdentityService identityService(IdentityMergeRepository identityStorage,
                                     PlatformTransactionManager transactions) {
         return new IdentityService(identityStorage, transactions);

@@ -11,6 +11,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Timestamp;
+import dev.hugo.watcher.simulation.DebouncePersistenceRepository.OpenBatch;
+import dev.hugo.watcher.simulation.DebouncePersistenceRepository.Capture;
+import dev.hugo.watcher.simulation.DebouncePersistenceRepository.BatchHead;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -22,19 +25,23 @@ import java.util.UUID;
 @Service
 public class DebounceService {
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private final JdbcTemplate jdbc;
+    private final DebouncePersistenceRepository persistence;
     private final TransactionTemplate transactions;
     private final WatcherSimulationProperties limits;
     private final boolean processingEnabled;
 
-    @Autowired
-    public DebounceService(JdbcTemplate jdbc, WatcherSimulationProperties limits,
-                           PlatformTransactionManager manager,
-                           @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
-        this.jdbc = jdbc;
+    public DebounceService(DebouncePersistenceRepository persistence, WatcherSimulationProperties limits,
+                           PlatformTransactionManager manager, boolean realModeEnabled) {
+        this.persistence = persistence;
         this.limits = limits;
         this.transactions = new TransactionTemplate(manager);
         this.processingEnabled = limits.isEnabled() || realModeEnabled;
+    }
+
+    /** Compatibility adapter for standalone tests. */
+    public DebounceService(JdbcTemplate jdbc, WatcherSimulationProperties limits,
+                           PlatformTransactionManager manager, boolean realModeEnabled) {
+        this(new DebouncePersistenceRepository(jdbc), limits, manager, realModeEnabled);
     }
 
     public DebounceService(JdbcTemplate jdbc, WatcherSimulationProperties limits,
@@ -63,23 +70,20 @@ public class DebounceService {
         lockBatch(chat, participant);
         String messageId = message.externalId().orElseThrow(() -> new IllegalArgumentException("external message ID required"));
         Timestamp now = Timestamp.from(at);
-        List<UUID> duplicate = jdbc.query("select batch_id from simulation_batch_messages where chat_jid=? and participant_jid=? and external_id=?",
-                (rs, row) -> rs.getObject(1, UUID.class), chat, participant, messageId);
+        List<UUID> duplicate = persistence.duplicate(chat, participant, messageId);
         if (!duplicate.isEmpty()) {
-            jdbc.update("update simulation_batches set expires_at=least(expires_at,?) where batch_id=?",
-                    Timestamp.from(sensitiveExpiresAt),duplicate.getFirst());
+            persistence.shortenExpiry(duplicate.getFirst(), sensitiveExpiresAt);
             return;
         }
 
-        List<OpenBatch> open = jdbc.query("select batch_id,first_message_at,last_message_at from simulation_batches where chat_jid=? and participant_jid=? and status='OPEN' for update",
-                (rs, row) -> new OpenBatch(rs.getObject(1, UUID.class),rs.getTimestamp(2).toInstant(),rs.getTimestamp(3).toInstant()), chat, participant);
+        List<OpenBatch> open = persistence.openBatches(chat, participant);
         UUID id;
         if (open.isEmpty()) {
             id = createBatch(chat, participant, now, Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())), capturedAt, sensitiveExpiresAt);
         } else {
             OpenBatch head = open.getFirst();
             id = head.id();
-            Integer size = jdbc.queryForObject("select count(*) from simulation_batch_messages where batch_id=?", Integer.class, id);
+            Integer size = persistence.batchSize(id);
             boolean earlier = at.isBefore(head.firstAt());
             boolean separateLateWindow = earlier && (Duration.between(at,head.firstAt()).getSeconds() >= limits.getInactivitySeconds()
                     || !at.plusSeconds(limits.getMaxWaitSeconds()).isAfter(head.lastAt())
@@ -89,24 +93,17 @@ public class DebounceService {
                 id = createBatch(chat,participant,now,Timestamp.from(at.plusSeconds(limits.getInactivitySeconds())),
                         capturedAt,sensitiveExpiresAt,true);
             } else if (size != null && size >= limits.getMaxMessages()) {
-                jdbc.update("update simulation_batches set status='READY', due_at=? where batch_id=?", now, id);
+                persistence.closeBatch(id, at);
                 id = createBatch(chat, participant, now, now, capturedAt, sensitiveExpiresAt);
             } else {
-                jdbc.update("""
-                        update simulation_batches set first_message_at=least(first_message_at,?),last_message_at=greatest(last_message_at,?),
-                            due_at=least(least(first_message_at,?) + (? * interval '1 second'),
-                                         greatest(last_message_at,?) + (? * interval '1 second')),
-                            expires_at=least(expires_at, ?)
-                        where batch_id=?
-                        """, now, now, now, limits.getMaxWaitSeconds(), now, limits.getInactivitySeconds(), Timestamp.from(sensitiveExpiresAt), id);
+                persistence.extendBatch(id, at, sensitiveExpiresAt,
+                        limits.getMaxWaitSeconds(), limits.getInactivitySeconds());
             }
         }
         try {
             String payload = JSON.writeValueAsString(message);
-            jdbc.update("""
-                    insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload)
-                    values (?,?,?,?,?,?::jsonb)
-                    """, id, chat, participant, messageId, Timestamp.from(message.receivedAt() == null ? at : message.receivedAt()), payload);
+            persistence.insertMessage(id, chat, participant, messageId,
+                    message.receivedAt() == null ? at : message.receivedAt(), payload);
         } catch (Exception ex) {
             throw new IllegalArgumentException("unable to snapshot incoming message", ex);
         }
@@ -119,32 +116,19 @@ public class DebounceService {
 
     private UUID createBatch(String chat, String participant, Timestamp now, Timestamp dueAt,
                              Instant capturedAt, Instant sensitiveExpiresAt, boolean ready) {
-        jdbc.execute((ConnectionCallback<Void>) connection -> {
-            try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(947221, 1)")) { statement.execute(); }
-            return null;
-        });
-        Integer active = jdbc.queryForObject("select count(*) from simulation_batches where status in ('OPEN','READY','CLAIMED')", Integer.class);
+        persistence.lockBatchCapacity();
+        Integer active = persistence.activeBatchCount();
         if (active != null && active >= limits.getMaxPendingBatches()) throw new IllegalStateException("simulation batch capacity reached");
         UUID id = UUID.randomUUID();
         Instant configuredDeadline = capturedAt.plus(Duration.ofDays(limits.getSensitiveRetentionDays()));
         Instant deadline = sensitiveExpiresAt.isBefore(configuredDeadline) ? sensitiveExpiresAt : configuredDeadline;
-        jdbc.update("""
-                insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at)
-                values (?,?,?,?,?,?,?,?,?,?)
-                """, id, chat, participant, ready ? "READY" : "OPEN", now, now, dueAt, Timestamp.from(capturedAt),
-                Timestamp.from(deadline),
-                Timestamp.from(capturedAt.plus(Duration.ofDays(limits.getAuditRetentionDays()))));
+        persistence.insertBatch(id, chat, participant, ready, now.toInstant(), dueAt.toInstant(),
+                capturedAt, deadline, capturedAt.plus(Duration.ofDays(limits.getAuditRetentionDays())));
         return id;
     }
 
     private void lockBatch(String chat, String participant) {
-        jdbc.execute((ConnectionCallback<Void>) connection -> {
-            try (var statement = connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))")) {
-                statement.setString(1, chat + "\n" + participant);
-                statement.execute();
-            }
-            return null;
-        });
+        persistence.lockBatch(chat, participant);
     }
 
     public List<Batch> claimReady(Instant now) {
@@ -161,27 +145,17 @@ public class DebounceService {
             try {
                 Boolean drained = transactions.execute(status -> {
                     lockIdentityMerge();
-                    List<Capture> rows = jdbc.query("""
-                            select id,shadow_payload::text,processed_at,shadow_expires_at from processed_message
-                             where shadow_payload is not null and shadow_expires_at>? and shadow_retry_at<=?
-                             order by case when pg_input_is_valid(shadow_payload->>'receivedAt','timestamp with time zone')
-                                 then (shadow_payload->>'receivedAt')::timestamptz else processed_at end,id
-                             for update skip locked limit 1
-                            """, (rs, row) -> new Capture(rs.getLong(1), rs.getString(2),
-                            rs.getTimestamp(3).toInstant(),rs.getTimestamp(4).toInstant()), Timestamp.from(now),Timestamp.from(now));
+                    List<Capture> rows = persistence.nextCapture(now);
                     if (rows.isEmpty()) return false;
                     Capture capture = rows.getFirst();
                     selectedId[0] = capture.id();
                     IncomingMessage message = JSON.readValue(capture.payload(), IncomingMessage.class);
                     Instant receivedAt = message.receivedAt() == null ? capture.capturedAt() : message.receivedAt();
                     // Replay original windows, not the time at which a delayed poll drains the capture.
-                    jdbc.update("""
-                            update simulation_batches set status='READY'
-                             where chat_jid=? and participant_jid=? and status='OPEN' and due_at<=?
-                            """, canonical(message.chatJid()), message.participantJid().map(this::canonical).orElse(""),
-                            Timestamp.from(receivedAt));
+                    persistence.closeDueBatch(canonical(message.chatJid()),
+                            message.participantJid().map(this::canonical).orElse(""), receivedAt);
                     enqueueTransaction(message, receivedAt, capture.capturedAt(), capture.expiresAt());
-                    jdbc.update("update processed_message set shadow_payload=null,shadow_expires_at=null where id=?", capture.id());
+                    persistence.clearCapture(capture.id());
                     return true;
                 });
                 if (!Boolean.TRUE.equals(drained)) break;
@@ -192,9 +166,8 @@ public class DebounceService {
                 if (selectedId[0] == null) break;
                 try {
                     // Backoff survives restart and never changes payload retention or origin timestamps.
-                    transactions.executeWithoutResult(status -> jdbc.update(
-                            "update processed_message set shadow_retry_at=? where id=? and shadow_payload is not null",
-                            Timestamp.from(now.plusSeconds(30)),selectedId[0]));
+                    transactions.executeWithoutResult(status ->
+                            persistence.retryCapture(selectedId[0], now.plusSeconds(30)));
                 } catch (RuntimeException unavailable) {
                     break;
                 }
@@ -203,42 +176,30 @@ public class DebounceService {
     }
 
     private void lockIdentityMerge() {
-        jdbc.query("select pg_advisory_xact_lock(947221, 2)", rs -> { });
+        persistence.lockIdentityMerge();
     }
 
     private String canonical(String jid) {
-        List<String> rows = jdbc.query("select canonical_identity from identity_aliases where alias=?", (rs, row) -> rs.getString(1), jid);
-        return rows.isEmpty() ? jid : rows.getFirst();
+        return persistence.canonical(jid);
     }
-
-    private record OpenBatch(UUID id, Instant firstAt, Instant lastAt) { }
-    private record Capture(long id, String payload, Instant capturedAt, Instant expiresAt) { }
 
     private List<Batch> claimTransaction(Instant now) {
         lockIdentityMerge();
-        Timestamp cutoff = Timestamp.from(now);
-        jdbc.update("update simulation_batches set status='READY' where status='OPEN' and due_at<=?", cutoff);
-        jdbc.update("update simulation_batches set status='READY', claimed_at=null where status='CLAIMED' and claimed_at<=?",
-                Timestamp.from(now.minusSeconds(60)));
-        List<UUID> ids = jdbc.query("""
-                select batch_id from simulation_batches where status='READY' and expires_at>?
-                order by due_at, batch_id for update skip locked limit 100
-                """, (rs, row) -> rs.getObject(1, UUID.class), cutoff);
+        persistence.advanceDue(now);
+        persistence.reclaimStale(now.minusSeconds(60));
+        List<UUID> ids = persistence.claimableBatches(now);
         List<Batch> claimed = new ArrayList<>();
         for (UUID id : ids) {
-            jdbc.update("update simulation_batches set status='CLAIMED', claimed_at=? where batch_id=?", cutoff, id);
-            List<String> rows = jdbc.query("select payload::text from simulation_batch_messages where batch_id=? order by received_at,external_id",
-                    (rs, row) -> rs.getString(1), id);
+            persistence.markClaimed(id, now);
+            List<String> rows = persistence.batchMessages(id);
             List<IncomingMessage> messages = rows.stream().map(row -> {
                 try { return JSON.readValue(row, IncomingMessage.class); }
                 catch (Exception ex) { throw new IllegalStateException("invalid persisted message snapshot", ex); }
             }).toList();
-            List<BatchHead> heads = jdbc.query("select chat_jid,participant_jid from simulation_batches where batch_id=?",
-                    (rs, row) -> new BatchHead(rs.getString(1), rs.getString(2)), id);
+            List<BatchHead> heads = persistence.batchHeads(id);
             if (!heads.isEmpty()) claimed.add(new Batch(id, heads.getFirst().chat(), heads.getFirst().participant(), messages));
         }
         return List.copyOf(claimed);
     }
 
-    private record BatchHead(String chat, String participant) { }
 }

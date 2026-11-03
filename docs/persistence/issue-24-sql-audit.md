@@ -39,6 +39,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 - Delivery admission: `DeliveryAdmissionRepository` owns the locked outbox token, chat claim, cooldown and dispatched-attempt persistence, with the existing coordinator transaction and HTTP-outside-transaction boundary intact.
 - Notification queue projection: `NotificationQueueQueryRepository` owns due-notification SQL, blocked-group deletion and connection alert generation lookup. Formatting, filtering and outbox transitions stay in `NotificationService` ([CI #41507350751](https://github.com/hugoalves-dev/IA-hugo-do-zap/actions/runs/41507350751): pending)
 
+- Debounce simulation capture/claim: `DebouncePersistenceRepository` owns PostgreSQL-native aliases, advisory locks, batch scheduling, SKIP LOCKED, retry and retention SQL. `DebounceService` retains serialization, policy window decisions and the original transaction boundaries.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |
@@ -46,7 +48,7 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 | Identity and contact | `IdentityService`, `LegacyImportService` | Canonical aliases, LID/PN/JID merge, contact-name precedence, collision rejection |
 | Ingest/job/outbox | `JdbcInboxRepository`, `JdbcJobRepository`, `NotificationOutboxRepository` | Lease/claim, `SKIP LOCKED`, idempotency, restart, ordered processing |
 | Notification delivery | `WhatsAppActionService`, `WhatsAppActionDispatcher`, `DecisionRuntimeGate` | No duplicate sends, consent, fail closed, cancellation, immutable evidence |
-| Simulation and AI | `DebounceService`, `SimulationService`, `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
+| Simulation and AI | `SimulationService`, `AiSimulationClassifier`, `ConversationContextRepository`, `PersonalReferenceEvidence` | Shadow isolation, retry, bounded context, budget, advisory locks |
 | Telegram admin | `ShadowDecisionQuery` | Authorize before action, durable inbox, offsets, callback replay prevention |
 | Other | `QuarantineWriter`, remaining historical JDBC compatibility facades | Bounded retention, no sensitive payload leaks |
 
