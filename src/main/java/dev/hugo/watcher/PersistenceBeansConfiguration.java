@@ -90,6 +90,13 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
+    IdentityService identityService(org.springframework.jdbc.core.JdbcTemplate jdbc,
+                                    IdentityMergeRepository identityStorage,
+                                    PlatformTransactionManager transactions) {
+        return new IdentityService(jdbc, identityStorage, transactions);
+    }
+
+    @Bean
     ChatStateService chatStateService(ChatSnapshotRepository snapshots,
                                       PlatformTransactionManager transactions,
                                       IdentityService identities, ArchiveModeService archiveModes) {
