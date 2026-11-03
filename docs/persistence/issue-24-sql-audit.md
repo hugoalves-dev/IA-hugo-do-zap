@@ -57,6 +57,12 @@ Updated through the 2026-11-03 PR continuation; source of truth is the current P
 
 - Quarantine: `QuarantineEventRepository` now exclusively owns the redacted `quarantined_events` insert, ID normalization and bounded expiry; the legacy `QuarantineWriter` is a SQL-free compatibility bridge.
 
+## PostgreSQL integration coverage added during review
+
+- `JdbcInboxRepositoryContractTest`: concurrent identical webhook intake across independent transactions, and rollback of a failed transaction followed by a clean retry; verifies exactly one durable processing job.
+- `JobRepositoryTest.leaseRecoveryAfterRepositoryRecreationRejectsStaleWorker`: recreates the repository against existing PostgreSQL state, reclaims an expired lease and verifies the old worker cannot complete it.
+- These are regression tests for native repository contracts. They do **not** replace independent review of queue/ACK/UNKNOWN semantics.
+
 ## Remaining release gates and justified native repositories
 
 The remaining `Jdbc*` classes are themselves repositories, not SQL in business services. These PostgreSQL-specific operations are **intentional exceptions** under issue #24 and must not be replaced with naive entity `save()` operations. Spring Data JDBC `@Modifying` does not provide arbitrary `INSERT ... RETURNING` projections (see official query-method documentation).

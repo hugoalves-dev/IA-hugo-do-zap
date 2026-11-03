@@ -74,6 +74,27 @@ class JobRepositoryTest {
         assertTrue(jobs.claim(1, Instant.now(), Duration.ofSeconds(10)).isEmpty());
     }
 
+    @Test void leaseRecoveryAfterRepositoryRecreationRejectsStaleWorker() {
+        insertReadyJob("restart-lease");
+        var datasource = jdbc.getDataSource();
+        assertNotNull(datasource);
+        var firstRepository = new JdbcJobRepository(jdbc, new DataSourceTransactionManager(datasource));
+        Instant initial = Instant.now().plusSeconds(15);
+        Job oldLease = firstRepository.claim(1, initial, Duration.ofSeconds(10)).getFirst();
+        // A new repository instance stands in for the restarted JVM. Lease state is durable PostgreSQL data.
+        var restartedRepository = new JdbcJobRepository(new JdbcTemplate(datasource),
+                new DataSourceTransactionManager(datasource));
+        Job recovered = restartedRepository.claim(1, initial.plusSeconds(11), Duration.ofMinutes(1)).getFirst();
+        assertEquals(oldLease.id(), recovered.id());
+        assertNotEquals(oldLease.leaseToken(), recovered.leaseToken());
+        assertThrows(IllegalStateException.class,
+                () -> firstRepository.complete(oldLease.id(), oldLease.leaseToken()));
+        assertDoesNotThrow(() -> restartedRepository.complete(recovered.id(), recovered.leaseToken()));
+        assertEquals("COMPLETED", jdbc.queryForObject(
+                "select status from processing_jobs where job_uuid=?", String.class, recovered.id()));
+        assertTrue(restartedRepository.claim(1, initial.plusSeconds(12), Duration.ofSeconds(10)).isEmpty());
+    }
+
     private void insertReadyJob(String externalId) {
         long inboxId = jdbc.queryForObject("insert into inbox_events(source,event_type,external_id,payload) values ('evolution','messages.upsert',?, '{}'::jsonb) returning id", Long.class, externalId);
         jdbc.update("insert into processing_jobs(inbox_event_id,status) values (?, 'READY')", inboxId);
