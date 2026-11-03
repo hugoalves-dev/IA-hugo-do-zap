@@ -104,7 +104,7 @@ class TelegramHtmlFormattingTest {
     @Test void menuUsesHtmlButOtherAdminRepliesStayPlainText() throws Exception {
         OutboxAction menu = action("telegram_admin_edit", """
                 {"eventType":"telegram_admin_edit",
-                 "text":"⚙️ Administração Hugo do Zap\nEscolha <uma> & opção:",
+                 "text":"⚙️ Administração Hugo do Zap\\nEscolha <uma> & opção:",
                  "messageId":10,"keyboard":[[{"text":"Status","data":"status"}]]}
                 """);
         assertTrue(formatter.isHtmlAdmin(menu));
