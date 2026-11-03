@@ -51,6 +51,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - AI classification: `AiClassificationEvaluationRepository` owns claim, evaluation-result CAS, consent and batch-scope SQL; managed `ConversationContextRepository` and `PersonalReferenceEvidenceRepository` own context and reference projections. `AiSimulationClassifier` keeps provider calls outside SQL transactions and revalidates consents before use.
 
+- Telegram read-only decisions: `ShadowDecisionQuery` is explicitly a PostgreSQL-native query repository (read-only projections and retention-filtered previews); it is no longer exposed as an ordinary component with an implicit persistence role.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |

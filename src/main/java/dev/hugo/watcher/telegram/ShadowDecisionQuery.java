@@ -1,7 +1,7 @@
 package dev.hugo.watcher.telegram;
 
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Repository;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.ZoneId;
@@ -10,8 +10,8 @@ import java.util.List;
 import java.util.Locale;
 
 /** Read-only inspection of retained decisions; never re-evaluates a batch. */
-@Component
-public final class ShadowDecisionQuery {
+@Repository
+public class ShadowDecisionQuery {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy - HH:mm:ss").withZone(ZoneId.of("America/Sao_Paulo"));
     private final JdbcTemplate jdbc;
     private final Clock clock;
