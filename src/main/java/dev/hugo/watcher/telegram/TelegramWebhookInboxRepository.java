@@ -63,6 +63,30 @@ public class TelegramWebhookInboxRepository {
                 """, updateId);
     }
 
+    public void markDone(long updateId, String callbackId, String callbackFeedback) {
+        jdbc.update("""
+                UPDATE telegram_webhook_inbox SET status='DONE',completed_at=now(),
+                    payload='{}'::jsonb,last_error=NULL,callback_id=?,callback_feedback=?,
+                    callback_answered_at=CASE WHEN ? IS NULL THEN now() ELSE NULL END
+                WHERE update_id=?
+                """, callbackId, callbackFeedback, callbackId, updateId);
+    }
+
+    public List<CallbackItem> pendingCallbackByIdForUpdate(long updateId) {
+        return jdbc.query("""
+                SELECT update_id,callback_id,callback_feedback FROM telegram_webhook_inbox
+                WHERE update_id=? AND status='DONE' AND callback_id IS NOT NULL AND callback_answered_at IS NULL
+                FOR UPDATE
+                """, (rs, i) -> new CallbackItem(rs.getLong(1), rs.getString(2), rs.getString(3)), updateId);
+    }
+
+    public void markCallbackAnswered(long updateId) {
+        jdbc.update("""
+                UPDATE telegram_webhook_inbox SET callback_answered_at=now(),callback_id=NULL,callback_feedback=NULL
+                WHERE update_id=? AND status='DONE' AND callback_answered_at IS NULL
+                """, updateId);
+    }
+
     public void recordFailure(long updateId) {
         jdbc.update("""
                 UPDATE telegram_webhook_inbox SET attempts=attempts+1,
@@ -83,4 +107,5 @@ public class TelegramWebhookInboxRepository {
     }
 
     public record Item(long updateId, String payload) { }
+    public record CallbackItem(long updateId, String callbackId, String feedback) { }
 }

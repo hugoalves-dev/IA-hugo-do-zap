@@ -64,6 +64,22 @@ class RabbitMessagingApplicationIntegrationTest {
         assertEquals(3, listeners.getListenerContainers().size());
         assertTrue(listeners.getListenerContainers().stream().allMatch(
                 org.springframework.amqp.rabbit.listener.MessageListenerContainer::isRunning));
+        try {
+            String queues = rabbit.execInContainer("rabbitmqctl", "list_queues", "-p", "watcher", "name", "arguments")
+                    .getStdout();
+            String retryQueue = java.util.Arrays.stream(queues.split("\\R"))
+                    .filter(line -> line.startsWith("watcher.notifications.retry.1"))
+                    .findFirst().orElseThrow();
+            assertTrue(retryQueue.contains("x-message-ttl") && retryQueue.contains("1000"));
+            String deferredQueue = java.util.Arrays.stream(queues.split("\\R"))
+                    .filter(line -> line.startsWith("watcher.notifications.deferred"))
+                    .findFirst().orElseThrow();
+            assertFalse(deferredQueue.contains("x-message-ttl"),
+                    "long work-window deferrals use their own queue, not a shared short retry TTL");
+        } catch (java.io.IOException | InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Could not inspect RabbitMQ retry topology", ex);
+        }
     }
 
     @Test

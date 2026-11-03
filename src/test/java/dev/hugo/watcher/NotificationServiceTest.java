@@ -103,6 +103,36 @@ class NotificationServiceTest {
                 Boolean.class));
     }
 
+    @Test void rabbitActionRemainsScheduledWhenGlobalTelegramRateLimitIsActive() {
+        var repository = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        repository.enqueue("rate-limited", "telegram_admin_reply", "{}", "[]",
+                databaseNow, databaseNow.plusSeconds(86_400));
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=clock_timestamp()+interval '5 seconds' where singleton_id=1");
+
+        NotificationDeferredException deferred = assertThrows(NotificationDeferredException.class,
+                () -> repository.claimByKey("rate-limited", databaseNow));
+
+        assertEquals(NotificationDeferredException.Reason.RATE_LIMIT, deferred.reason());
+        assertTrue(deferred.delayMillis() > 4_000);
+        assertEquals("PENDING", jdbc.queryForObject(
+                "select status from outbox_actions where action_key='rate-limited'", String.class));
+    }
+
+    @Test void redeliveredRabbitActionWaitsForAnActiveDatabaseLeaseInsteadOfBeingDropped() {
+        var repository = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        repository.enqueue("active-lease", "telegram_admin_reply", "{}", "[]",
+                databaseNow, databaseNow.plusSeconds(86_400));
+        assertNotNull(repository.claimByKey("active-lease", databaseNow));
+
+        NotificationDeferredException deferred = assertThrows(NotificationDeferredException.class,
+                () -> repository.claimByKey("active-lease", databaseNow));
+
+        assertEquals(NotificationDeferredException.Reason.ACTIVE_LEASE, deferred.reason());
+        assertTrue(deferred.delayMillis() > 0);
+    }
+
     @BeforeEach void setup() {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         jdbc = new JdbcTemplate(dataSource);

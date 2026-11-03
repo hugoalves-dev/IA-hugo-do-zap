@@ -30,9 +30,9 @@ class NotificationRabbitConsumerTest {
     }
 
     @Test
-    void usesConfirmedDelayedRetryAndAcknowledgesTheOriginalAfterTransientFailure() throws Exception {
+    void usesTheFixedRetryBucketAndAcknowledgesTheOriginalAfterTransientFailure() throws Exception {
         NotificationService notifications = mock(NotificationService.class);
-        doThrow(new NotificationRetryException("rate limited", 4_250))
+        doThrow(new NotificationRetryException("temporary failure", 4_250))
                 .when(notifications).deliverQueuedAction(eq("admin:42"), any());
         RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
         NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
@@ -42,7 +42,41 @@ class NotificationRabbitConsumerTest {
         consumer.receive(message("admin:42", 0), channel);
 
         verify(publisher).publishDelayed("notifications.retry.1", "admin:42", "admin:42",
-                Map.of("x-retry-count", 1), 4_250);
+                Map.of("x-retry-count", 1), 1_000);
+        verify(channel).basicAck(17L, false);
+    }
+
+    @Test
+    void honorsTelegramRetryAfterOnItsSeparateRateLimitQueue() throws Exception {
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("rate limited", 4_250, true))
+                .when(notifications).deliverQueuedAction(eq("archived_messages:429"), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
+                mock(RabbitDeliveryMetrics.class));
+        Channel channel = mock(Channel.class);
+
+        consumer.receive(message("archived_messages:429", 0), channel);
+
+        verify(publisher).publishDelayed("notifications.rate-limited", "archived_messages:429",
+                "archived_messages:429", Map.of("x-retry-count", 1), 4_250);
+        verify(channel).basicAck(17L, false);
+    }
+
+    @Test
+    void defersActiveDeliveryLeaseOnASeparateFixedLeaseQueue() throws Exception {
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationDeferredException(1_000, NotificationDeferredException.Reason.ACTIVE_LEASE))
+                .when(notifications).deliverQueuedAction(eq("archived_messages:lease"), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
+                mock(RabbitDeliveryMetrics.class));
+        Channel channel = mock(Channel.class);
+
+        consumer.receive(message("archived_messages:lease", 0), channel);
+
+        verify(publisher).publishDelayed("notifications.lease", "archived_messages:lease",
+                "archived_messages:lease", Map.of("x-retry-count", 0), 120_000);
         verify(channel).basicAck(17L, false);
     }
 

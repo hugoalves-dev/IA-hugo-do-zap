@@ -151,9 +151,13 @@ public class NotificationOutboxRepository {
         Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
         long delayMillis = availableAt == null ? 0
                 : java.time.Duration.between(databaseNow, availableAt.toInstant()).toMillis();
-        if (delayMillis > 0)
-            rabbitPublisher.publishDelayed("notifications.deferred", actionKey, actionKey, headers, delayMillis);
-        else
+        if (delayMillis > 0) {
+            String deferredRoute = actionKey.startsWith("archived_messages:deferred:")
+                    ? "notifications.deferred"
+                    : actionKey.startsWith("telegram_admin_reply:") || actionKey.startsWith("telegram_admin_edit:")
+                    ? "admin.rate-limited" : "notifications.rate-limited";
+            rabbitPublisher.publishDelayed(deferredRoute, actionKey, actionKey, headers, delayMillis);
+        } else
             rabbitPublisher.publish("notifications", actionKey, actionKey, headers);
         jdbc.update("""
                 update outbox_actions set rabbit_confirmed_at=coalesce(rabbit_confirmed_at,clock_timestamp()),
@@ -199,7 +203,19 @@ public class NotificationOutboxRepository {
         if (!nextAttempt.isEmpty() && nextAttempt.getFirst() != null) {
             Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
             long delay = java.time.Duration.between(databaseNow, nextAttempt.getFirst().toInstant()).toMillis();
-            if (delay > 0) throw new NotificationDeferredException(delay + 25);
+            if (delay > 0)
+                throw new NotificationDeferredException(delay + 25, NotificationDeferredException.Reason.RATE_LIMIT);
+        }
+        List<Timestamp> activeLease = jdbc.query("""
+                select lease_expires_at from outbox_actions
+                where action_key=? and status='PROCESSING'
+                  and lease_expires_at>clock_timestamp()
+                """, (rs, row) -> rs.getTimestamp(1), actionKey);
+        if (!activeLease.isEmpty()) {
+            Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
+            long delay = java.time.Duration.between(databaseNow, activeLease.getFirst().toInstant()).toMillis();
+            if (delay > 0)
+                throw new NotificationDeferredException(delay + 25, NotificationDeferredException.Reason.ACTIVE_LEASE);
         }
         return null;
     }
@@ -336,6 +352,9 @@ public class NotificationOutboxRepository {
                 Duration delay = serverRequestedRetry ? retryAfter : DEFAULT_RATE_LIMIT_COOLDOWN;
                 retryAt = databaseNow.plus(delay).plus(RETRY_AFTER_MARGIN);
                 advanceTelegramRateLimit(retryAt);
+            } else if (rabbitPublisher != null) {
+                // RabbitMQ owns transient backoff; the database row remains immediately replayable.
+                retryAt = databaseNow;
             } else {
                 retryAt = databaseNow.plusSeconds(backoff);
             }

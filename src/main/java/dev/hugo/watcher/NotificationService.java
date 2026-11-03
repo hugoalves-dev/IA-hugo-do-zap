@@ -212,7 +212,7 @@ public class NotificationService {
     private void throwRetryIfQueued(OutboxAction action, boolean rateLimited, java.time.Duration retryAfter) {
         if (outbox.rabbitDispatchEnabled())
             throw new NotificationRetryException("Telegram delivery is retryable",
-                    retryDelayMillis(action, rateLimited, retryAfter));
+                    retryDelayMillis(action, rateLimited, retryAfter), rateLimited);
     }
 
     private static long retryDelayMillis(OutboxAction action, boolean rateLimited, java.time.Duration retryAfter) {

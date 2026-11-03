@@ -16,6 +16,7 @@ import java.util.Map;
 public class NotificationRabbitConsumer {
     private static final int MAX_RETRIES = 3;
     private static final long[] RETRY_DELAY_MILLIS = {1_000, 5_000, 30_000};
+    private static final long LEASE_RETRY_DELAY_MILLIS = 120_000;
 
     private final NotificationService notifications;
     private final RabbitEventPublisher publisher;
@@ -40,16 +41,27 @@ public class NotificationRabbitConsumer {
             if (delivered) metrics.record(isAdminAction(actionKey) ? "admin" : "whatsapp", ingressAt);
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (NotificationDeferredException deferred) {
-            String deferredRoute = isAdminAction(actionKey) ? "admin.deferred" : "notifications.deferred";
+            String deferredRoute = deferredRoute(actionKey, deferred.reason());
+            long delay = deferred.reason() == NotificationDeferredException.Reason.ACTIVE_LEASE
+                    ? LEASE_RETRY_DELAY_MILLIS : deferred.delayMillis();
             publisher.publishDelayed(deferredRoute, messageId == null ? actionKey : messageId,
-                    actionKey, deferredHeaders(message), deferred.delayMillis());
+                    actionKey, deferredHeaders(message), delay);
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (NotificationRetryException retry) {
-            retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, retry.delayMillis());
+            int retries = retryCount(message);
+            if (retry.rateLimited()) {
+                retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey,
+                        retry.delayMillis(), isAdminAction(actionKey) ? "admin.rate-limited" : "notifications.rate-limited");
+            } else {
+                long delay = RETRY_DELAY_MILLIS[Math.min(retries, RETRY_DELAY_MILLIS.length - 1)];
+                retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, delay,
+                        retryRoute(actionKey, retries + 1));
+            }
         } catch (RuntimeException failure) {
             int retries = retryCount(message);
             long delay = RETRY_DELAY_MILLIS[Math.min(retries, RETRY_DELAY_MILLIS.length - 1)];
-            retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, delay);
+            retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, delay,
+                    retryRoute(actionKey, retries + 1));
         } finally {
             RabbitDeliveryContext.clear();
         }
@@ -68,6 +80,20 @@ public class NotificationRabbitConsumer {
         return actionKey.startsWith("telegram_admin_reply:") || actionKey.startsWith("telegram_admin_edit:");
     }
 
+    private static String deferredRoute(String actionKey, NotificationDeferredException.Reason reason) {
+        boolean admin = isAdminAction(actionKey);
+        return switch (reason) {
+            case WORK_WINDOW -> admin ? "admin.deferred" : "notifications.deferred";
+            case RATE_LIMIT -> admin ? "admin.rate-limited" : "notifications.rate-limited";
+            case ACTIVE_LEASE -> admin ? "admin.lease" : "notifications.lease";
+        };
+    }
+
+    private static String retryRoute(String actionKey, int attempt) {
+        String prefix = isAdminAction(actionKey) ? "admin.retry." : "notifications.retry.";
+        return prefix + Math.min(3, attempt);
+    }
+
     private static Map<String, Object> deferredHeaders(Message message) {
         java.util.Map<String, Object> headers = new java.util.HashMap<>();
         Object retries = message.getMessageProperties().getHeaders().get("x-retry-count");
@@ -77,15 +103,15 @@ public class NotificationRabbitConsumer {
         return headers;
     }
 
-    private void retryOrDeadLetter(Message message, Channel channel, String id, String body, long delayMillis)
-            throws java.io.IOException {
+    private void retryOrDeadLetter(Message message, Channel channel, String id, String body, long delayMillis,
+                                   String retryRoute) throws java.io.IOException {
         int retries = retryCount(message);
         if (retries >= MAX_RETRIES) {
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
             return;
         }
         int nextRetry = retries + 1;
-        publisher.publishDelayed("notifications.retry." + nextRetry, id, body,
+        publisher.publishDelayed(retryRoute, id, body,
                 Map.of("x-retry-count", nextRetry), delayMillis);
         channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
     }

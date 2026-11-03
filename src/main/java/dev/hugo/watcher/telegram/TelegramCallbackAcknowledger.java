@@ -15,15 +15,23 @@ public class TelegramCallbackAcknowledger {
     }
 
     public void answer(String callbackId, String text) {
-        if (callbackId == null || callbackId.isBlank()) return;
+        answerDurably(callbackId, text);
+    }
+
+    public boolean answerDurably(String callbackId, String text) {
+        if (callbackId == null || callbackId.isBlank()) return true;
         try {
             var response = bot.execute(new AnswerCallbackQuery(callbackId).text(
                     text == null || text.isBlank() ? "Recebido." :
                             text.substring(0, Math.min(180, text.length()))));
-            if (response == null || !response.isOk())
+            if (response == null || !response.isOk()) {
                 LOG.log(System.Logger.Level.WARNING, "Telegram callback answer rejected");
+                return false;
+            }
+            return true;
         } catch (RuntimeException ex) {
             LOG.log(System.Logger.Level.WARNING, "Telegram callback answer failed: {0}", ex.getClass().getSimpleName());
+            return false;
         }
     }
 }

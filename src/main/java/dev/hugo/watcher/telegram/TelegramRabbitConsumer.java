@@ -76,8 +76,11 @@ public class TelegramRabbitConsumer {
             long updateId = update.updateId().longValue();
             inbox.insertIfAbsent(updateId, body);
             Processed processed = transactions.execute(status -> processPending(updateId));
-            if (processed != null && processed.callbackId() != null)
-                callbacks.answer(processed.callbackId(), processed.feedback());
+            if (processed != null && processed.callbackId() != null) {
+                if (!callbacks.answerDurably(processed.callbackId(), processed.feedback()))
+                    throw new IllegalStateException("Telegram callback acknowledgement was not confirmed");
+                inbox.markCallbackAnswered(processed.updateId());
+            }
             notifications.flushAfterInbound(Instant.now());
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (RuntimeException failure) {
@@ -96,13 +99,19 @@ public class TelegramRabbitConsumer {
 
     private Processed processPending(long updateId) {
         var rows = inbox.pendingByIdForUpdate(updateId);
-        if (rows.isEmpty()) return null;
+        if (rows.isEmpty()) {
+            var pendingCallback = inbox.pendingCallbackByIdForUpdate(updateId);
+            if (pendingCallback.isEmpty()) return null;
+            var callback = pendingCallback.getFirst();
+            return new Processed(callback.updateId(), callback.callbackId(), callback.feedback());
+        }
         Update update = BotUtils.parseUpdate(rows.getFirst().payload());
         AdminResult result = handler.handle(update);
-        inbox.markDone(updateId);
         var callback = update.callbackQuery();
-        return new Processed(callback == null ? null : callback.id(),
-                result.accepted() ? "✅ Comando recebido." : result.message());
+        String callbackId = callback == null ? null : callback.id();
+        String feedback = result.accepted() ? "✅ Comando recebido." : result.message();
+        inbox.markDone(updateId, callbackId, feedback);
+        return callbackId == null ? null : new Processed(updateId, callbackId, feedback);
     }
 
     private void retryOrDeadLetter(Message message, Channel channel, String id, String body) throws java.io.IOException {
@@ -122,5 +131,5 @@ public class TelegramRabbitConsumer {
         return value instanceof Number number ? Math.max(0, number.intValue()) : 0;
     }
 
-    private record Processed(String callbackId, String feedback) { }
+    private record Processed(long updateId, String callbackId, String feedback) { }
 }

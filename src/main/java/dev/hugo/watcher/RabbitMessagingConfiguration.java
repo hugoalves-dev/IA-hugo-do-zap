@@ -55,37 +55,49 @@ class RabbitMessagingConfiguration {
     @Bean Queue watcherDeadLetterQueue() { return QueueBuilder.durable(DEAD_LETTER_QUEUE).build(); }
 
     @Bean Queue incomingRetryQueueOne(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.incoming.retry.1", "incoming", properties);
+        return retryQueue("watcher.incoming.retry.1", "incoming", 1_000, properties);
     }
     @Bean Queue incomingRetryQueueTwo(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.incoming.retry.2", "incoming", properties);
+        return retryQueue("watcher.incoming.retry.2", "incoming", 5_000, properties);
     }
     @Bean Queue incomingRetryQueueThree(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.incoming.retry.3", "incoming", properties);
+        return retryQueue("watcher.incoming.retry.3", "incoming", 30_000, properties);
     }
     @Bean Queue adminRetryQueueOne(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.admin.retry.1", "admin", properties);
+        return retryQueue("watcher.admin.retry.1", "admin", 1_000, properties);
     }
     @Bean Queue adminRetryQueueTwo(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.admin.retry.2", "admin", properties);
+        return retryQueue("watcher.admin.retry.2", "admin", 5_000, properties);
     }
     @Bean Queue adminRetryQueueThree(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.admin.retry.3", "admin", properties);
+        return retryQueue("watcher.admin.retry.3", "admin", 30_000, properties);
     }
     @Bean Queue notificationRetryQueueOne(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.notifications.retry.1", "notifications", properties);
+        return retryQueue("watcher.notifications.retry.1", "notifications", 1_000, properties);
     }
     @Bean Queue notificationRetryQueueTwo(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.notifications.retry.2", "notifications", properties);
+        return retryQueue("watcher.notifications.retry.2", "notifications", 5_000, properties);
     }
     @Bean Queue notificationRetryQueueThree(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.notifications.retry.3", "notifications", properties);
+        return retryQueue("watcher.notifications.retry.3", "notifications", 30_000, properties);
     }
     @Bean Queue notificationDeferredQueue(RabbitMessagingProperties properties) {
         return retryQueue("watcher.notifications.deferred", "notifications", properties);
     }
     @Bean Queue adminDeferredQueue(RabbitMessagingProperties properties) {
         return retryQueue("watcher.admin.deferred", "admin", properties);
+    }
+    @Bean Queue notificationRateLimitQueue(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.notifications.rate-limited", "notifications", properties);
+    }
+    @Bean Queue notificationLeaseQueue(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.notifications.lease", "notifications", 120_000, properties);
+    }
+    @Bean Queue adminRateLimitQueue(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.admin.rate-limited", "admin", properties);
+    }
+    @Bean Queue adminLeaseQueue(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.admin.lease", "admin", 120_000, properties);
     }
 
     @Bean Binding incomingBinding(@Qualifier("watcherIncomingQueue") Queue queue,
@@ -153,6 +165,22 @@ class RabbitMessagingConfiguration {
                                       @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
         return BindingBuilder.bind(queue).to(watcherEventExchange).with("admin.deferred");
     }
+    @Bean Binding notificationRateLimitBinding(@Qualifier("notificationRateLimitQueue") Queue queue,
+                                               @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
+        return BindingBuilder.bind(queue).to(watcherEventExchange).with("notifications.rate-limited");
+    }
+    @Bean Binding notificationLeaseBinding(@Qualifier("notificationLeaseQueue") Queue queue,
+                                           @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
+        return BindingBuilder.bind(queue).to(watcherEventExchange).with("notifications.lease");
+    }
+    @Bean Binding adminRateLimitBinding(@Qualifier("adminRateLimitQueue") Queue queue,
+                                        @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
+        return BindingBuilder.bind(queue).to(watcherEventExchange).with("admin.rate-limited");
+    }
+    @Bean Binding adminLeaseBinding(@Qualifier("adminLeaseQueue") Queue queue,
+                                    @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
+        return BindingBuilder.bind(queue).to(watcherEventExchange).with("admin.lease");
+    }
 
     @Bean SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
             ConnectionFactory connectionFactory) {
@@ -171,6 +199,15 @@ class RabbitMessagingConfiguration {
 
     private static Queue retryQueue(String name, String destinationRoutingKey, RabbitMessagingProperties properties) {
         return QueueBuilder.durable(name)
+                .deadLetterExchange(properties.getExchange())
+                .deadLetterRoutingKey(destinationRoutingKey)
+                .build();
+    }
+
+    private static Queue retryQueue(String name, String destinationRoutingKey, int ttl,
+                                    RabbitMessagingProperties properties) {
+        return QueueBuilder.durable(name)
+                .withArgument("x-message-ttl", ttl)
                 .deadLetterExchange(properties.getExchange())
                 .deadLetterRoutingKey(destinationRoutingKey)
                 .build();

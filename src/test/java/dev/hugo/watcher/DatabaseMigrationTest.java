@@ -86,6 +86,26 @@ class DatabaseMigrationTest {
                 """, Integer.class));
     }
 
+    @Test void addsDurableCallbackFeedbackStateWithoutChangingPendingUpdates() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_callback_rabbit").defaultSchema("upgrade_callback_rabbit")
+                .target("37").load().migrate();
+        jdbc.update("""
+                insert into upgrade_callback_rabbit.telegram_webhook_inbox(update_id,payload)
+                values (601,'{}'::jsonb)
+                """);
+
+        Flyway.configure().dataSource(source).schemas("upgrade_callback_rabbit").defaultSchema("upgrade_callback_rabbit")
+                .load().migrate();
+
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from upgrade_callback_rabbit.telegram_webhook_inbox
+                where update_id=601 and status='PENDING' and callback_id is null and callback_answered_at is null
+                """, Integer.class));
+    }
+
     @Test void upgradesExistingPendingRowsWithGenerationWithoutChangingPayload() throws Exception {
         var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
