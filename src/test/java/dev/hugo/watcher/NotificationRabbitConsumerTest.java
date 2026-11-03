@@ -6,6 +6,7 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -83,7 +84,9 @@ class NotificationRabbitConsumerTest {
     @Test
     void defersWorkOnlyActionsDurablyWithoutConsumingTheTransientRetryBudget() throws Exception {
         NotificationService notifications = mock(NotificationService.class);
-        doThrow(new NotificationDeferredException(86_400_000))
+        Instant availableAt = Instant.now().plusMillis(86_400_000);
+        doThrow(new NotificationDeferredException(86_400_000,
+                NotificationDeferredException.Reason.WORK_WINDOW, availableAt))
                 .when(notifications).deliverQueuedAction(eq("archived_messages:work-only"), any());
         RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
         NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
@@ -92,8 +95,8 @@ class NotificationRabbitConsumerTest {
 
         consumer.receive(message("archived_messages:work-only", 0), channel);
 
-        verify(publisher).publishDelayed("notifications.deferred", "archived_messages:work-only",
-                "archived_messages:work-only", Map.of("x-retry-count", 0), 86_400_000);
+        verify(publisher).publishDeferred(eq(availableAt), eq("archived_messages:work-only"),
+                eq("archived_messages:work-only"), Map.of("x-retry-count", 0));
         verify(channel).basicAck(17L, false);
     }
 

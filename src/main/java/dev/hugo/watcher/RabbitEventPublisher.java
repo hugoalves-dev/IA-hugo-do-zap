@@ -3,7 +3,12 @@ package dev.hugo.watcher;
 import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -16,10 +21,17 @@ import java.util.concurrent.TimeoutException;
 public class RabbitEventPublisher {
     private final RabbitTemplate rabbit;
     private final RabbitMessagingProperties properties;
+    private final RabbitAdmin admin;
 
-    public RabbitEventPublisher(RabbitTemplate rabbit, RabbitMessagingProperties properties) {
+    @Autowired
+    public RabbitEventPublisher(RabbitTemplate rabbit, RabbitMessagingProperties properties, RabbitAdmin admin) {
         this.rabbit = Objects.requireNonNull(rabbit);
         this.properties = Objects.requireNonNull(properties);
+        this.admin = admin;
+    }
+
+    public RabbitEventPublisher(RabbitTemplate rabbit, RabbitMessagingProperties properties) {
+        this(rabbit, properties, null);
     }
 
     public void publish(String routingKey, String messageId, String json) {
@@ -34,6 +46,33 @@ public class RabbitEventPublisher {
                                java.util.Map<String, Object> headers, long delayMillis) {
         if (delayMillis < 1) throw new IllegalArgumentException("delay must be positive");
         publish(routingKey, messageId, json, headers, delayMillis);
+    }
+
+    /** Uses one durable delay queue per scheduled instant, avoiding mixed-TTL head-of-line blocking. */
+    public void publishDeferred(java.time.Instant availableAt, String messageId, String json,
+                                java.util.Map<String, Object> headers) {
+        publishDeferred("notifications", availableAt, messageId, json, headers);
+    }
+
+    public void publishDeferred(String destinationRoutingKey, java.time.Instant availableAt, String messageId,
+                                String json, java.util.Map<String, Object> headers) {
+        if (admin == null) throw new IllegalStateException("RabbitMQ delayed queue administration is unavailable");
+        long delayMillis = java.time.Duration.between(java.time.Instant.now(), availableAt).toMillis();
+        if (delayMillis < 1) {
+            publish(destinationRoutingKey, messageId, json, headers, null);
+            return;
+        }
+        String route = destinationRoutingKey + ".deferred." + availableAt.toEpochMilli();
+        String queueName = "watcher." + route;
+        var queue = QueueBuilder.durable(queueName)
+                .withArgument("x-expires", 604_800_000)
+                .deadLetterExchange(properties.getExchange())
+                .deadLetterRoutingKey(destinationRoutingKey)
+                .build();
+        DirectExchange exchange = new DirectExchange(properties.getExchange(), true, false);
+        admin.declareQueue(queue);
+        admin.declareBinding(BindingBuilder.bind(queue).to(exchange).with(route));
+        publishDelayed(route, messageId, json, headers, delayMillis);
     }
 
     private void publish(String routingKey, String messageId, String json,

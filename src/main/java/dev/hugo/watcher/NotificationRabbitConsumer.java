@@ -41,11 +41,18 @@ public class NotificationRabbitConsumer {
             if (delivered) metrics.record(isAdminAction(actionKey) ? "admin" : "whatsapp", ingressAt);
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (NotificationDeferredException deferred) {
-            String deferredRoute = deferredRoute(actionKey, deferred.reason());
-            long delay = deferred.reason() == NotificationDeferredException.Reason.ACTIVE_LEASE
-                    ? LEASE_RETRY_DELAY_MILLIS : deferred.delayMillis();
-            publisher.publishDelayed(deferredRoute, messageId == null ? actionKey : messageId,
-                    actionKey, deferredHeaders(message), delay);
+            String id = messageId == null ? actionKey : messageId;
+            if (deferred.reason() == NotificationDeferredException.Reason.WORK_WINDOW
+                    || deferred.reason() == NotificationDeferredException.Reason.SCHEDULED) {
+                Instant availableAt = deferred.availableAt() == null
+                        ? Instant.now().plusMillis(deferred.delayMillis()) : deferred.availableAt();
+                publisher.publishDeferred(availableAt, id, actionKey, deferredHeaders(message));
+            } else {
+                String deferredRoute = deferredRoute(actionKey, deferred.reason());
+                long delay = deferred.reason() == NotificationDeferredException.Reason.ACTIVE_LEASE
+                        ? LEASE_RETRY_DELAY_MILLIS : deferred.delayMillis();
+                publisher.publishDelayed(deferredRoute, id, actionKey, deferredHeaders(message), delay);
+            }
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (NotificationRetryException retry) {
             int retries = retryCount(message);
@@ -83,7 +90,7 @@ public class NotificationRabbitConsumer {
     private static String deferredRoute(String actionKey, NotificationDeferredException.Reason reason) {
         boolean admin = isAdminAction(actionKey);
         return switch (reason) {
-            case WORK_WINDOW -> admin ? "admin.deferred" : "notifications.deferred";
+            case WORK_WINDOW, SCHEDULED -> throw new IllegalArgumentException("scheduled actions use a date-specific queue");
             case RATE_LIMIT -> admin ? "admin.rate-limited" : "notifications.rate-limited";
             case ACTIVE_LEASE -> admin ? "admin.lease" : "notifications.lease";
         };

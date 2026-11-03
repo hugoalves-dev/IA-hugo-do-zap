@@ -172,7 +172,8 @@ public class NotificationService {
                     Instant nextWindow = nextWorkWindowStart(clock.instant());
                     outbox.defer(action, clock.instant(), nextWindow);
                     long delayMillis = Math.max(1_000, java.time.Duration.between(clock.instant(), nextWindow).toMillis());
-                    throw new NotificationDeferredException(delayMillis);
+                    throw new NotificationDeferredException(delayMillis,
+                            NotificationDeferredException.Reason.WORK_WINDOW, nextWindow);
                 }
                 TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
                         : ARCHIVED_MESSAGES.equals(latest.actionType())

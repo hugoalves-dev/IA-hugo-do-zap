@@ -93,11 +93,11 @@ class NotificationServiceTest {
 
         brokerNotifications.flush(outsideWindow);
 
-        var delay = org.mockito.ArgumentCaptor.forClass(Long.class);
-        org.mockito.Mockito.verify(publisher).publishDelayed(org.mockito.ArgumentMatchers.eq("notifications.deferred"),
-                org.mockito.ArgumentMatchers.startsWith("archived_messages:deferred:"), org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyMap(), delay.capture());
-        assertTrue(delay.getValue() > 0);
+        var availableAt = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        org.mockito.Mockito.verify(publisher).publishDeferred(org.mockito.ArgumentMatchers.eq("notifications"), availableAt.capture(),
+                org.mockito.ArgumentMatchers.startsWith("archived_messages:deferred:"),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());
+        assertTrue(availableAt.getValue().isAfter(outsideWindow));
         assertEquals(0, requestCount.get(), "work-only content must not be sent outside its configured window");
         assertTrue(jdbc.queryForObject("select available_at>clock_timestamp() from outbox_actions where action_type='archived_messages'",
                 Boolean.class));

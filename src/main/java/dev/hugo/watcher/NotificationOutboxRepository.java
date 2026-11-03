@@ -141,29 +141,31 @@ public class NotificationOutboxRepository {
     }
 
     private void publishAction(String actionKey) {
-        List<Timestamp[]> publication = jdbc.query("""
-                select rabbit_ingress_at,available_at from outbox_actions where action_key=?
-                """, (rs, row) -> new Timestamp[] {rs.getTimestamp(1), rs.getTimestamp(2)}, actionKey);
+        List<Object[]> publication = jdbc.query("""
+                select rabbit_ingress_at,available_at,action_type from outbox_actions where action_key=?
+                """, (rs, row) -> new Object[] {rs.getTimestamp(1), rs.getTimestamp(2), rs.getString(3)}, actionKey);
         java.util.Map<String, Object> headers = new java.util.HashMap<>();
-        Timestamp ingress = publication.isEmpty() ? null : publication.getFirst()[0];
-        Timestamp availableAt = publication.isEmpty() ? null : publication.getFirst()[1];
+        Timestamp ingress = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[0];
+        Timestamp availableAt = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[1];
+        String actionType = publication.isEmpty() ? null : (String) publication.getFirst()[2];
         if (ingress != null) headers.put("x-ingress-at", ingress.toInstant().toString());
         Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
         long delayMillis = availableAt == null ? 0
                 : java.time.Duration.between(databaseNow, availableAt.toInstant()).toMillis();
-        if (delayMillis > 0) {
-            String deferredRoute = actionKey.startsWith("archived_messages:deferred:")
-                    ? "notifications.deferred"
-                    : actionKey.startsWith("telegram_admin_reply:") || actionKey.startsWith("telegram_admin_edit:")
-                    ? "admin.rate-limited" : "notifications.rate-limited";
-            rabbitPublisher.publishDelayed(deferredRoute, actionKey, actionKey, headers, delayMillis);
-        } else
+        if (delayMillis > 0)
+            rabbitPublisher.publishDeferred(isAdminAction(actionType) ? "admin" : "notifications",
+                    availableAt.toInstant(), actionKey, actionKey, headers);
+        else
             rabbitPublisher.publish("notifications", actionKey, actionKey, headers);
         jdbc.update("""
                 update outbox_actions set rabbit_confirmed_at=coalesce(rabbit_confirmed_at,clock_timestamp()),
                     updated_at=clock_timestamp()
                 where action_key=?
                 """, actionKey);
+    }
+
+    private static boolean isAdminAction(String actionType) {
+        return "telegram_admin_reply".equals(actionType) || "telegram_admin_edit".equals(actionType);
     }
 
     public boolean hasActiveAction(String actionType, Instant now) {
@@ -192,19 +194,28 @@ public class NotificationOutboxRepository {
         if (actionKey == null || actionKey.isBlank()) return null;
         OutboxAction claimed = claimNext(now, actionKey);
         if (claimed != null) return claimed;
-        List<Timestamp> nextAttempt = jdbc.query("""
-                select greatest(outbox_actions.available_at,
-                    coalesce(telegram_delivery_rate_limit.next_allowed_at,clock_timestamp()))
+        List<ActionAvailability> nextAttempt = jdbc.query("""
+                select outbox_actions.available_at,telegram_delivery_rate_limit.next_allowed_at
                 from outbox_actions cross join telegram_delivery_rate_limit
                 where outbox_actions.action_key=? and outbox_actions.status='PENDING'
                   and outbox_actions.sensitive_expires_at>clock_timestamp()
                   and telegram_delivery_rate_limit.singleton_id=1
-                """, (rs, row) -> rs.getTimestamp(1), actionKey);
-        if (!nextAttempt.isEmpty() && nextAttempt.getFirst() != null) {
+                """, (rs, row) -> new ActionAvailability(rs.getTimestamp(1).toInstant(),
+                        rs.getTimestamp(2) == null ? null : rs.getTimestamp(2).toInstant()), actionKey);
+        if (!nextAttempt.isEmpty()) {
             Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
-            long delay = java.time.Duration.between(databaseNow, nextAttempt.getFirst().toInstant()).toMillis();
-            if (delay > 0)
-                throw new NotificationDeferredException(delay + 25, NotificationDeferredException.Reason.RATE_LIMIT);
+            ActionAvailability availability = nextAttempt.getFirst();
+            Instant rateLimitedAt = availability.rateLimitedAt();
+            Instant target = rateLimitedAt == null || availability.availableAt().isAfter(rateLimitedAt)
+                    ? availability.availableAt() : rateLimitedAt;
+            long delay = java.time.Duration.between(databaseNow, target).toMillis();
+            if (delay > 0) {
+                NotificationDeferredException.Reason reason = rateLimitedAt != null
+                        && !availability.availableAt().isAfter(rateLimitedAt)
+                        ? NotificationDeferredException.Reason.RATE_LIMIT : NotificationDeferredException.Reason.SCHEDULED;
+                throw new NotificationDeferredException(delay + 25, reason,
+                        reason == NotificationDeferredException.Reason.SCHEDULED ? target : null);
+            }
         }
         List<Timestamp> activeLease = jdbc.query("""
                 select lease_expires_at from outbox_actions
@@ -423,4 +434,5 @@ public class NotificationOutboxRepository {
                                    String lastMessageAt, Instant updatedAt, String generation) { }
 
     private record RateLimitState(Timestamp nextAllowedAt, Instant databaseNow) { }
+    private record ActionAvailability(Instant availableAt, Instant rateLimitedAt) { }
 }

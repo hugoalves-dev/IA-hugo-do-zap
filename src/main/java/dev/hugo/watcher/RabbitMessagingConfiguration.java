@@ -81,12 +81,6 @@ class RabbitMessagingConfiguration {
     @Bean Queue notificationRetryQueueThree(RabbitMessagingProperties properties) {
         return retryQueue("watcher.notifications.retry.3", "notifications", 30_000, properties);
     }
-    @Bean Queue notificationDeferredQueue(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.notifications.deferred", "notifications", properties);
-    }
-    @Bean Queue adminDeferredQueue(RabbitMessagingProperties properties) {
-        return retryQueue("watcher.admin.deferred", "admin", properties);
-    }
     @Bean Queue notificationRateLimitQueue(RabbitMessagingProperties properties) {
         return retryQueue("watcher.notifications.rate-limited", "notifications", properties);
     }
@@ -156,14 +150,6 @@ class RabbitMessagingConfiguration {
     @Bean Binding notificationRetryBindingThree(@Qualifier("notificationRetryQueueThree") Queue queue,
                                                 @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
         return BindingBuilder.bind(queue).to(watcherEventExchange).with("notifications.retry.3");
-    }
-    @Bean Binding notificationDeferredBinding(@Qualifier("notificationDeferredQueue") Queue queue,
-                                              @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
-        return BindingBuilder.bind(queue).to(watcherEventExchange).with("notifications.deferred");
-    }
-    @Bean Binding adminDeferredBinding(@Qualifier("adminDeferredQueue") Queue queue,
-                                      @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
-        return BindingBuilder.bind(queue).to(watcherEventExchange).with("admin.deferred");
     }
     @Bean Binding notificationRateLimitBinding(@Qualifier("notificationRateLimitQueue") Queue queue,
                                                @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {

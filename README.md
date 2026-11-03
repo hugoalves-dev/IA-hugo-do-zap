@@ -16,7 +16,7 @@ O watcher antigo em TypeScript/Node.js + Baileys foi removido do código version
 
 ### RabbitMQ e entrega
 
-O RabbitMQ está fixado na imagem oficial `rabbitmq:4.4.0-management-alpine` por digest, usa o volume `watcher_rabbitmq_data` e permanece apenas na rede Docker. A healthcheck remove as tags administrativas do usuário da aplicação e limita configure/write/read às entidades `watcher.*`. Filas duráveis, mensagens persistentes, publisher confirms, roteamento obrigatório, retries com atraso e DLQ suportam semântica **at-least-once**; um timeout HTTP ambíguo do Telegram ainda pode produzir envio duplicado.
+O RabbitMQ está fixado na imagem oficial `rabbitmq:4.4.0-management-alpine` por digest, usa o volume `watcher_rabbitmq_data` e permanece apenas na rede Docker. A healthcheck remove as tags administrativas do usuário da aplicação e limita configure/write/read às entidades `watcher.*`. Filas duráveis, mensagens persistentes, publisher confirms, roteamento obrigatório, retries por atraso fixo e DLQ suportam semântica **at-least-once**; agendas WORK_ONLY usam filas duráveis por instante de entrega para não atrasar notificações com prazos diferentes. Um timeout HTTP ambíguo do Telegram ainda pode produzir envio duplicado.
 
 O PostgreSQL continua guardando estado de negócio, deduplicação e estado de entrega. `outbox_actions.rabbit_confirmed_at` marca ações já transferidas ao RabbitMQ; ações pendentes antigas e publicações sem confirmação são republicadas, sem apagar registros na migração. Não trate RabbitMQ e PostgreSQL como uma transação ACID distribuída.
 

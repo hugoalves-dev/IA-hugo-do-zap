@@ -13,6 +13,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -78,6 +79,13 @@ class RabbitPublisherIntegrationTest {
             IllegalStateException unroutable = assertThrows(IllegalStateException.class,
                     () -> publisher.publish("missing.route", "missing-1", "{}"));
             assertEquals("RabbitMQ did not route the event", unroutable.getMessage());
+
+            Instant scheduledAt = Instant.now().plusSeconds(30);
+            String deferredId = UUID.randomUUID().toString();
+            publisher.publishDeferred(scheduledAt, deferredId, "{\"event\":\"deferred\"}", java.util.Map.of());
+            var deferredQueue = admin.getQueueInfo("watcher.notifications.deferred." + scheduledAt.toEpochMilli());
+            assertNotNull(deferredQueue);
+            assertEquals(1, deferredQueue.getMessageCount());
 
             String restartId = UUID.randomUUID().toString();
             publisher.publish("incoming", restartId, "{\"event\":\"restart-recovery\"}");
