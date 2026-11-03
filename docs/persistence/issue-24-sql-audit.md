@@ -45,6 +45,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - WhatsApp action authorization and enqueue: `WhatsAppActionPersistenceRepository` owns advisory locks, queue/idempotency writes, current template authorization and pre-send action verification. `WhatsAppActionService` still owns safety decisions and transaction admission.
 
+- WhatsApp dispatch: `WhatsAppActionDispatchRepository` owns the conditional PENDING→DISPATCHED claim, delivery acknowledgement, cooldown, expiry and status persistence. Dispatcher keeps transport calls outside transactions and never retries UNKNOWN outcomes.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |
