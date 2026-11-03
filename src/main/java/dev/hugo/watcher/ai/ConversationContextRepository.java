@@ -4,7 +4,6 @@ import dev.hugo.watcher.IncomingMessage;
 import dev.hugo.watcher.simulation.Batch;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.json.JsonMapper;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -19,7 +18,6 @@ public class ConversationContextRepository {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
     private final Duration window;
-    @Autowired
     public ConversationContextRepository(JdbcTemplate jdbc) {
         this(jdbc, Duration.ofHours(24));
     }

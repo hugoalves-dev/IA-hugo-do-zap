@@ -90,6 +90,20 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
+    dev.hugo.watcher.ai.ConversationContextRepository conversationContextRepository(
+            org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        return new dev.hugo.watcher.ai.ConversationContextRepository(jdbc);
+    }
+
+    @Bean
+    NotificationOutboxRepository notificationOutboxRepository(
+            org.springframework.jdbc.core.JdbcTemplate jdbc,
+            PlatformTransactionManager transactions,
+            dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
+        return new NotificationOutboxRepository(jdbc, transactions, deliveries);
+    }
+
+    @Bean
     dev.hugo.watcher.ai.AiSimulationClassifier aiSimulationClassifier(
             dev.hugo.watcher.ai.AiClassificationEvaluationRepository persistence,
             dev.hugo.watcher.ai.ConversationContextRepository context,

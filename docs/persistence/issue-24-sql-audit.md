@@ -62,6 +62,11 @@ Updated through the 2026-11-03 PR continuation; source of truth is the current P
 - `PersistenceSqlBoundaryTest` scans source-annotated application services/components/controllers and rejects direct JdbcTemplate calls or JDBC client fields. Legacy JDBC constructor signatures stay permitted temporarily, but they cannot own query execution.
 - The gate is intentionally narrow: syntax-only heuristics do not replace database behavior tests, a complete manual SQL inventory, or code review of repository-native operations.
 
+## Shared dispatch admission and constructor discipline
+
+- `NotificationOutboxRepository`, `WhatsAppActionDispatcher` and `NotificationService` resolve the same Spring-managed `DecisionDeliveryCoordinator` in production, while original standalone-test constructor overloads remain.
+- `ConversationContextRepository` is wired explicitly in `PersistenceBeansConfiguration`, avoiding constructor `@Autowired` and allowing the classifier to reuse the managed repository bean. None of these changes alters the PostgreSQL lease/ACK SQL.
+
 ## Production dependency injection acceptance
 
 - `EvolutionWebhookControllerTest.productionBeansUseManagedPersistenceAndSharedSafetyGates` verifies that the live Spring Boot context uses managed persistence repositories rather than compatibility JDBC constructors, and that WhatsApp/Telegram real-send paths share the same runtime authorization gate and delivery admission coordinator.

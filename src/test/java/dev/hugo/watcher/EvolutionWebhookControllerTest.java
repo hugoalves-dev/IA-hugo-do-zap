@@ -96,6 +96,12 @@ class EvolutionWebhookControllerTest {
                 ReflectionTestUtils.getField(dispatcher, "persistence"));
         assertSame(deliveries, ReflectionTestUtils.getField(dispatcher, "deliveries"));
 
+        assertSame(deliveries, ReflectionTestUtils.getField(
+                context.getBean(NotificationOutboxRepository.class), "deliveries"));
+        assertSame(context.getBean(dev.hugo.watcher.ai.ConversationContextRepository.class),
+                ReflectionTestUtils.getField(
+                        context.getBean(dev.hugo.watcher.ai.AiSimulationClassifier.class), "context"));
+
         assertSame(context.getBean(dev.hugo.watcher.notification.IntelligentAlertPersistenceRepository.class),
                 ReflectionTestUtils.getField(alerts, "persistence"));
         assertSame(gate, ReflectionTestUtils.getField(alerts, "runtimeGate"));
