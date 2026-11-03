@@ -47,6 +47,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - WhatsApp dispatch: `WhatsAppActionDispatchRepository` owns the conditional PENDING→DISPATCHED claim, delivery acknowledgement, cooldown, expiry and status persistence. Dispatcher keeps transport calls outside transactions and never retries UNKNOWN outcomes.
 
+- Legacy SQLite import: `LegacySqliteSnapshotReader` owns read-only input SQL; `LegacyImportPersistenceRepository` owns PostgreSQL reconciliation, alias collision checks and idempotent upserts. The service retains conflict detection, dry-run and all-or-nothing rollback policy.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |

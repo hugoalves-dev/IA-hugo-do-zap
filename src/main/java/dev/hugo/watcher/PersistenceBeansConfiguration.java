@@ -113,6 +113,13 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
+    LegacyImportService legacyImportService(LegacySqliteSnapshotReader reader,
+                                            LegacyImportPersistenceRepository persistence,
+                                            PlatformTransactionManager transactions) {
+        return new LegacyImportService(reader, persistence, transactions);
+    }
+
+    @Bean
     IdentityService identityService(IdentityMergeRepository identityStorage,
                                     PlatformTransactionManager transactions) {
         return new IdentityService(identityStorage, transactions);
