@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.ZoneId;
 import java.util.UUID;
@@ -47,6 +48,60 @@ class NotificationServiceTest {
     private final AtomicReference<java.util.function.Consumer<String>> requestHook = new AtomicReference<>(ignored -> { });
     private final AtomicReference<String> receivedBody = new AtomicReference<>();
     private MutableClock clock;
+
+    @Test void rabbitOutboxPublishesAfterCommitAndRepublishesUnconfirmedRowsOnReplay() {
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(manager);
+        Instant createdAt = Instant.now();
+        Instant expiry = createdAt.plusSeconds(86_400);
+
+        org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
+                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                        org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.eq("rabbit-test"),
+                        org.mockito.ArgumentMatchers.anyMap());
+        assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status ->
+                rabbitOutbox.enqueue("rabbit-test", "telegram_admin_reply", "{}", "[]", createdAt, expiry)));
+        assertNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key='rabbit-test'",
+                java.sql.Timestamp.class));
+
+        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.eq("rabbit-test"),
+                org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(1, rabbitOutbox.publishPendingActions());
+        assertNotNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key='rabbit-test'",
+                java.sql.Timestamp.class));
+    }
+
+    @Test void rabbitDefersWorkOnlyNotificationsUntilTheNextAllowedWindow() {
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        Instant outsideWindow = java.time.LocalDate.now(ZoneId.of("America/Sao_Paulo"))
+                .atTime(LocalTime.of(23, 0)).atZone(ZoneId.of("America/Sao_Paulo")).toInstant();
+        if (!outsideWindow.isAfter(Instant.now())) outsideWindow = outsideWindow.plus(Duration.ofDays(1));
+        seed("5511888877777@s.whatsapp.net", "Equipe JC", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "sensivel", outsideWindow);
+        MutableClock deferredClock = new MutableClock(outsideWindow);
+        TelegramTransport neverSendBeforeWindow = text -> {
+            requestCount.incrementAndGet();
+            return TelegramDeliveryResult.success();
+        };
+        var brokerNotifications = new NotificationService(jdbc, manager, rabbitOutbox, neverSendBeforeWindow,
+                new TelegramMessageFormatter(), properties, deferredClock, archiveModes, null);
+
+        brokerNotifications.flush(outsideWindow);
+
+        var delay = org.mockito.ArgumentCaptor.forClass(Long.class);
+        org.mockito.Mockito.verify(publisher).publishDelayed(org.mockito.ArgumentMatchers.eq("notifications.deferred"),
+                org.mockito.ArgumentMatchers.startsWith("archived_messages:deferred:"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyMap(), delay.capture());
+        assertTrue(delay.getValue() > 0);
+        assertEquals(0, requestCount.get(), "work-only content must not be sent outside its configured window");
+        assertTrue(jdbc.queryForObject("select available_at>clock_timestamp() from outbox_actions where action_type='archived_messages'",
+                Boolean.class));
+    }
 
     @BeforeEach void setup() {
         var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());

@@ -5,6 +5,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import dev.hugo.watcher.RabbitEventPublisher;
 
 class TelegramWebhookControllerTest {
     private final TelegramAdminProperties properties = new TelegramAdminProperties();
@@ -42,6 +43,28 @@ class TelegramWebhookControllerTest {
         when(inbox.insertIfAbsent(42L, validPayload()))
                 .thenThrow(new DataAccessResourceFailureException("test database down"));
         assertEquals(503, controller().receive(secret, validPayload()).getStatusCode().value());
+    }
+
+    @Test void publishesAuthenticatedWebhookToRabbitBeforeAcknowledging() {
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        properties.setWebhookSecret(secret);
+        TelegramWebhookController endpoint = new TelegramWebhookController(properties, inbox, publisher);
+
+        assertEquals(202, endpoint.receive(secret, validPayload()).getStatusCode().value());
+
+        verify(publisher).publish("admin", "42", validPayload());
+        verifyNoInteractions(inbox);
+    }
+
+    @Test void returnsRetryableFailureWhenRabbitConfirmationFails() {
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        doThrow(new IllegalStateException("confirm timeout"))
+                .when(publisher).publish("admin", "42", validPayload());
+        properties.setWebhookSecret(secret);
+        TelegramWebhookController endpoint = new TelegramWebhookController(properties, inbox, publisher);
+
+        assertEquals(503, endpoint.receive(secret, validPayload()).getStatusCode().value());
+        verifyNoInteractions(inbox);
     }
 
     private static String validPayload() {

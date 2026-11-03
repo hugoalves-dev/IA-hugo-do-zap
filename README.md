@@ -1,18 +1,34 @@
 # WhatsApp archived watcher
 
-Serviço Spring Boot 4 / Java 25 que recebe eventos da Evolution API, grava-os em PostgreSQL e envia notificações diretamente pela Telegram Bot API. A Evolution API usa outro banco e uma chave própria. A Evolution utiliza cache local (sem container Redis) e mantém os dados persistentes no PostgreSQL e no volume de instâncias. A API Evolution só publica a porta do host em `127.0.0.1`; use túnel SSH autenticado para abrir o Manager.
+Serviço Spring Boot 4 / Java 25 que recebe eventos da Evolution API pelo webhook autenticado, publica-os no RabbitMQ e persiste estado de negócio no PostgreSQL via Spring Data JDBC. Consumidores confirmam cada etapa durável antes de reconhecer a mensagem. A Evolution API usa outro banco e uma chave própria. A API Evolution só publica a porta do host em `127.0.0.1`; use túnel SSH autenticado para abrir o Manager.
 
-No fluxo VPS, `COMPOSE_PROFILES=prod` ativa apenas `watcher` (imagem `ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest`) e `evolution-api`. O Compose usa o PostgreSQL já existente pela rede externa `infra_network`. Crie bancos e roles distintos para Spring e Evolution antes de uma implantação autorizada. A URL PostgreSQL da Evolution deve usar percent-encoding em senhas com caracteres reservados. Um profile `local-db` opcional fornece dois PostgreSQL isolados para desenvolvimento local; ele não substitui nem altera o PostgreSQL da VPS.
+No fluxo VPS, `COMPOSE_PROFILES=prod` ativa `watcher`, `evolution-api` e um RabbitMQ de nó único com volume persistente, sem portas publicadas. O Compose usa o PostgreSQL já existente pela rede externa `infra_network`. Crie bancos e roles distintos para Spring e Evolution antes de uma implantação autorizada. A URL PostgreSQL da Evolution deve usar percent-encoding em senhas com caracteres reservados. Um profile `local-db` opcional fornece dois PostgreSQL isolados para desenvolvimento local; ele não substitui nem altera os serviços da VPS.
 
 O watcher antigo em TypeScript/Node.js + Baileys foi removido do código versionado após autorização de aposentadoria. O único runtime mantido é Spring Boot Java com Evolution API e PostgreSQL. Documentação antiga permanece apenas como histórico. O importador Java de snapshots SQLite é uma ferramenta de migração separada, não um watcher em execução.
 
 ## Preparação operacional
 
-1. Copie `.env.example` para `.env` (incluindo `COMPOSE_PROFILES=prod`), substitua cada valor `replace-*` e mantenha `.env` fora do Git. Um `.env` antigo não recebe automaticamente o novo profile. Não reutilize usuário, banco ou senha entre Spring e Evolution.
+1. Copie `.env.example` para `.env` (incluindo `COMPOSE_PROFILES=prod`), substitua cada valor `replace-*` e mantenha `.env` fora do Git. Um `.env` antigo não recebe automaticamente o novo profile. Use uma senha exclusiva do RabbitMQ.
 2. Confirme que a rede Docker externa `infra_network` e os dois bancos PostgreSQL já existem.
 3. A imagem Evolution está fixada em `v2.3.7` e digest. Atualizações devem validar eventos e compatibilidade antes de trocar ambos. O cache local é por processo e não é compartilhado entre réplicas; este Compose executa apenas uma Evolution API.
-4. Configure o webhook por instância na Evolution para `http://watcher:8080/internal/evolution/webhook`, com o cabeçalho `Authorization: Bearer <WATCHER_EVOLUTION_WEBHOOK_TOKEN>` e o mesmo identificador de instância de `WATCHER_EVOLUTION_INSTANCE`. Não habilite webhook global. A chave de API `EVOLUTION_API_KEY` é distinta do token do webhook.
+4. Configure o webhook por instância na Evolution para `http://watcher:8080/internal/evolution/webhook`, com o cabeçalho `Authorization: Bearer <WATCHER_EVOLUTION_WEBHOOK_TOKEN>` e o mesmo identificador de instância de `WATCHER_EVOLUTION_INSTANCE`. Não habilite webhook global. Na Evolution v2.3.7, o projeto usa o webhook autenticado como adapter: a resposta de sucesso só é enviada após publisher confirm e roteamento confirmado do RabbitMQ. Configure retries em até 10 tentativas, backoff exponencial de 1 a 60 s e jitter de 0,2; respostas 503 são repetíveis e 4xx listados na configuração não são. A integração RabbitMQ nativa da Evolution usa um channel AMQP comum sem publisher confirm, então permanece desligada. Depois que o limite de tentativas do webhook se esgota, a Evolution registra a falha e não oferece retry durável posterior; uma indisponibilidade que dure além desse limite ainda pode perder o evento.
 5. O serviço não cria sessão nem pareia automaticamente. Pareamento, validação do payload real, cutover e envio de notificações são passos operacionais separados e exigem autorização explícita.
+
+### RabbitMQ e entrega
+
+O RabbitMQ está fixado na imagem oficial `rabbitmq:4.4.0-management-alpine` por digest, usa o volume `watcher_rabbitmq_data` e permanece apenas na rede Docker. A healthcheck remove as tags administrativas do usuário da aplicação e limita configure/write/read às entidades `watcher.*`. Filas duráveis, mensagens persistentes, publisher confirms, roteamento obrigatório, retries com atraso e DLQ suportam semântica **at-least-once**; um timeout HTTP ambíguo do Telegram ainda pode produzir envio duplicado.
+
+O PostgreSQL continua guardando estado de negócio, deduplicação e estado de entrega. `outbox_actions.rabbit_confirmed_at` marca ações já transferidas ao RabbitMQ; ações pendentes antigas e publicações sem confirmação são republicadas, sem apagar registros na migração. Não trate RabbitMQ e PostgreSQL como uma transação ACID distribuída.
+
+Este Compose roda um único nó RabbitMQ: há persistência contra reinício de container, sem HA contra perda do VPS/disco. Inclua o volume `watcher_rabbitmq_data` em backups e teste restauração. A imagem management não publica a porta do painel; administração deve ocorrer pelo host/operador do Docker.
+
+O Prometheus exporta `watcher_telegram_delivery_latency_seconds` com rótulo limitado `path=admin|whatsapp`, e `watcher_rabbitmq_queue_messages` para as filas, inclusive DLQ. Use histogramas para consultar p50/p95/p99 sem rótulos por contato, mensagem ou UUID. Importe `monitoring/rabbitmq-alerts.yml` no Prometheus existente para alertar quando a DLQ permanecer não vazia por 1 minuto. A latência local/teste não comprova uma entrega em produção.
+
+Para comandos administrativos por webhook, habilite apenas `WATCHER_TELEGRAM_ADMIN_WEBHOOK_ENABLED`, mantenha polling desabilitado, configure `WATCHER_TELEGRAM_ADMIN_WEBHOOK_SECRET` com 32–256 caracteres e defina `WATCHER_TELEGRAM_ADMIN_USER_ID`. Registre no Telegram a URL `/api/webhooks/telegram` e o secret token correspondente. O endpoint publica no RabbitMQ antes de retornar sucesso. O polling legado também publica e espera confirmação antes de avançar o offset.
+
+O Bot API repete entregas de webhook que recebem status HTTP fora da faixa 2xx e mantém updates pendentes por até 24 horas, sem prometer um número fixo de tentativas. O adaptador retorna 503 enquanto não recebe confirmação do RabbitMQ; configure alertas pelo `getWebhookInfo.pending_update_count` durante o cutover.
+
+O rollback para o caminho PostgreSQL pode ser feito desabilitando `WATCHER_RABBITMQ_ENABLED` e removendo o serviço RabbitMQ da implantação somente depois de parar os consumidores. As linhas de entrega continuam no banco: mensagens já reconhecidas pelo RabbitMQ ficam marcadas, ações ainda pendentes voltam ao dispatcher legado, e filas Rabbit não são apagadas automaticamente. Preserve o volume e a DLQ até validar o resultado do rollback.
 
 ### PostgreSQL local opcional
 

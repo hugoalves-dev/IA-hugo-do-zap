@@ -3,6 +3,9 @@ services:
     profiles: ["prod"]
     image: ${WATCHER_IMAGE:-ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest}
     restart: unless-stopped
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
       SERVER_PORT: "8080"
       TZ: ${TZ:-America/Sao_Paulo}
@@ -10,6 +13,12 @@ services:
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:?Set the existing PostgreSQL watcher database URL}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:?Set the dedicated watcher database role}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?Set the watcher database password}
+      WATCHER_RABBITMQ_ENABLED: "true"
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: "5672"
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-watcher}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set the RabbitMQ password}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-watcher}
       WATCHER_TELEGRAM_BOT_TOKEN: ${WATCHER_TELEGRAM_BOT_TOKEN:?Set the Telegram bot token}
       WATCHER_TELEGRAM_CHAT_ID: ${WATCHER_TELEGRAM_CHAT_ID:?Set the private Telegram chat ID}
       WATCHER_TELEGRAM_ADMIN_POLLING_ENABLED: ${WATCHER_TELEGRAM_ADMIN_POLLING_ENABLED:-false}
@@ -56,7 +65,7 @@ services:
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,prometheus
       MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: never
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
-      MANAGEMENT_ENDPOINT_HEALTH_GROUP_READINESS_INCLUDE: readinessState,db
+      MANAGEMENT_ENDPOINT_HEALTH_GROUP_READINESS_INCLUDE: readinessState,db,rabbit
     networks:
       - infra_network
     healthcheck:
@@ -88,6 +97,14 @@ services:
       CACHE_REDIS_ENABLED: "false"
       CACHE_REDIS_SAVE_INSTANCES: "false"
       CACHE_LOCAL_ENABLED: "true"
+      RABBITMQ_ENABLED: "false"
+      RABBITMQ_GLOBAL_ENABLED: "false"
+      WEBHOOK_RETRY_MAX_ATTEMPTS: "10"
+      WEBHOOK_RETRY_INITIAL_DELAY_SECONDS: "1"
+      WEBHOOK_RETRY_USE_EXPONENTIAL_BACKOFF: "true"
+      WEBHOOK_RETRY_MAX_DELAY_SECONDS: "60"
+      WEBHOOK_RETRY_JITTER_FACTOR: "0.2"
+      WEBHOOK_RETRY_NON_RETRYABLE_STATUS_CODES: "400,401,403,404,422"
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?Set the Evolution API key}
     ports:
       - "127.0.0.1:${EVOLUTION_HOST_PORT:-8080}:8080"
@@ -95,6 +112,34 @@ services:
       - evolution_instances:/evolution/instances
     networks:
       - infra_network
+
+  rabbitmq:
+    profiles: ["prod"]
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.4.0-management-alpine@sha256:b768d2e09a809b48458d6c3c32fc2894643a6bfafd76264c120373eff0ee6532}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 1g
+    cpus: "1.0"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-watcher}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set the RabbitMQ password}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-watcher}
+    volumes:
+      - watcher_rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - infra_network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          rabbitmq-diagnostics -q ping &&
+          rabbitmqctl set_user_tags "$${RABBITMQ_DEFAULT_USER}" &&
+          rabbitmqctl set_permissions -p "$${RABBITMQ_DEFAULT_VHOST}" "$${RABBITMQ_DEFAULT_USER}"
+          '^watcher\.' '^watcher\.' '^watcher\.'
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
 
   postgres-local-watcher:
     profiles: ["local-db"]
@@ -134,6 +179,7 @@ services:
 
 volumes:
   evolution_instances:
+  watcher_rabbitmq_data:
   local_watcher_postgres_data:
   local_evolution_postgres_data:
 

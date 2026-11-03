@@ -19,6 +19,73 @@ class DatabaseMigrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
+    @Test void addsRabbitPublicationMarkerWithoutChangingExistingPendingOutboxActions() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_rabbit").defaultSchema("upgrade_rabbit")
+                .target("34").load().migrate();
+        jdbc.update("""
+                insert into upgrade_rabbit.outbox_actions(action_key,action_type,payload,pending_snapshot,status,
+                    attempts,available_at,created_at,updated_at,sensitive_expires_at)
+                values ('migration-action','archived_messages','{}'::jsonb,'[]'::jsonb,'PENDING',0,now(),now(),now(),now()+interval '1 day')
+                """);
+
+        Flyway.configure().dataSource(source).schemas("upgrade_rabbit").defaultSchema("upgrade_rabbit")
+                .load().migrate();
+
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from upgrade_rabbit.outbox_actions
+                where action_key='migration-action' and status='PENDING' and rabbit_confirmed_at is null
+                """, Integer.class));
+    }
+
+    @Test void addsLegacyRabbitJobRecoveryMarkerWithoutChangingPendingJobs() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_jobs").defaultSchema("upgrade_jobs")
+                .target("35").load().migrate();
+        jdbc.update("""
+                insert into upgrade_jobs.inbox_events(source,event_type,external_id,payload)
+                values ('evolution','messages.upsert','legacy-1','{}'::jsonb)
+                """);
+        jdbc.update("""
+                insert into upgrade_jobs.processing_jobs(inbox_event_id,status)
+                select id,'PENDING' from upgrade_jobs.inbox_events where external_id='legacy-1'
+                """);
+
+        Flyway.configure().dataSource(source).schemas("upgrade_jobs").defaultSchema("upgrade_jobs")
+                .load().migrate();
+
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from upgrade_jobs.processing_jobs job
+                join upgrade_jobs.inbox_events inbox on inbox.id=job.inbox_event_id
+                where inbox.external_id='legacy-1' and job.status='PENDING'
+                  and job.rabbit_backlog_confirmed_at is null
+                """, Integer.class));
+    }
+
+    @Test void addsTelegramBacklogRecoveryMarkerWithoutChangingPendingUpdates() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_telegram_rabbit").defaultSchema("upgrade_telegram_rabbit")
+                .target("36").load().migrate();
+        jdbc.update("""
+                insert into upgrade_telegram_rabbit.telegram_webhook_inbox(update_id,payload)
+                values (501,'{}'::jsonb)
+                """);
+
+        Flyway.configure().dataSource(source).schemas("upgrade_telegram_rabbit").defaultSchema("upgrade_telegram_rabbit")
+                .load().migrate();
+
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from upgrade_telegram_rabbit.telegram_webhook_inbox
+                where update_id=501 and status='PENDING' and rabbit_backlog_confirmed_at is null
+                """, Integer.class));
+    }
+
     @Test void upgradesExistingPendingRowsWithGenerationWithoutChangingPayload() throws Exception {
         var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());

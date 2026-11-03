@@ -91,4 +91,54 @@ public class JdbcJobRepository implements JobRepository {
                    and job.status = 'PROCESSING' and job.lease_expires_at > clock_timestamp()
                 """, Timestamp.from(availableAt), jobId, leaseToken) == 1;
     }
+
+    @Override
+    public void makePendingImmediatelyAvailable(Instant now) {
+        jdbc.update("""
+                update processing_jobs set available_at=?
+                where status='PENDING' and available_at>?
+                """, Timestamp.from(now), Timestamp.from(now));
+    }
+
+    @Override
+    public void preparePendingForRabbitStartup(Instant now) {
+        jdbc.update("""
+                update processing_jobs
+                   set status='PENDING',available_at=?,lease_token=null,lease_expires_at=null
+                 where status in ('READY','PENDING','PROCESSING')
+                """, Timestamp.from(now));
+    }
+
+    @Override
+    public List<RabbitPendingEvent> pendingForRabbit(int limit) {
+        return jdbc.query("""
+                select job.job_uuid,inbox.external_id,inbox.payload::text,inbox.received_at
+                  from processing_jobs job join inbox_events inbox on inbox.id=job.inbox_event_id
+                 where job.status='PENDING' and job.rabbit_backlog_confirmed_at is null
+                   and inbox.expires_at>clock_timestamp()
+                 order by job.id limit ?
+                """, (rs, row) -> new RabbitPendingEvent(rs.getObject(1, UUID.class), rs.getString(2),
+                rs.getString(3), rs.getTimestamp(4).toInstant()), limit);
+    }
+
+    @Override
+    public void markRabbitBacklogConfirmed(UUID jobId, Instant confirmedAt) {
+        jdbc.update("""
+                update processing_jobs set rabbit_backlog_confirmed_at=?
+                where job_uuid=? and status='PENDING'
+                """, Timestamp.from(confirmedAt), jobId);
+    }
+
+    @Override
+    public boolean isPending(String eventType, String externalId) {
+        Boolean pending = jdbc.queryForObject("""
+                select exists(
+                    select 1 from processing_jobs job
+                    join inbox_events inbox on inbox.id=job.inbox_event_id
+                    where inbox.event_type=? and inbox.external_id=?
+                      and job.status in ('READY','PENDING','PROCESSING')
+                )
+                """, Boolean.class, eventType, externalId);
+        return Boolean.TRUE.equals(pending);
+    }
 }

@@ -83,76 +83,167 @@ public class NotificationService {
         if (now == null || !flushing.compareAndSet(false, true)) return;
         try {
             transactions.executeWithoutResult(status -> enqueueArchivedBatch(now));
+            if (outbox.rabbitDispatchEnabled()) {
+                outbox.publishPendingActions();
+                return;
+            }
             for (int sent = 0; sent < 20; sent++) {
                 Instant claimTime = clock.instant();
                 OutboxAction action = outbox.claimNext(claimTime);
                 if (action == null) return;
-                try {
-                    if (isConnectionAlert(action)) {
-                        TelegramDeliveryResult result = isCurrentConnectionAlert(action)
-                                ? telegram.send(telegramFormatter.format(action)) : TelegramDeliveryResult.failure();
-                        if (result.delivered()) outbox.acknowledge(action, clock.instant());
-                        else if (!isCurrentConnectionAlert(action)) outbox.cancelClaimedConnectionAlert(action, clock.instant());
-                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
-                    } else if (IntelligentAlertService.ACTION_TYPE.equals(action.actionType())) {
-                        OutboxAction latest = intelligentAlerts != null && intelligentAlerts.revalidate(action, clock.instant())
-                                ? action : null;
-                        if (latest == null) { outbox.suppress(action,clock.instant()); continue; }
-                        java.util.UUID decisionId=java.util.UUID.fromString(action.actionKey().substring("intelligent_alert:".length()));
-                        java.util.UUID token=java.util.UUID.fromString(action.leaseToken());
-                        if (!deliveries.begin(decisionId,"TELEGRAM",token,clock.instant())) {
-                            outbox.retry(action,clock.instant(),"ConversationDispatchUnresolved"); continue;
-                        }
-                        TelegramDeliveryResult result;
-                        try {
-                            result=telegram.sendHtml(telegramFormatter.format(latest));
-                            if(result==null || result.ambiguous()) throw new IllegalStateException("ambiguous transport result");
-                        } catch(RuntimeException ambiguousTransport) {
-                            transactions.executeWithoutResult(status -> {
-                                deliveries.finish(decisionId,"TELEGRAM",token,"UNKNOWN",clock.instant());
-                                outbox.retry(action,clock.instant(),"AmbiguousDelivery");
-                            });
-                            continue;
-                        }
-                        if(result.delivered()) outbox.acknowledge(latest,clock.instant());
-                        else {
-                            TelegramDeliveryResult rejected=result;
-                            transactions.executeWithoutResult(status -> {
-                                deliveries.finish(decisionId,"TELEGRAM",token,"RETRYABLE",clock.instant());
-                                outbox.retry(action,clock.instant(),"DeliveryFailure",rejected.rateLimited(),rejected.retryAfter());
-                            });
-                        }
-                    } else {
-                        OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());
-                        TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
-                                : ARCHIVED_MESSAGES.equals(latest.actionType())
-                                ? telegram.sendHtml(telegramFormatter.format(latest))
-                                : "telegram_admin_reply".equals(latest.actionType())
-                                ? (telegramFormatter.isHtmlAdmin(latest)
-                                    ? telegram.sendAdminHtml(telegramFormatter.formatAdminHtml(latest), latest.payload())
-                                    : telegram.sendAdmin(telegramFormatter.format(latest), latest.payload()))
-                                : "telegram_admin_edit".equals(latest.actionType())
-                                ? (telegramFormatter.isHtmlAdmin(latest)
-                                    ? telegram.editAdminHtml(telegramFormatter.formatAdminHtml(latest), latest.payload())
-                                    : telegram.editAdmin(telegramFormatter.format(latest), latest.payload()))
-                                : ("simulation_daily_summary".equals(latest.actionType())
-                                        || "simulation_reply_preview".equals(latest.actionType()))
-                                ? telegram.sendHtml(telegramFormatter.format(latest))
-                                : telegram.send(telegramFormatter.format(latest));
-                        if (result.delivered()) outbox.acknowledge(latest, clock.instant());
-                        else if (latest == null) outbox.suppress(action, clock.instant());
-                        else outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
-                    }
-                } catch (DataAccessException ex) {
-                    // Unknown policy/state is retryable, never proof that an alert is obsolete.
-                    outbox.retry(action, clock.instant(), "StateReadFailure");
-                }
+                deliverClaimed(action);
             }
         } catch (RuntimeException ex) {
+            if (outbox.rabbitDispatchEnabled()) throw ex;
             LOG.log(System.Logger.Level.ERROR, "Notification flush failed: error={0}", ex.getClass().getSimpleName());
         } finally {
             flushing.set(false);
         }
+    }
+
+    /** Generates due notification state, then republishes pending state after an upstream replay. */
+    public void flushAfterInbound(Instant now) {
+        flush(now);
+        outbox.publishPendingActions();
+    }
+
+    /** Delivers exactly the action named by a RabbitMQ notification message. */
+    public boolean deliverQueuedAction(String actionKey, Instant now) {
+        OutboxAction action = outbox.claimByKey(actionKey, now);
+        return action != null && deliverClaimed(action);
+    }
+
+    private boolean deliverClaimed(OutboxAction action) {
+        try {
+            if (isConnectionAlert(action)) {
+                TelegramDeliveryResult result = isCurrentConnectionAlert(action)
+                        ? telegram.send(telegramFormatter.format(action)) : TelegramDeliveryResult.failure();
+                if (result.delivered()) {
+                    outbox.acknowledge(action, clock.instant());
+                    return true;
+                } else if (!isCurrentConnectionAlert(action)) {
+                    outbox.cancelClaimedConnectionAlert(action, clock.instant());
+                    return false;
+                }
+                else {
+                    outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
+                    throwRetryIfQueued(action, result.rateLimited(), result.retryAfter());
+                    return false;
+                }
+            } else if (IntelligentAlertService.ACTION_TYPE.equals(action.actionType())) {
+                OutboxAction latest = intelligentAlerts != null && intelligentAlerts.revalidate(action, clock.instant())
+                        ? action : null;
+                if (latest == null) { outbox.suppress(action, clock.instant()); return false; }
+                java.util.UUID decisionId = java.util.UUID.fromString(action.actionKey().substring("intelligent_alert:".length()));
+                java.util.UUID token = java.util.UUID.fromString(action.leaseToken());
+                if (!deliveries.begin(decisionId, "TELEGRAM", token, clock.instant())) {
+                    outbox.retry(action, clock.instant(), "ConversationDispatchUnresolved");
+                    throwRetryIfQueued(action, false, null);
+                    return false;
+                }
+                TelegramDeliveryResult result;
+                try {
+                    result = telegram.sendHtml(telegramFormatter.format(latest));
+                    if (result == null || result.ambiguous()) throw new IllegalStateException("ambiguous transport result");
+                } catch (RuntimeException ambiguousTransport) {
+                    transactions.executeWithoutResult(status -> {
+                        deliveries.finish(decisionId, "TELEGRAM", token, "UNKNOWN", clock.instant());
+                        outbox.retry(action, clock.instant(), "AmbiguousDelivery");
+                    });
+                    return false;
+                }
+                if (result.delivered()) {
+                    outbox.acknowledge(latest, clock.instant());
+                    return true;
+                }
+                else {
+                    TelegramDeliveryResult rejected = result;
+                    transactions.executeWithoutResult(status -> {
+                        deliveries.finish(decisionId, "TELEGRAM", token, "RETRYABLE", clock.instant());
+                        outbox.retry(action, clock.instant(), "DeliveryFailure", rejected.rateLimited(), rejected.retryAfter());
+                    });
+                    throwRetryIfQueued(action, rejected.rateLimited(), rejected.retryAfter());
+                    return false;
+                }
+            } else {
+                OutboxAction latest = revalidateBeforeDelivery(action, clock.instant());
+                if (latest == null && outbox.rabbitDispatchEnabled()
+                        && shouldDeferForWorkWindow(action, clock.instant())) {
+                    Instant nextWindow = nextWorkWindowStart(clock.instant());
+                    outbox.defer(action, clock.instant(), nextWindow);
+                    long delayMillis = Math.max(1_000, java.time.Duration.between(clock.instant(), nextWindow).toMillis());
+                    throw new NotificationDeferredException(delayMillis);
+                }
+                TelegramDeliveryResult result = latest == null ? TelegramDeliveryResult.failure()
+                        : ARCHIVED_MESSAGES.equals(latest.actionType())
+                        ? telegram.sendHtml(telegramFormatter.format(latest))
+                        : "telegram_admin_reply".equals(latest.actionType())
+                        ? (telegramFormatter.isHtmlAdmin(latest)
+                            ? telegram.sendAdminHtml(telegramFormatter.formatAdminHtml(latest), latest.payload())
+                            : telegram.sendAdmin(telegramFormatter.format(latest), latest.payload()))
+                        : "telegram_admin_edit".equals(latest.actionType())
+                        ? (telegramFormatter.isHtmlAdmin(latest)
+                            ? telegram.editAdminHtml(telegramFormatter.formatAdminHtml(latest), latest.payload())
+                            : telegram.editAdmin(telegramFormatter.format(latest), latest.payload()))
+                        : ("simulation_daily_summary".equals(latest.actionType())
+                                || "simulation_reply_preview".equals(latest.actionType()))
+                        ? telegram.sendHtml(telegramFormatter.format(latest))
+                        : telegram.send(telegramFormatter.format(latest));
+                if (result.delivered()) {
+                    outbox.acknowledge(latest, clock.instant());
+                    return true;
+                } else if (latest == null) {
+                    outbox.suppress(action, clock.instant());
+                    return false;
+                }
+                else {
+                    outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
+                    throwRetryIfQueued(action, result.rateLimited(), result.retryAfter());
+                    return false;
+                }
+            }
+        } catch (DataAccessException ex) {
+            outbox.retry(action, clock.instant(), "StateReadFailure");
+            throwRetryIfQueued(action, false, null);
+            return false;
+        }
+    }
+
+    private void throwRetryIfQueued(OutboxAction action, boolean rateLimited, java.time.Duration retryAfter) {
+        if (outbox.rabbitDispatchEnabled())
+            throw new NotificationRetryException("Telegram delivery is retryable",
+                    retryDelayMillis(action, rateLimited, retryAfter));
+    }
+
+    private static long retryDelayMillis(OutboxAction action, boolean rateLimited, java.time.Duration retryAfter) {
+        if (rateLimited) {
+            java.time.Duration delay = retryAfter == null || retryAfter.isNegative() || retryAfter.isZero()
+                    ? java.time.Duration.ofSeconds(60) : retryAfter;
+            return Math.max(1_000, delay.plusMillis(250).toMillis());
+        }
+        int exponent = Math.min(7, Math.max(0, action.attempts() - 1));
+        return Math.min(15 * 60_000L, (10L << exponent) * 1_000L);
+    }
+
+    private boolean shouldDeferForWorkWindow(OutboxAction action, Instant now) {
+        if (!ARCHIVED_MESSAGES.equals(action.actionType()) || inWorkWindow(now, ZoneId.of(properties.getTimezone()))) return false;
+        Map<String, Object> payload = readObject(action.payload());
+        List<Map<String, Object>> chats = readObjectList(payload.get("chats"));
+        return !chats.isEmpty() && chats.stream().allMatch(chat -> "WORK_ONLY".equals(chat.get("policy")));
+    }
+
+    private Instant nextWorkWindowStart(Instant now) {
+        ZoneId zone = ZoneId.of(properties.getTimezone());
+        java.time.LocalDate localDate = now.atZone(zone).toLocalDate();
+        for (int offset = 0; offset <= 14; offset++) {
+            java.time.LocalDate date = localDate.plusDays(offset);
+            if (!properties.getNotificationDays().contains(date.getDayOfWeek().getValue())) continue;
+            for (WatcherProperties.TimeWindow window : properties.getNotificationWindows()) {
+                Instant candidate = date.atTime(window.start()).atZone(zone).toInstant();
+                if (candidate.isAfter(now)) return candidate;
+            }
+        }
+        throw new IllegalStateException("no future work window is configured");
     }
 
     /** Rechecks current archive, sync, group, name, and work-window policy immediately before HTTP delivery. */
@@ -244,6 +335,7 @@ public class NotificationService {
         List<PendingRow> pending = readPending(now, mode);
         List<LegacyChat> chats = new ArrayList<>();
         List<Map<String, Object>> snapshots = new ArrayList<>();
+        int deferredQueued = 0;
         Instant sensitiveExpiry = now.plusSeconds(Math.min(MAX_RETENTION_SECONDS,
                 Math.min(7, Math.max(1, properties.getRetentionDays())) * 86_400L));
 
@@ -256,7 +348,11 @@ public class NotificationService {
                 continue;
             }
             String policy = isWorkOnly(displayName) ? "WORK_ONLY" : "ANYTIME";
-            if ("WORK_ONLY".equals(policy) && !inWorkWindow) continue;
+            if ("WORK_ONLY".equals(policy) && !inWorkWindow) {
+                if (outbox.rabbitDispatchEnabled() && deferredQueued < properties.getMaxBatchSize()
+                        && enqueueDeferredChat(row, displayName, mode, zone, now)) deferredQueued++;
+                continue;
+            }
             if (chats.size() >= properties.getMaxBatchSize()) break;
 
             chats.add(toLegacyChat(row, displayName, policy, zone, now));
@@ -293,6 +389,38 @@ public class NotificationService {
                 payloadJson, snapshotJson, now, sensitiveExpiry);
         LOG.log(System.Logger.Level.INFO, "Archived notification queued: chats={0}, messages={1}",
                 chats.size(), chats.stream().mapToInt(LegacyChat::messageCount).sum());
+    }
+
+    private boolean enqueueDeferredChat(PendingRow row, String displayName, ArchiveMode mode, ZoneId zone, Instant now) {
+        String actionKey = ARCHIVED_MESSAGES + ":deferred:" + sha256(mode.name() + "\n" + row.chatJid()
+                + "\n" + row.generation());
+        if (outbox.hasActiveActionKey(actionKey)) return false;
+
+        String policy = "WORK_ONLY";
+        LegacyChat chat = toLegacyChat(row, displayName, policy, zone, now);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("eventType", ARCHIVED_MESSAGES);
+        payload.put("archiveMode", mode.name());
+        payload.put("generatedAt", localIso(now, zone));
+        payload.put("totalChats", 1);
+        payload.put("totalMessages", row.messageCount());
+        payload.put("chats", List.of(chat.payload()));
+
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("chat_jid", row.chatJid());
+        snapshot.put("pending_generation", row.generation());
+        snapshot.put("message_count", row.messageCount());
+        snapshot.put("first_message_at", row.firstMessageAt().toString());
+        snapshot.put("last_message_at", row.lastMessageAt().toString());
+        snapshot.put("updated_at", row.updatedAt().toString());
+
+        Instant expiry = min(now.plusSeconds(Math.min(MAX_RETENTION_SECONDS,
+                Math.min(7, Math.max(1, properties.getRetentionDays())) * 86_400L)), row.expiresAt());
+        if (row.previewExpiry() != null && row.previewExpiry().isAfter(now)) expiry = min(expiry, row.previewExpiry());
+        Instant nextWindow = nextWorkWindowStart(now);
+        outbox.enqueue(actionKey, ARCHIVED_MESSAGES, writeJson(payload), writeJson(List.of(snapshot)),
+                now, expiry, nextWindow);
+        return true;
     }
 
     private List<PendingRow> readPending(Instant now, ArchiveMode mode) {

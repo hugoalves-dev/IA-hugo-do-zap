@@ -17,6 +17,37 @@ public class TelegramWebhookInboxRepository {
         this.jdbc = jdbc;
     }
 
+    public int insertIfAbsent(long updateId, String payload) {
+        return jdbc.update("""
+                INSERT INTO telegram_webhook_inbox(update_id,payload)
+                VALUES (?,?::jsonb) ON CONFLICT (update_id) DO NOTHING
+                """, updateId, payload);
+    }
+
+    /** Locks one update for synchronous RabbitMQ processing; the broker owns retry timing. */
+    public List<Item> pendingByIdForUpdate(long updateId) {
+        return jdbc.query("""
+                SELECT update_id,payload::text FROM telegram_webhook_inbox
+                WHERE update_id=? AND status='PENDING'
+                FOR UPDATE
+                """, (rs, i) -> new Item(rs.getLong(1), rs.getString(2)), updateId);
+    }
+
+    public List<Item> pendingForRabbit(int limit) {
+        return jdbc.query("""
+                SELECT update_id,payload::text FROM telegram_webhook_inbox
+                WHERE status='PENDING' AND rabbit_backlog_confirmed_at IS NULL
+                ORDER BY update_id LIMIT ?
+                """, (rs, i) -> new Item(rs.getLong(1), rs.getString(2)), limit);
+    }
+
+    public void markRabbitBacklogConfirmed(long updateId) {
+        jdbc.update("""
+                UPDATE telegram_webhook_inbox SET rabbit_backlog_confirmed_at=clock_timestamp()
+                WHERE update_id=? AND status='PENDING'
+                """, updateId);
+    }
+
     public List<Item> pendingForUpdate() {
         return jdbc.query("""
                 SELECT update_id,payload::text FROM telegram_webhook_inbox
