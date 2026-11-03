@@ -60,7 +60,7 @@ public class RabbitEventPublisher {
             CorrelationData.Confirm confirm = correlation.getFuture()
                     .get(properties.getConfirmTimeout().toMillis(), TimeUnit.MILLISECONDS);
             if (correlation.getReturned() != null) throw new IllegalStateException("RabbitMQ did not route the event");
-            if (!confirm.isAck()) throw new IllegalStateException("RabbitMQ rejected the event");
+            if (!confirm.ack()) throw new IllegalStateException("RabbitMQ rejected the event");
         } catch (TimeoutException ex) {
             throw new IllegalStateException("RabbitMQ publisher confirm timed out", ex);
         } catch (InterruptedException ex) {
