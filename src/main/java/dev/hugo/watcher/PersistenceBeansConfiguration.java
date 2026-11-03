@@ -117,8 +117,8 @@ class PersistenceBeansConfiguration {
 
     @Bean
     dev.hugo.watcher.notification.DecisionDeliveryCoordinator decisionDeliveryCoordinator(
-            org.springframework.jdbc.core.JdbcTemplate jdbc, PlatformTransactionManager transactions) {
-        return new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, transactions);
+            dev.hugo.watcher.notification.DeliveryAdmissionRepository admission, PlatformTransactionManager transactions) {
+        return new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(admission, transactions);
     }
 
     @Bean
