@@ -183,6 +183,14 @@ class TelegramMessageFormatterTest {
         assertWellFormedUtf16(result);
     }
 
+    @Test void malformedAdminPayloadStillUsesBotPrefixForTheFallback() {
+        var action = new OutboxAction(15, "admin", "telegram_admin_reply", "{not-json", "[]", 0,
+                java.time.Instant.EPOCH, java.time.Instant.EPOCH.plusSeconds(60), null);
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "[🤖 HUGO ZAP BOT]: Não foi possível formatar a resposta administrativa.",
+                formatter.format(action));
+    }
+
     @Test void notificationsKeepTheirOwnTitleWithoutBotPrefix() {
         String notification = formatter.format(new OutboxAction(14, "connection", "whatsapp_connection_lost",
                 "{\"eventType\":\"whatsapp_connection_lost\",\"manualPairingRequired\":true}", "[]", 0,
