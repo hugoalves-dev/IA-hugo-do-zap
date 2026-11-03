@@ -53,6 +53,8 @@ This is a **work-in-progress inventory**, not a declaration that every JDBC call
 
 - Telegram read-only decisions: `ShadowDecisionQuery` is explicitly a PostgreSQL-native query repository (read-only projections and retention-filtered previews); it is no longer exposed as an ordinary component with an implicit persistence role.
 
+- Quarantine: `QuarantineEventRepository` now exclusively owns the redacted `quarantined_events` insert, ID normalization and bounded expiry; the legacy `QuarantineWriter` is a SQL-free compatibility bridge.
+
 ## Still requiring migration and compatibility tests
 
 | Area | Files still with SQL in the baseline | Primary correctness requirements |
