@@ -125,7 +125,7 @@ class TelegramHtmlFormattingTest {
         var editedRich = TelegramBotApiTransport.editMessage(99L, 42, "<b>ok</b>", true);
         var editedPlain = TelegramBotApiTransport.editMessage(99L, 42, "<b>literal</b>", false);
         assertEquals(ParseMode.HTML, rich.getParameters().get("parse_mode"));
-        assertEquals(ParseMode.HTML, editedRich.getParameters().get("parse_mode"));
+        assertEquals("HTML", editedRich.getParameters().get("parse_mode"));
         assertFalse(plain.getParameters().containsKey("parse_mode"));
         assertFalse(editedPlain.getParameters().containsKey("parse_mode"));
     }
