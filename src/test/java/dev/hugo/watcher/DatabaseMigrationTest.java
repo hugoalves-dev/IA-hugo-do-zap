@@ -122,9 +122,23 @@ class DatabaseMigrationTest {
                 values ('legacy_approved',1,'CONTACT_REQUEST','Oi, pode deixar.',true,true)
                 """);
 
+        jdbc.update("""
+                insert into template_disclosure_upgrade.response_templates
+                    (template_id,version,situation,body,identifies_automation,enabled)
+                values ('already_disclosed',1,'CONTACT_REQUEST','Resposta automática: tudo bem.',true,true)
+                """);
+
         Flyway.configure().dataSource(source).schemas("template_disclosure_upgrade").defaultSchema("template_disclosure_upgrade")
                 .load().migrate();
 
+        assertEquals(true, jdbc.queryForObject("""
+                select enabled from template_disclosure_upgrade.response_templates
+                where template_id='already_disclosed' and version=1
+                """, Boolean.class));
+        assertEquals("Resposta automática: tudo bem.", jdbc.queryForObject("""
+                select body from template_disclosure_upgrade.response_templates
+                where template_id='already_disclosed' and version=1
+                """, String.class));
         assertEquals("Oi, pode deixar.", jdbc.queryForObject("""
                 select body from template_disclosure_upgrade.response_templates
                  where template_id='legacy_approved' and version=1
