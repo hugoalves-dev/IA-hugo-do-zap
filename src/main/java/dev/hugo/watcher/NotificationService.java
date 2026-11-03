@@ -105,7 +105,7 @@ public class NotificationService {
                         }
                         TelegramDeliveryResult result;
                         try {
-                            result=telegram.send(telegramFormatter.format(latest));
+                            result=telegram.sendHtml(telegramFormatter.format(latest));
                             if(result==null || result.ambiguous()) throw new IllegalStateException("ambiguous transport result");
                         } catch(RuntimeException ambiguousTransport) {
                             transactions.executeWithoutResult(status -> {
@@ -128,9 +128,16 @@ public class NotificationService {
                                 : ARCHIVED_MESSAGES.equals(latest.actionType())
                                 ? telegram.sendHtml(telegramFormatter.format(latest))
                                 : "telegram_admin_reply".equals(latest.actionType())
-                                ? telegram.sendAdmin(telegramFormatter.format(latest), latest.payload())
+                                ? (telegramFormatter.isHtmlAdmin(latest)
+                                    ? telegram.sendAdminHtml(telegramFormatter.formatAdminHtml(latest), latest.payload())
+                                    : telegram.sendAdmin(telegramFormatter.format(latest), latest.payload()))
                                 : "telegram_admin_edit".equals(latest.actionType())
-                                ? telegram.editAdmin(telegramFormatter.format(latest), latest.payload())
+                                ? (telegramFormatter.isHtmlAdmin(latest)
+                                    ? telegram.editAdminHtml(telegramFormatter.formatAdminHtml(latest), latest.payload())
+                                    : telegram.editAdmin(telegramFormatter.format(latest), latest.payload()))
+                                : ("simulation_daily_summary".equals(latest.actionType())
+                                        || "simulation_reply_preview".equals(latest.actionType()))
+                                ? telegram.sendHtml(telegramFormatter.format(latest))
                                 : telegram.send(telegramFormatter.format(latest));
                         if (result.delivered()) outbox.acknowledge(latest, clock.instant());
                         else if (latest == null) outbox.suppress(action, clock.instant());
