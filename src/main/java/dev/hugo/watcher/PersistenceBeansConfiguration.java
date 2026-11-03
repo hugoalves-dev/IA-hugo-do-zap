@@ -116,6 +116,16 @@ class PersistenceBeansConfiguration {
 
 
     @Bean
+    dev.hugo.watcher.notification.DecisionRuntimeGate decisionRuntimeGate(
+            dev.hugo.watcher.notification.DecisionRuntimeQueryRepository queries,
+            Clock clock, WatcherProperties watcher,
+            @Value("${watcher.whatsapp-actions.owner-jid:}") String ownerJid,
+            PersistedPolicyRepository policies, HolidayService holidays) {
+        return new dev.hugo.watcher.notification.DecisionRuntimeGate(
+                queries, clock, watcher, ownerJid, policies, holidays);
+    }
+
+    @Bean
     dev.hugo.watcher.notification.IntelligentAlertService intelligentAlertService(
             dev.hugo.watcher.notification.IntelligentAlertPersistenceRepository persistence,
             PlatformTransactionManager transactions, NotificationOutboxRepository outbox, Clock clock,
