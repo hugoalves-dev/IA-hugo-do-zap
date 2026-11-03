@@ -10,6 +10,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import dev.hugo.watcher.BotReplyFormatter;
 import dev.hugo.watcher.notification.WhatsAppActionPersistenceRepository.Queued;
 import dev.hugo.watcher.notification.WhatsAppActionPersistenceRepository.Action;
 import dev.hugo.watcher.notification.WhatsAppActionPersistenceRepository.Authorization;
@@ -88,7 +89,9 @@ public class WhatsAppActionService {
                 || !latest.situation().equals(expected.situation())
                 || !latest.templateId().equals(expected.templateId())
                 || latest.templateVersion() != expected.templateVersion()) return null;
-        return new AuthorizedAction(actionId, expected.decisionId(), expected.chatJid(), latest.body());
+        String deliveryBody = BotReplyFormatter.whatsAppTemplate(latest.body());
+        if (deliveryBody == null) return null;
+        return new AuthorizedAction(actionId, expected.decisionId(), expected.chatJid(), deliveryBody);
     }
 
     private Authorization currentAuthorization(UUID decisionId, Instant now) {
@@ -99,7 +102,7 @@ public class WhatsAppActionService {
         if (!a.realActionAllowed() || !"WOULD_ACT".equals(a.decisionState())
                 || !a.templateEnabled() || !a.identifiesAutomation()) return null;
         if (!a.wouldReply()) return null;
-        if (!a.body().stripLeading().toLowerCase(java.util.Locale.ROOT).startsWith("resposta automática:")) return null;
+        if (BotReplyFormatter.whatsAppTemplate(a.body()) == null) return null;
         int optedIn = persistence.authorizationCount(a);
         if (optedIn != 1) return null;
         return a;
