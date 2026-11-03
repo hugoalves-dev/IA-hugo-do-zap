@@ -8,6 +8,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Timestamp;
+import dev.hugo.watcher.IdentityMergeRepository.AliasRow;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -126,28 +127,19 @@ public class IdentityService {
     }
 
     private CanonicalIdentity observeSingle(String observedJid) {
-        jdbc.update("""
-                insert into identity_aliases(alias, canonical_identity) values (?, ?)
-                on conflict (alias) do nothing
-                """, observedJid, observedJid);
+        identityStorage.observeAliasIfAbsent(observedJid);
         String canonical = lookupCanonical(observedJid);
         if (canonical == null) canonical = observedJid;
         return identityForCanonical(canonical);
     }
 
     private CanonicalIdentity mergeAliases(String observedJid, Set<String> identities) {
-        // Serialize rare explicit merges with shadow workers, including captures not yet batched.
-        jdbc.query("select pg_advisory_xact_lock(947221, 2)", rs -> { });
-        // Explicit LID/PN pair merges are rare; keep the table lock off normal observations.
-        // SHARE ROW EXCLUSIVE permits readers while serializing alias-set rewrites.
-        jdbc.execute("lock table identity_aliases in share row exclusive mode");
+        // Serialize explicit LID/PN merges under the original advisory and table locks.
+        identityStorage.lockAliasMerge();
         CanonicalIdentity alreadyLinked = pairIfAlreadyLinked(identities);
         if (alreadyLinked != null) return alreadyLinked;
         List<String> ordered = new ArrayList<>(new TreeSet<>(identities));
-        String placeholders = String.join(",", java.util.Collections.nCopies(ordered.size(), "?"));
-        List<String> canonicalRows = jdbc.query(
-                "select canonical_identity from identity_aliases where alias in (" + placeholders + ") order by alias",
-                (rs, row) -> rs.getString(1), ordered.toArray());
+        List<String> canonicalRows = identityStorage.canonicalsForAliases(ordered);
         Set<String> oldCanonicals = new TreeSet<>(canonicalRows);
         String observedCanonical = lookupCanonical(observedJid);
         if (observedCanonical != null) oldCanonicals.add(observedCanonical);
@@ -156,9 +148,7 @@ public class IdentityService {
 
         Set<String> aliases = new TreeSet<>(ordered);
         if (!oldCanonicals.isEmpty()) {
-            String canonicalPlaceholders = String.join(",", java.util.Collections.nCopies(oldCanonicals.size(), "?"));
-            aliases.addAll(jdbc.query("select alias from identity_aliases where canonical_identity in (" + canonicalPlaceholders + ") order by alias",
-                    (rs, row) -> rs.getString(1), oldCanonicals.toArray()));
+            aliases.addAll(identityStorage.aliasesForCanonicals(oldCanonicals));
         }
         aliases.addAll(oldCanonicals);
 
@@ -167,31 +157,19 @@ public class IdentityService {
         identityStorage.mergeProcessedMessageIdentities(canonical, aliases);
         identityStorage.mergeShadowIdentities(canonical, aliases);
         if (!oldCanonicals.isEmpty()) {
-            String oldPlaceholders = String.join(",", java.util.Collections.nCopies(oldCanonicals.size(), "?"));
-            jdbc.update("update identity_aliases set canonical_identity=? where canonical_identity in (" + oldPlaceholders + ")",
-                    prepend(canonical, oldCanonicals).toArray());
+            identityStorage.rekeyCanonicals(canonical, oldCanonicals);
         }
         for (String alias : aliases) {
-            jdbc.update("""
-                    insert into identity_aliases(alias,canonical_identity) values (?,?)
-                    on conflict (alias) do update set canonical_identity=excluded.canonical_identity
-                    """, alias, canonical);
+            identityStorage.upsertAlias(alias, canonical);
         }
         return identityForCanonical(canonical);
     }
 
     private CanonicalIdentity pairIfAlreadyLinked(Set<String> identities) {
         List<String> ordered = new ArrayList<>(new TreeSet<>(identities));
-        String placeholders = String.join(",", java.util.Collections.nCopies(ordered.size(), "?"));
-        List<AliasRow> rows = jdbc.query("""
-                select alias,canonical_identity from identity_aliases
-                where alias in (""" + placeholders + ") order by alias",
-                (rs, row) -> new AliasRow(rs.getString("alias"), rs.getString("canonical_identity")), ordered.toArray());
+        List<AliasRow> rows = identityStorage.aliasRows(ordered, false);
         if (rows.size() != ordered.size() || rows.stream().map(AliasRow::canonicalIdentity).distinct().count() != 1) return null;
-        List<AliasRow> locked = jdbc.query("""
-                select alias,canonical_identity from identity_aliases
-                where alias in (""" + placeholders + ") order by alias for share",
-                (rs, row) -> new AliasRow(rs.getString("alias"), rs.getString("canonical_identity")), ordered.toArray());
+        List<AliasRow> locked = identityStorage.aliasRows(ordered, true);
         if (locked.size() != ordered.size() || locked.stream().map(AliasRow::canonicalIdentity).distinct().count() != 1) return null;
         return identityForCanonical(locked.getFirst().canonicalIdentity());
     }
@@ -347,14 +325,7 @@ public class IdentityService {
     }
 
     private void lockSnapshot(String jid) {
-        jdbc.query("select pg_advisory_xact_lock(hashtextextended(?, 0))", rs -> { }, jid);
-    }
-
-    private static List<Object> prepend(Object head, Set<String> rest) {
-        List<Object> values = new ArrayList<>();
-        values.add(head);
-        values.addAll(rest);
-        return values;
+        identityStorage.lockSnapshot(jid);
     }
 
     private static String first(Set<String> values, java.util.function.Predicate<String> predicate) {
@@ -457,7 +428,6 @@ public class IdentityService {
 
     private record ContactRow(String canonicalJid, String lidJid, String phoneJid, String username,
                               String displayName, ContactNameSource nameSource, Instant updatedAt) { }
-    private record AliasRow(String alias, String canonicalIdentity) { }
     private record ChatSnapshotRow(String chatJid, Boolean archived, Instant snapshotAt, String displayName,
                                    boolean group, boolean synchronizedSnapshot, Instant lastReadAt) { }
     private record PendingRow(String chatJid, String payload, Instant dueAt, Instant updatedAt, Instant expiresAt) { }

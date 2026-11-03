@@ -128,6 +128,65 @@ public class IdentityMergeRepository {
     }
 
 
+
+    public void observeAliasIfAbsent(String jid) {
+        jdbc.update("""
+                insert into identity_aliases(alias, canonical_identity) values (?, ?)
+                on conflict (alias) do nothing
+                """, jid, jid);
+    }
+
+    /** Only used inside the service's existing transaction. */
+    public void lockAliasMerge() {
+        jdbc.query("select pg_advisory_xact_lock(947221, 2)", rs -> { });
+        jdbc.execute("lock table identity_aliases in share row exclusive mode");
+    }
+
+    public List<String> canonicalsForAliases(List<String> aliases) {
+        if (aliases.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(aliases.size(), "?"));
+        return jdbc.query("select canonical_identity from identity_aliases where alias in (" + placeholders + ") order by alias",
+                (rs, row) -> rs.getString(1), aliases.toArray());
+    }
+
+    public List<String> aliasesForCanonicals(Set<String> canonicals) {
+        if (canonicals.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(canonicals.size(), "?"));
+        return jdbc.query("select alias from identity_aliases where canonical_identity in (" + placeholders + ") order by alias",
+                (rs, row) -> rs.getString(1), canonicals.toArray());
+    }
+
+    public void rekeyCanonicals(String canonical, Set<String> oldCanonicals) {
+        if (oldCanonicals.isEmpty()) return;
+        String placeholders = String.join(",", java.util.Collections.nCopies(oldCanonicals.size(), "?"));
+        List<Object> args = new ArrayList<>();
+        args.add(canonical);
+        args.addAll(oldCanonicals);
+        jdbc.update("update identity_aliases set canonical_identity=? where canonical_identity in (" + placeholders + ")",
+                args.toArray());
+    }
+
+    public void upsertAlias(String alias, String canonical) {
+        jdbc.update("""
+                insert into identity_aliases(alias,canonical_identity) values (?,?)
+                on conflict (alias) do update set canonical_identity=excluded.canonical_identity
+                """, alias, canonical);
+    }
+
+    public List<AliasRow> aliasRows(List<String> aliases, boolean sharedLock) {
+        if (aliases.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(aliases.size(), "?"));
+        return jdbc.query("select alias,canonical_identity from identity_aliases where alias in (" + placeholders
+                        + ") order by alias" + (sharedLock ? " for share" : ""),
+                (rs, row) -> new AliasRow(rs.getString("alias"), rs.getString("canonical_identity")), aliases.toArray());
+    }
+
+    public void lockSnapshot(String jid) {
+        jdbc.query("select pg_advisory_xact_lock(hashtextextended(?, 0))", rs -> { }, jid);
+    }
+
+    public record AliasRow(String alias, String canonicalIdentity) { }
+
     private record MessageDedupRow(long id, String chatJid, String upstreamMessageKey,
                                    String participantJid, Instant processedAt) { }
     private record MessageDedupKey(String chatJid, String upstreamMessageKey, String participantJid) { }
