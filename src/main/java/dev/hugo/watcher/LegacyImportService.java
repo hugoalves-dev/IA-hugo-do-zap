@@ -20,9 +20,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import dev.hugo.watcher.LegacySqliteSnapshotReader.SourceData;
-import dev.hugo.watcher.LegacySqliteSnapshotReader.SourceIdentity;
-import dev.hugo.watcher.LegacySqliteSnapshotReader.SourcePending;
+import dev.hugo.watcher.LegacySqliteSnapshotRepository.SourceData;
+import dev.hugo.watcher.LegacySqliteSnapshotRepository.SourceIdentity;
+import dev.hugo.watcher.LegacySqliteSnapshotRepository.SourcePending;
 import dev.hugo.watcher.LegacyImportPersistenceRepository.ExistingPending;
 import dev.hugo.watcher.LegacyImportPersistenceRepository.IdentityAnchors;
 
@@ -33,11 +33,11 @@ public class LegacyImportService {
     private static final long MAX_RETENTION_SECONDS = 7 * 86_400L;
 
     private final LegacyImportPersistenceRepository persistence;
-    private final LegacySqliteSnapshotReader reader;
+    private final LegacySqliteSnapshotRepository reader;
     private final TransactionTemplate transactions;
 
     /** Production: SQLite snapshots and PostgreSQL writes are separate collaborators. */
-    public LegacyImportService(LegacySqliteSnapshotReader reader,
+    public LegacyImportService(LegacySqliteSnapshotRepository reader,
                                LegacyImportPersistenceRepository persistence,
                                PlatformTransactionManager manager) {
         this.reader = reader;
@@ -47,7 +47,7 @@ public class LegacyImportService {
 
     /** Compatibility adapter for standalone migration tests. */
     public LegacyImportService(JdbcTemplate jdbc, PlatformTransactionManager manager) {
-        this(new LegacySqliteSnapshotReader(), new LegacyImportPersistenceRepository(jdbc), manager);
+        this(new LegacySqliteSnapshotRepository(), new LegacyImportPersistenceRepository(jdbc), manager);
     }
 
     /**

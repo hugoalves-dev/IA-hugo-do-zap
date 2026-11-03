@@ -1,7 +1,7 @@
 package dev.hugo.watcher;
 
 import org.sqlite.SQLiteConfig;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Repository;
 
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -14,8 +14,8 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /** Read-only legacy SQLite snapshot adapter; never imports legacy archive flags. */
-@Component
-public class LegacySqliteSnapshotReader {
+@Repository
+public class LegacySqliteSnapshotRepository {
     public SourceData read(Path snapshot) throws SQLException {
         try (Connection connection = openReadOnly(snapshot)) {
             return readSource(connection);

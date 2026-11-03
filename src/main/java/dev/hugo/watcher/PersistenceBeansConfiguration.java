@@ -137,7 +137,7 @@ class PersistenceBeansConfiguration {
     }
 
     @Bean
-    LegacyImportService legacyImportService(LegacySqliteSnapshotReader reader,
+    LegacyImportService legacyImportService(LegacySqliteSnapshotRepository reader,
                                             LegacyImportPersistenceRepository persistence,
                                             PlatformTransactionManager transactions) {
         return new LegacyImportService(reader, persistence, transactions);
