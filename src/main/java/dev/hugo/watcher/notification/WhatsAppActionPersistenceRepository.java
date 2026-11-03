@@ -70,11 +70,11 @@ public class WhatsAppActionPersistenceRepository {
 
     public List<Action> dispatchedAction(UUID actionId, Instant now) {
         return jdbc.query("""
-                select decision_id,chat_jid,participant_jid,situation,template_id,template_version
+                select decision_id,chat_jid,participant_jid,situation,template_id,template_version,body
                 from whatsapp_action_outbox where action_id=? and status='DISPATCHED' and expires_at>?
                 """, (rs, row) -> new Action(rs.getObject("decision_id", UUID.class), rs.getString("chat_jid"),
                 rs.getString("participant_jid"), rs.getString("situation"), rs.getString("template_id"),
-                rs.getInt("template_version")), actionId, Timestamp.from(now));
+                rs.getInt("template_version"), rs.getString("body")), actionId, Timestamp.from(now));
     }
 
     public List<Authorization> authorizations(UUID decisionId) {
@@ -105,7 +105,7 @@ public class WhatsAppActionPersistenceRepository {
 
     public record Queued(UUID id, String status, Instant expiresAt) { }
     public record Action(UUID decisionId, String chatJid, String participantJid, String situation,
-                         String templateId, int templateVersion) { }
+                         String templateId, int templateVersion, String body) { }
     public record Authorization(String chatJid, String participantJid, String situation, String templateId,
                                 int templateVersion, String body, String decisionState, boolean realActionAllowed,
                                 boolean wouldReply, boolean wouldAlert, int cooldownSeconds, Instant lastRealActionAt,

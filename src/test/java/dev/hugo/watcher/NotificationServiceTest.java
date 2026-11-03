@@ -115,7 +115,7 @@ class NotificationServiceTest {
         notifications.flush(now);
 
         assertEquals(1, requestCount.get());
-        assertEquals("Admin response", receivedBody.get());
+        assertEquals("[🤖 HUGO ZAP BOT]: Admin response", receivedBody.get());
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='telegram_admin_reply'", String.class));
     }
 

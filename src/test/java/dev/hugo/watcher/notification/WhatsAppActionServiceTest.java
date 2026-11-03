@@ -60,6 +60,73 @@ class WhatsAppActionServiceTest {
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','task4_test',1)", "15551234567@s.whatsapp.net");
     }
 
+
+    @Test void dispatchedAuthorizedLegacyTemplateUsesExactlyOneBotPrefix() {
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        var sent = new java.util.concurrent.atomic.AtomicReference<String>();
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
+                (chat, body, key) -> {
+                    sent.set(body);
+                    return EvolutionSendResult.delivered();
+                }, Clock.fixed(now, ZoneOffset.UTC), true);
+        dispatcher.dispatch(queued.actionId());
+        assertEquals("[🤖 HUGO ZAP BOT]: retorno em breve.", sent.get());
+        assertEquals("DELIVERED", status(queued.actionId()));
+        assertEquals("Resposta automática: retorno em breve.",
+                jdbc.queryForObject("select body from response_templates where template_id='task4_test' and version=1", String.class));
+    }
+
+    @Test void authorizedTemplateAlreadyContainingBotPrefixDoesNotDoublePrefix() {
+        jdbc.update("update response_templates set body='Resposta automática: [🤖 HUGO ZAP BOT]: retorno em breve.' where template_id='task4_test' and version=1");
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        var sent = new java.util.concurrent.atomic.AtomicReference<String>();
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
+                (chat, body, key) -> {
+                    sent.set(body);
+                    return EvolutionSendResult.delivered();
+                }, Clock.fixed(now, ZoneOffset.UTC), true);
+        dispatcher.dispatch(queued.actionId());
+        assertEquals("[🤖 HUGO ZAP BOT]: retorno em breve.", sent.get());
+    }
+
+    @Test void changedApprovedTemplateBodyAfterQueueSuppressesDispatch() {
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        jdbc.update("update response_templates set body='Resposta automática: texto alterado sem nova versão.' where template_id='task4_test' and version=1");
+        var calls = new AtomicInteger();
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
+                (chat, body, key) -> {
+                    calls.incrementAndGet();
+                    return EvolutionSendResult.delivered();
+                }, Clock.fixed(now, ZoneOffset.UTC), true);
+        dispatcher.dispatch(queued.actionId());
+        assertEquals(0, calls.get());
+        assertEquals("SUPPRESSED", status(queued.actionId()));
+    }
+
+    @Test void disabledApprovedTemplateAfterQueueSuppressesDispatch() {
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        jdbc.update("update response_templates set enabled=false where template_id='task4_test' and version=1");
+        var calls = new AtomicInteger();
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
+                (chat, body, key) -> {
+                    calls.incrementAndGet();
+                    return EvolutionSendResult.delivered();
+                }, Clock.fixed(now, ZoneOffset.UTC), true);
+        dispatcher.dispatch(queued.actionId());
+        assertEquals(0, calls.get());
+        assertEquals("SUPPRESSED", status(queued.actionId()));
+    }
+
+    @Test void emptyDisclosedTemplateCannotQueueRealAction() {
+        jdbc.update("update response_templates set body='Resposta automática:  ' where template_id='task4_test' and version=1");
+        assertFalse(service(true).enqueue(decisionId).accepted());
+        assertEquals(0, actionCount());
+    }
+
     @Test void refusesShadowDecisionAndDoesNotCreateAction() {
         jdbc.update("update simulation_decisions set real_action_allowed=false where batch_id=?", decisionId);
         assertFalse(service(true).enqueue(decisionId).accepted());

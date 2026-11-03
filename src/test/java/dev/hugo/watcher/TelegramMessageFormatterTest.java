@@ -156,9 +156,52 @@ class TelegramMessageFormatterTest {
             } else assertFalse(Character.isLowSurrogate(current));
         }
     }
+
+    @Test void adminReplyAndEditHaveExactlyOneVisibleLiteralPrefix() throws Exception {
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        for (String event : java.util.List.of("telegram_admin_reply", "telegram_admin_edit")) {
+            for (String body : java.util.List.of("Status: ligado", "Acesso negado.", "<b>texto literal</b>",
+                    "[🤖 HUGO ZAP BOT]: mensagem")) {
+                String payload = json.writeValueAsString(java.util.Map.of("eventType", event, "text", body));
+                var action = new OutboxAction(12, "admin", event, payload, "[]", 0,
+                        java.time.Instant.EPOCH, java.time.Instant.EPOCH.plusSeconds(60), null);
+                String expected = body.startsWith("[🤖 HUGO ZAP BOT]: ") ? body : "[🤖 HUGO ZAP BOT]: " + body;
+                org.junit.jupiter.api.Assertions.assertEquals(expected, formatter.format(action));
+            }
+        }
+    }
+
+    @Test void adminReplyTruncationKeepsPrefixAndSurrogatePairs() throws Exception {
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        String payload = json.writeValueAsString(java.util.Map.of(
+                "eventType", "telegram_admin_reply", "text", "😀".repeat(3000)));
+        var action = new OutboxAction(13, "admin", "telegram_admin_reply", payload, "[]", 0,
+                java.time.Instant.EPOCH, java.time.Instant.EPOCH.plusSeconds(60), null);
+        String result = formatter.format(action);
+        assertTrue(result.startsWith("[🤖 HUGO ZAP BOT]: "));
+        assertTrue(result.length() <= TelegramMessageFormatter.MAX_MESSAGE_LENGTH);
+        assertWellFormedUtf16(result);
+    }
+
+    @Test void malformedAdminPayloadStillUsesBotPrefixForTheFallback() {
+        var action = new OutboxAction(15, "admin", "telegram_admin_reply", "{not-json", "[]", 0,
+                java.time.Instant.EPOCH, java.time.Instant.EPOCH.plusSeconds(60), null);
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "[🤖 HUGO ZAP BOT]: Não foi possível formatar a resposta administrativa.",
+                formatter.format(action));
+    }
+
+    @Test void notificationsKeepTheirOwnTitleWithoutBotPrefix() {
+        String notification = formatter.format(new OutboxAction(14, "connection", "whatsapp_connection_lost",
+                "{\"eventType\":\"whatsapp_connection_lost\",\"manualPairingRequired\":true}", "[]", 0,
+                java.time.Instant.EPOCH, java.time.Instant.EPOCH.plusSeconds(60), null));
+        assertFalse(notification.startsWith("[🤖 HUGO ZAP BOT]: "));
+        String archived = formatter.format(archivedWithName("Contato"));
+        assertFalse(archived.startsWith("[🤖 HUGO ZAP BOT]: "));
+    }
     @org.junit.jupiter.api.Test void adminReplyRetainsReadableLineBreaks() {
         var now = java.time.Instant.parse("2026-10-27T12:00:00Z");
         var action = new OutboxAction(1, "test", "telegram_admin_reply", "{\"eventType\":\"telegram_admin_reply\",\"text\":\"linha um\\nlinha dois\"}", "[]", 0, now, now.plusSeconds(60), null);
-        org.junit.jupiter.api.Assertions.assertEquals("linha um\nlinha dois", new TelegramMessageFormatter().format(action));
+        org.junit.jupiter.api.Assertions.assertEquals("[🤖 HUGO ZAP BOT]: linha um\nlinha dois", new TelegramMessageFormatter().format(action));
     }
 }

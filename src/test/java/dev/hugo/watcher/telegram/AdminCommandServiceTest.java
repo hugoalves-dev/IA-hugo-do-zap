@@ -42,6 +42,30 @@ class AdminCommandServiceTest {
         commands.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));
     }
 
+
+    @Test void deliveredAdministrativeCommandsErrorsAndConfirmationsUseCentralPrefix() {
+        var formatter = new TelegramMessageFormatter();
+        java.util.List<AdminCommand> cases = java.util.List.of(
+                command("status", List.of(), false),
+                command("relatorio", List.of(), false),
+                command("ultimas", List.of(), false),
+                command("unknown", List.of(), false),
+                command("ocupado", List.of("30"), false),
+                command("ocupado", List.of("99999"), true));
+        for (AdminCommand command : cases) {
+            commands.execute(command);
+            String payload = jdbc.queryForObject("""
+                    select payload::text from outbox_actions where action_type='telegram_admin_reply'
+                    order by id desc limit 1
+                    """, String.class);
+            var action = new OutboxAction(1, "admin", "telegram_admin_reply", payload,
+                    "[]", 0, clock.instant(), clock.instant().plusSeconds(60), null);
+            String delivered = formatter.format(action);
+            assertTrue(delivered.startsWith("[🤖 HUGO ZAP BOT]: "), command.name());
+            assertFalse(delivered.startsWith("[🤖 HUGO ZAP BOT]: [🤖 HUGO ZAP BOT]: "), command.name());
+        }
+    }
+
     @Test void webhookMenuUsesOpaqueCallbackTokensAndCancelRevokesConfirmation() {
         assertMenuAndConfirmationCallbacks(false);
     }
