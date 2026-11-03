@@ -91,6 +91,36 @@ class WhatsAppActionServiceTest {
         assertEquals("[🤖 HUGO ZAP BOT]: retorno em breve.", sent.get());
     }
 
+    @Test void changedApprovedTemplateBodyAfterQueueSuppressesDispatch() {
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        jdbc.update("update response_templates set body='Resposta automática: texto alterado sem nova versão.' where template_id='task4_test' and version=1");
+        var calls = new AtomicInteger();
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
+                (chat, body, key) -> {
+                    calls.incrementAndGet();
+                    return EvolutionSendResult.delivered();
+                }, Clock.fixed(now, ZoneOffset.UTC), true);
+        dispatcher.dispatch(queued.actionId());
+        assertEquals(0, calls.get());
+        assertEquals("SUPPRESSED", status(queued.actionId()));
+    }
+
+    @Test void disabledApprovedTemplateAfterQueueSuppressesDispatch() {
+        var queued = service(true).enqueue(decisionId);
+        assertTrue(queued.accepted());
+        jdbc.update("update response_templates set enabled=false where template_id='task4_test' and version=1");
+        var calls = new AtomicInteger();
+        var dispatcher = new WhatsAppActionDispatcher(jdbc, tx, service(true),
+                (chat, body, key) -> {
+                    calls.incrementAndGet();
+                    return EvolutionSendResult.delivered();
+                }, Clock.fixed(now, ZoneOffset.UTC), true);
+        dispatcher.dispatch(queued.actionId());
+        assertEquals(0, calls.get());
+        assertEquals("SUPPRESSED", status(queued.actionId()));
+    }
+
     @Test void emptyDisclosedTemplateCannotQueueRealAction() {
         jdbc.update("update response_templates set body='Resposta automática:  ' where template_id='task4_test' and version=1");
         assertFalse(service(true).enqueue(decisionId).accepted());
