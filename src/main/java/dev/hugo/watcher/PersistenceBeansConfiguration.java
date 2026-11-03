@@ -116,6 +116,17 @@ class PersistenceBeansConfiguration {
 
 
     @Bean
+    dev.hugo.watcher.telegram.AdminCommandService adminCommandService(
+            dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository persistence,
+            dev.hugo.watcher.telegram.ShadowDecisionQuery decisions,
+            PlatformTransactionManager transactions,
+            dev.hugo.watcher.telegram.CallbackTokenService tokens,
+            NotificationOutboxRepository outbox, Clock clock, ReportService reports) {
+        return new dev.hugo.watcher.telegram.AdminCommandService(
+                persistence, decisions, transactions, tokens, outbox, clock, reports);
+    }
+
+    @Bean
     dev.hugo.watcher.notification.DecisionRuntimeGate decisionRuntimeGate(
             dev.hugo.watcher.notification.DecisionRuntimeQueryRepository queries,
             Clock clock, WatcherProperties watcher,
