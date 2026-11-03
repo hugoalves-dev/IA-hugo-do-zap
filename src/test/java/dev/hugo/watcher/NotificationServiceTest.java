@@ -108,18 +108,20 @@ class NotificationServiceTest {
         };
         notifications = new NotificationService(jdbc, manager, outbox, transport,
                 new TelegramMessageFormatter(), properties, clock, archiveModes, configuredAlerts());
-        Instant expires = NOW.plus(Duration.ofDays(1));
+        clock.set(Instant.now());
+        Instant deliveryTime = clock.instant();
+        Instant expires = deliveryTime.plus(Duration.ofDays(1));
         outbox.enqueue("html:daily", "simulation_daily_summary",
-                "{\"eventType\":\"simulation_daily_summary\",\"decisionCount\":4}", "[]", NOW, expires);
+                "{\"eventType\":\"simulation_daily_summary\",\"decisionCount\":4}", "[]", deliveryTime, expires);
         outbox.enqueue("admin:literal", "telegram_admin_reply",
-                "{\"eventType\":\"telegram_admin_reply\",\"text\":\"<b>literal</b>\"}", "[]", NOW, expires);
+                "{\"eventType\":\"telegram_admin_reply\",\"text\":\"<b>literal</b>\"}", "[]", deliveryTime, expires);
         outbox.enqueue("admin:menu", "telegram_admin_edit",
                 JSON.writeValueAsString(Map.of("eventType", "telegram_admin_edit",
                         "text", "⚙️ Administração Hugo do Zap\nEscolha <uma> & opção:",
                         "messageId", 10, "keyboard", List.of(List.of(Map.of("text", "Status", "data", "status"))))),
-                "[]", NOW, expires);
+                "[]", deliveryTime, expires);
 
-        notifications.flush(NOW);
+        notifications.flush(deliveryTime);
 
         assertEquals(3, routes.size());
         assertTrue(routes.stream().anyMatch(route ->
