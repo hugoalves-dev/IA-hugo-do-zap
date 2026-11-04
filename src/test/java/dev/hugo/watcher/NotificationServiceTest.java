@@ -118,7 +118,7 @@ class NotificationServiceTest {
         Instant messageAt = fixture(messageTime);
         seed(chat, "Cliente", false, 1, messageTime, messageTime, "mensagem sintética", NOW);
         String generation = jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, chat);
-        Instant expires = NOW.plusSeconds(86_400);
+        Instant expires = Instant.now().plusSeconds(86_400);
         String payload = JSON.writeValueAsString(Map.of("eventType", NotificationService.ARCHIVED_MESSAGES,
                 "archiveMode", "ALL", "totalChats", 1, "totalMessages", 1,
                 "chats", List.of(Map.of("displayName", "Cliente", "messageCount", 1, "isGroup", false, "policy", "ANYTIME"))));
@@ -127,13 +127,14 @@ class NotificationServiceTest {
                 "updated_at", NOW.minusSeconds(3600).toString())));
         outbox.enqueue("queued-legacy-triage", NotificationService.ARCHIVED_MESSAGES, payload, snapshot, NOW, expires);
         persistIgnoreDecision(chat, messageAt, true);
+        assertTrue(new NotificationQueueQueryRepository(jdbc).hasUniqueTriageIgnore(chat, messageAt, NOW));
 
         boolean delivered = triageFilteringNotifications(true).deliverQueuedAction("queued-legacy-triage", NOW);
 
         assertFalse(delivered);
         assertEquals(0, requestCount.get());
-        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key='queued-legacy-triage'", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
     }
 
     @Test void triageFilterCompareAndSwapKeepsAConcurrentlyAggregatedMessage() {
@@ -142,16 +143,16 @@ class NotificationServiceTest {
         Instant originalLast = fixture(messageTime);
         seed(chat, "Cliente", false, 1, messageTime, messageTime, "primeira", NOW);
         var original = jdbc.queryForMap("select generation::text,updated_at,payload->>'lastMessageAt' as last_message_at from pending_notification where chat_jid=?", chat);
-        Instant originalUpdated = ((java.sql.Timestamp) original.get("updated_at")).toInstant();
         Instant concurrentLast = originalLast.plusSeconds(1);
         jdbc.update("""
                 update pending_notification
-                   set payload=payload || jsonb_build_object('messageCount',2,'lastMessageAt',?),updated_at=?
+                   set payload=payload || jsonb_build_object('messageCount',2,'lastMessageAt',?),
+                       updated_at=?,generation=gen_random_uuid()
                  where chat_jid=?
                 """, concurrentLast.toString(), java.sql.Timestamp.from(NOW), chat);
 
         int deleted = new NotificationQueueQueryRepository(jdbc).discardPendingIfCurrent(chat,
-                (String) original.get("generation"), originalUpdated, originalLast, 1);
+                (String) original.get("generation"));
 
         assertEquals(0, deleted);
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
@@ -318,6 +319,23 @@ class NotificationServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'", Integer.class));
         assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void groupMessageShowsGroupAndCanonicalParticipantNameSeparately() {
+        String group = "120363000000000000@g.us";
+        String participant = "5511999999999@s.whatsapp.net";
+        seed(group, "Equipe", true, 1, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "Olá", NOW);
+        jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?)", participant, participant);
+        jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?,'CONTACT_NAME')",
+                participant, "João <Oficina> & Café");
+        jdbc.update("update pending_notification set payload=jsonb_set(payload,'{previewSenderJid}',to_jsonb(?::text),true) where chat_jid=?",
+                participant, group);
+
+        notifications.flush(NOW);
+
+        assertTrue(receivedBody.get().contains("Equipe"));
+        assertTrue(receivedBody.get().contains("<b>João &lt;Oficina&gt; &amp; Café</b>: Olá"));
+        assertFalse(receivedBody.get().contains("5511999999999@s.whatsapp.net"));
     }
 
     @Test void emergencyKillSwitchDoesNotBlockQueuedTelegramAdminReply() {

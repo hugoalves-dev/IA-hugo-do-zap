@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 @Service
 public class IdentityService {
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final int MAX_MANUAL_NAME_LENGTH = 100;
     private static final Pattern PHONE_JID = Pattern.compile("^(\\d{1,15})(?::\\d+)?@s\\.whatsapp\\.net$", Pattern.CASE_INSENSITIVE);
     private static final Pattern LID_JID = Pattern.compile("^.+@lid$", Pattern.CASE_INSENSITIVE);
     private static final Pattern USERNAME = Pattern.compile("^[\\p{L}\\p{N}._-]{1,64}$");
@@ -89,10 +90,50 @@ public class IdentityService {
             if (selectedName == null) selectedSource = null;
             identityStorage.upsertContactName(target, lid, phone, username, selectedName, selectedSource);
 
-            String resolved = resolveName(selectedName, username, phone, target);
+            String resolved = resolveName(current == null ? null : current.manualDisplayName(), selectedName,
+                    selectedSource, username, phone, target);
             identityStorage.updateSnapshotDisplayName(target, resolved.equals(target) ? null : resolved);
             return resolved;
         }), "Contact-name transaction returned no result");
+    }
+
+    /** Stores an owner-maintained local alias without overwriting a WhatsApp/profile name. */
+    public String setManualAlias(String jid, String candidate) {
+        String observedJid = requireJid(jid);
+        String alias = validName(candidate);
+        if (alias == null || alias.length() > MAX_MANUAL_NAME_LENGTH)
+            throw new IllegalArgumentException("Manual contact name is invalid");
+        String canonical = lookupCanonical(observedJid);
+        if (canonical == null) canonical = observedJid;
+        String target = canonical;
+        return Objects.requireNonNull(transactions.execute(status -> {
+            identityStorage.upsertManualDisplayName(target, isLidJid(target) ? target : null,
+                    pnJid(target), usernameFromJid(target), alias);
+            List<ContactRow> rows = identityStorage.contactsForCanonical(target, false);
+            ContactRow contact = rows.getFirst();
+            String resolved = resolveName(contact.manualDisplayName(), contact.displayName(), contact.nameSource(),
+                    contact.username(), contact.phoneJid(), target);
+            identityStorage.updateSnapshotDisplayName(target, resolved.equals(target) ? null : resolved);
+            return resolved;
+        }), "Manual-name transaction returned no result");
+    }
+
+    /** Removes only the local alias; the latest base contact/profile name remains available. */
+    public String clearManualAlias(String jid) {
+        String observedJid = requireJid(jid);
+        String canonical = lookupCanonical(observedJid);
+        if (canonical == null) canonical = observedJid;
+        String target = canonical;
+        return Objects.requireNonNull(transactions.execute(status -> {
+            identityStorage.clearManualDisplayName(target);
+            List<ContactRow> rows = identityStorage.contactsForCanonical(target, false);
+            if (rows.isEmpty()) return fallbackName(target);
+            ContactRow contact = rows.getFirst();
+            String resolved = resolveName(null, validName(contact.displayName()), contact.nameSource(),
+                    contact.username(), contact.phoneJid(), target);
+            identityStorage.updateSnapshotDisplayName(target, resolved.equals(target) ? null : resolved);
+            return resolved;
+        }), "Manual-name transaction returned no result");
     }
 
     public String resolveDisplayName(String jid) {
@@ -102,7 +143,27 @@ public class IdentityService {
         List<ContactRow> rows = identityStorage.contactsForCanonical(canonical, false);
         if (rows.isEmpty()) return fallbackName(canonical);
         ContactRow contact = rows.getFirst();
-        return resolveName(validName(contact.displayName()), cleanUsername(contact.username()), contact.phoneJid(), canonical);
+        return resolveName(contact.manualDisplayName(), validName(contact.displayName()), contact.nameSource(),
+                cleanUsername(contact.username()), contact.phoneJid(), canonical);
+    }
+
+    /** Canonical key for local projections; callers must not send this identifier to a provider. */
+    public String canonicalJidFor(String jid) {
+        String validJid = requireJid(jid);
+        String canonical = lookupCanonical(validJid);
+        return canonical == null ? validJid : canonical;
+    }
+
+    /** Friendly identity name without falling back to a phone number, JID, or raw identifier. */
+    public String resolveFriendlyDisplayName(String jid) {
+        String canonical = canonicalJidFor(jid);
+        List<ContactRow> rows = identityStorage.contactsForCanonical(canonical, false);
+        if (rows.isEmpty()) return null;
+        ContactRow contact = rows.getFirst();
+        String name = resolveStoredName(contact.manualDisplayName(), validName(contact.displayName()), contact.nameSource());
+        if (name == null) name = cleanUsername(contact.username());
+        if (name == null || name.length() > 100) return null;
+        return name.strip().replaceAll("[\\p{Cntrl}]", " ").replaceAll("\\s+", " ");
     }
 
     private CanonicalIdentity observeSingle(String observedJid) {
@@ -163,13 +224,21 @@ public class IdentityService {
                 .orElse(null);
         String displayName = selected == null ? null : validName(selected.displayName());
         ContactNameSource nameSource = selected == null ? null : selected.nameSource();
+        ContactRow selectedManual = rows.stream().filter(row -> validName(row.manualDisplayName()) != null)
+                .max(Comparator.comparing(ContactRow::manualDisplayNameUpdatedAt,
+                                Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(row -> row.canonicalJid().equals(canonical) ? 1 : 0))
+                .orElse(null);
+        String manualDisplayName = selectedManual == null ? null : validName(selectedManual.manualDisplayName());
+        Instant manualDisplayNameUpdatedAt = selectedManual == null ? null : selectedManual.manualDisplayNameUpdatedAt();
         String lid = first(aliases, IdentityService::isLidJid);
         String phone = first(aliases, value -> pnJid(value) != null);
         if (phone != null) phone = pnJid(phone);
         String username = rows.stream().map(ContactRow::username).map(IdentityService::cleanUsername)
                 .filter(Objects::nonNull).findFirst().orElseGet(() -> first(aliases, value -> usernameFromJid(value) != null));
 
-        identityStorage.replaceContacts(candidates, canonical, lid, phone, username, displayName, nameSource);
+        identityStorage.replaceContacts(candidates, canonical, lid, phone, username, displayName, nameSource,
+                manualDisplayName, manualDisplayNameUpdatedAt);
 
     }
 
@@ -189,6 +258,11 @@ public class IdentityService {
             List<ContactRow> names = identityStorage.contactsForCanonical(canonical, false);
             String displayName = names.isEmpty() || validName(names.getFirst().displayName()) == null
                     ? validName(latest.displayName()) : names.getFirst().displayName();
+            if (!names.isEmpty()) {
+                String storedName = resolveStoredName(names.getFirst().manualDisplayName(),
+                        validName(names.getFirst().displayName()), names.getFirst().nameSource());
+                if (storedName != null) displayName = storedName;
+            }
             identityStorage.replaceSnapshots(keys, canonical, latest.archived(), latest.snapshotAt(), displayName,
                     snapshots.stream().anyMatch(ChatSnapshotRow::group), latest.synchronizedSnapshot(), lastReadAt);
         }
@@ -316,6 +390,22 @@ public class IdentityService {
         String phone = phoneNumber(phoneJid);
         if (phone != null) return "+" + phone;
         return fallbackJid;
+    }
+
+    private static String resolveName(String manualName, String displayName, ContactNameSource source,
+                                      String username, String phoneJid, String fallbackJid) {
+        String storedName = resolveStoredName(manualName, displayName, source);
+        return storedName == null ? resolveName(null, username, phoneJid, fallbackJid) : storedName;
+    }
+
+    private static String resolveStoredName(String manualName, String displayName, ContactNameSource source) {
+        String baseName = validName(displayName);
+        if (baseName != null && source != null && source.rank() >= ContactNameSource.CONTACT_NAME.rank()) return baseName;
+        // WhatsApp's own available profile name (including business profiles) is the
+        // requested fallback ahead of an optional owner-maintained local alias.
+        if (baseName != null) return baseName;
+        String manual = validName(manualName);
+        return manual;
     }
 
     private static String fallbackName(String jid) {

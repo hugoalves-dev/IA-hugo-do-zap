@@ -1,6 +1,7 @@
 package dev.hugo.watcher.telegram;
 
 import dev.hugo.watcher.NotificationOutboxRepository;
+import dev.hugo.watcher.IdentityService;
 import dev.hugo.watcher.notification.ReportService;
 import dev.hugo.watcher.policy.AvailabilityState;
 import dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository.Status;
@@ -34,13 +35,15 @@ public class AdminCommandService {
     private final NotificationOutboxRepository outbox;
     private final Clock clock;
     private final ReportService reports;
+    private final IdentityService identities;
     private dev.hugo.watcher.OperationalState operational;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
     /** Production uses managed persistence and read-only decision-query collaborators. */
     public AdminCommandService(TelegramAdminPersistenceRepository persistence, ShadowDecisionQuery decisions,
                                PlatformTransactionManager manager, CallbackTokenService tokens,
-                               NotificationOutboxRepository outbox, Clock clock, ReportService reports) {
+                               NotificationOutboxRepository outbox, Clock clock, ReportService reports,
+                               IdentityService identities) {
         this.persistence = persistence;
         this.decisions = decisions;
         this.transactions = new TransactionTemplate(manager);
@@ -48,13 +51,14 @@ public class AdminCommandService {
         this.outbox = outbox;
         this.clock = clock;
         this.reports = reports;
+        this.identities = identities;
     }
 
     /** Existing constructor preserved for standalone tests during #24. */
     public AdminCommandService(JdbcTemplate jdbc, PlatformTransactionManager manager, CallbackTokenService tokens,
                                NotificationOutboxRepository outbox, Clock clock, ReportService reports) {
         this(new TelegramAdminPersistenceRepository(jdbc), new ShadowDecisionQuery(jdbc, clock),
-                manager, tokens, outbox, clock, reports);
+                manager, tokens, outbox, clock, reports, new IdentityService(jdbc, manager));
     }
 
     public AdminCommandService(JdbcTemplate jdbc, PlatformTransactionManager manager, CallbackTokenService tokens,
@@ -133,6 +137,7 @@ public class AdminCommandService {
             case "template" -> setTemplate(args);
             case "feriados" -> holidays();
             case "feriado" -> addHoliday(args);
+            case "apelido" -> setContactAlias(args);
             case "orcamento" -> budget(args);
             default -> help();
         };
@@ -144,6 +149,17 @@ public class AdminCommandService {
         if (command.arguments().size() != 1) return "Cancelamento inválido.";
         return tokens.invalidate(command.arguments().getFirst(), command.userId(), command.chatId())
                 ? "Operação cancelada." : "Operação já concluída, expirada ou cancelada.";
+    }
+
+    private String setContactAlias(List<String> args) {
+        if (args.size() < 2) throw new IllegalArgumentException("Use /apelido <jid> <nome...> ou /apelido <jid> remover.");
+        String jid = args.getFirst();
+        if (args.size() == 2 && "remover".equalsIgnoreCase(args.get(1))) {
+            identities.clearManualAlias(jid);
+            return "Apelido local removido; o nome disponível do contato será usado.";
+        }
+        identities.setManualAlias(jid, String.join(" ", args.subList(1, args.size())));
+        return "Apelido local do contato atualizado.";
     }
 
     private String status() {
@@ -378,7 +394,7 @@ public class AdminCommandService {
     }
 
     private static boolean isMutation(String name, List<String> args) {
-        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem").contains(name)
+        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem", "apelido").contains(name)
                 || (name.equals("orcamento") && !args.isEmpty());
     }
 
@@ -398,7 +414,7 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/menu, /status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/menu, /status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /apelido <jid> <nome...>|remover, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
 }

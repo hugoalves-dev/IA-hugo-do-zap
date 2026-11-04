@@ -72,6 +72,31 @@ class OpenRouterProviderTest {
         assertFalse(body.contains("private@s.whatsapp.net"));
         assertFalse(body.contains("private-message"));
     }
+
+    @Test void sendsTypedSenderEnvelopeWithoutRawParticipantOrGroupJids() {
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+        var first = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("one"), "team@g.us",
+                java.util.Optional.of("1111@lid"), java.util.Optional.empty(), java.util.Optional.empty(),
+                false, "notify", false, java.util.Map.of("conversation", "primeira"), java.time.Instant.parse("2026-10-30T00:00:01Z"));
+        var target = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("two"), "team@g.us",
+                java.util.Optional.of("2222@lid"), java.util.Optional.empty(), java.util.Optional.empty(),
+                false, "notify", false, java.util.Map.of("conversation", "pode"), java.time.Instant.parse("2026-10-30T00:00:02Z"));
+        var batch = new dev.hugo.watcher.simulation.Batch(java.util.UUID.randomUUID(), "team@g.us", "2222@lid", List.of(first, target));
+        var input = ClassificationInput.fromBatch(batch,
+                jid -> new ClassificationInput.SenderIdentity(jid, "João & Café"));
+
+        provider(transport, (name, in) -> true).classify(input);
+
+        String body = FakeProviderTransport.requestBody(transport.requests().getFirst());
+        assertTrue(body.contains("group_participant"));
+        assertTrue(body.contains("João &amp; Café") || body.contains("João & Café"));
+        assertTrue(body.contains("sender_1"));
+        assertTrue(body.contains("sender_2"));
+        assertFalse(body.contains("1111@lid"));
+        assertFalse(body.contains("2222@lid"));
+        assertFalse(body.contains("team@g.us"));
+    }
     @Test void enforcesPrivateRoutingAndMinimizedPrompt() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
                 {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":true,\\"replyRecommended\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91}"}}]}

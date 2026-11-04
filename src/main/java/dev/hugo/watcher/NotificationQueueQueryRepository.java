@@ -35,13 +35,20 @@ public class NotificationQueueQueryRepository {
                        s.archived, coalesce(s.synchronized_snapshot, false) as synchronized_snapshot,
                        s.display_name as chat_name, coalesce(s.is_group, p.chat_jid like '%@g.us') as is_group,
                        coalesce(alias.canonical_identity, p.chat_jid) as canonical_jid,
-                       identity.display_name as identity_name, identity.phone_jid,
-                       identity.lid_jid, identity.username
+                       case when identity.display_name_source='CONTACT_NAME' then identity.display_name
+                            else coalesce(identity.display_name,identity.manual_display_name) end as identity_name,
+                       identity.phone_jid,
+                       identity.lid_jid, identity.username,
+                       coalesce(preview_sender.display_name,preview_sender.manual_display_name,preview_sender.username)
+                           as preview_sender_name
                 from pending_notification p
                 left join chat_snapshot s on s.chat_jid=p.chat_jid
                 left join identity_aliases alias on alias.alias=p.chat_jid
                 left join contact_identity identity
                     on identity.canonical_jid=coalesce(alias.canonical_identity, p.chat_jid)
+                left join identity_aliases preview_sender_alias on preview_sender_alias.alias=p.payload->>'previewSenderJid'
+                left join contact_identity preview_sender
+                    on preview_sender.canonical_jid=coalesce(preview_sender_alias.canonical_identity,p.payload->>'previewSenderJid')
                 where p.due_at <= ? and p.expires_at > ?
                 order by p.due_at,p.chat_jid
                 """, mapper, Timestamp.from(now), Timestamp.from(now));
@@ -72,14 +79,12 @@ public class NotificationQueueQueryRepository {
     }
 
     /** Deletes only the pending generation that was evaluated; a concurrent message keeps its new row. */
-    public int discardPendingIfCurrent(String chatJid, String generation, Instant updatedAt,
-                                       Instant lastMessageAt, int messageCount) {
-        if (chatJid == null || generation == null || updatedAt == null || lastMessageAt == null || messageCount != 1) return 0;
+    public int discardPendingIfCurrent(String chatJid, String generation) {
+        if (chatJid == null || generation == null) return 0;
         return jdbc.update("""
                 delete from pending_notification
-                 where chat_jid=? and generation=?::uuid and updated_at=?
-                   and payload->>'lastMessageAt'=? and coalesce((payload->>'messageCount')::integer,0)=?
-                """, chatJid, generation, Timestamp.from(updatedAt), lastMessageAt.toString(), messageCount);
+                 where chat_jid=? and generation=?::uuid
+                """, chatJid, generation);
     }
 
     private record ConnectionState(String connectionState, long generation) { }

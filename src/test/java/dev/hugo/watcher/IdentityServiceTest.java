@@ -189,6 +189,58 @@ class IdentityServiceTest {
         assertEquals("CONTACT_NAME", jdbc.queryForObject("select display_name_source from contact_identity where canonical_jid=?", String.class, jid));
     }
 
+    @Test void whatsappProfileNameOverridesOptionalManualAliasAndClearingItPreservesTheProfile() {
+        String jid = "5511999999999@s.whatsapp.net";
+        identities.observeContactName(jid, "Nome de perfil", ContactNameSource.NOTIFY);
+
+        identities.setManualAlias(jid, "João - Oficina");
+        assertEquals("Nome de perfil", identities.resolveDisplayName(jid));
+        assertEquals("João - Oficina", jdbc.queryForObject(
+                "select manual_display_name from contact_identity where canonical_jid=?", String.class, jid));
+
+        identities.observeContactName(jid, "Perfil novo", ContactNameSource.NOTIFY);
+        assertEquals("Perfil novo", identities.resolveDisplayName(jid));
+
+        identities.clearManualAlias(jid);
+        assertEquals("Perfil novo", identities.resolveDisplayName(jid));
+        assertNull(jdbc.queryForObject(
+                "select manual_display_name from contact_identity where canonical_jid=?", String.class, jid));
+    }
+
+    @Test void manualAliasUsesCanonicalIdentityAndNeverJoinsAliasesByName() {
+        String lid = "1001@lid";
+        String phone = "5511999999999@s.whatsapp.net";
+        identities.observe(new IdentityObservation(lid, Set.of(), IdentityEvidence.NONE));
+        identities.observe(new IdentityObservation(phone, Set.of(), IdentityEvidence.NONE));
+        identities.setManualAlias(phone, "Empresa & Café");
+
+        assertEquals("Empresa & Café", identities.resolveDisplayName(phone));
+        assertNotEquals(identities.resolveDisplayName(phone), identities.resolveDisplayName(lid));
+
+        identities.observe(new IdentityObservation(lid, Set.of(phone), IdentityEvidence.EXPLICIT_ALTERNATE_JID_PAIR));
+        assertEquals("Empresa & Café", identities.resolveDisplayName(lid));
+    }
+
+    @Test void rejectsTechnicalManualAliases() {
+        assertThrows(IllegalArgumentException.class,
+                () -> identities.setManualAlias("5511999999999@s.whatsapp.net", "5511999999999@s.whatsapp.net"));
+    }
+
+    @Test void provenContactNameBeatsLocalAliasAndProfileName() {
+        String jid = "5511999999999@s.whatsapp.net";
+        identities.observeContactName(jid, "Nome de perfil", ContactNameSource.NOTIFY);
+        identities.setManualAlias(jid, "Apelido local");
+
+        identities.observeContactName(jid, "João - Oficina", ContactNameSource.CONTACT_NAME);
+        assertEquals("João - Oficina", identities.resolveDisplayName(jid));
+
+        identities.observeContactName(jid, "Perfil novo", ContactNameSource.NOTIFY);
+        assertEquals("João - Oficina", identities.resolveDisplayName(jid));
+
+        identities.clearManualAlias(jid);
+        assertEquals("João - Oficina", identities.resolveDisplayName(jid));
+    }
+
     private void insertPending(String jid, int count, String first, String last, String preview) {
         String payload = "{\"messageCount\":" + count + ",\"firstMessageAt\":\"" + first
                 + "\",\"lastMessageAt\":\"" + last + "\",\"preview\":\"" + preview

@@ -292,6 +292,20 @@ class MessageServiceTest {
         assertEquals(2, jdbc.queryForObject("select count(*) from processed_message", Integer.class));
     }
 
+    @Test void groupPreviewRetainsCanonicalSenderOnlyUntilThePreviewExpires() {
+        String group = "120363000000000000@g.us";
+        String participant = "5511999999999@s.whatsapp.net";
+        archive(group, "Equipe", true);
+        identities.observeContactName(participant, "João - Oficina", ContactNameSource.CONTACT_NAME);
+        var event = new IncomingMessage(Optional.of("group-sender"), group, Optional.of(participant), Optional.empty(),
+                Optional.empty(), false, "notify", false, Map.of("conversation", "Olá"),
+                Instant.parse("2026-10-26T10:00:00Z"));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, messages.accept(event));
+        assertEquals(participant, jdbc.queryForObject(
+                "select payload->>'previewSenderJid' from pending_notification where chat_jid=?", String.class, group));
+    }
+
     @Test void replayedMessageAfterChatAliasesMergeRemainsDeduplicated() {
         String lid = "1001@lid";
         String phone = "5511999999999@s.whatsapp.net";

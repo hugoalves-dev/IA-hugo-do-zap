@@ -73,6 +73,41 @@ class ClassificationInputMinimizerTest {
         assertTrue(minimized.contains("[IDENTIFIER]"));
     }
 
+    @Test void groupContextKeepsHomonymousParticipantsDistinctWithoutExposingJids() {
+        var first = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("one"), "team@g.us",
+                java.util.Optional.of("1111@lid"), java.util.Optional.empty(), java.util.Optional.empty(),
+                false, "notify", false, java.util.Map.of("conversation", "primeira"), java.time.Instant.parse("2026-10-30T00:00:01Z"));
+        var second = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("two"), "team@g.us",
+                java.util.Optional.of("2222@lid"), java.util.Optional.empty(), java.util.Optional.empty(),
+                false, "notify", false, java.util.Map.of("conversation", "pode"), java.time.Instant.parse("2026-10-30T00:00:02Z"));
+        var batch = new dev.hugo.watcher.simulation.Batch(java.util.UUID.randomUUID(), "team@g.us", "2222@lid", List.of(first, second));
+
+        var input = ClassificationInput.fromBatch(batch, jid -> new ClassificationInput.SenderIdentity(jid, "João"));
+
+        assertEquals("group_participant", input.contextEntries().getFirst().role());
+        assertEquals("sender_1", input.contextEntries().getFirst().senderId());
+        assertEquals("sender_2", input.targetEntry().senderId());
+        assertEquals("João", input.targetEntry().senderName());
+        assertFalse(input.targetEntry().senderId().contains("2222@lid"));
+    }
+
+    @Test void ownerGroupReplyIsTypedAsOwnerAndNotAsTheParticipant() {
+        var owner = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("owner"), "team@g.us",
+                java.util.Optional.of("owner@s.whatsapp.net"), java.util.Optional.empty(), java.util.Optional.empty(),
+                true, "notify", false, java.util.Map.of("conversation", "Vou verificar"), java.time.Instant.parse("2026-10-30T00:00:01Z"));
+        var contact = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("contact"), "team@g.us",
+                java.util.Optional.of("1111@lid"), java.util.Optional.empty(), java.util.Optional.empty(),
+                false, "notify", false, java.util.Map.of("conversation", "Pode fazer?"), java.time.Instant.parse("2026-10-30T00:00:02Z"));
+        var batch = new dev.hugo.watcher.simulation.Batch(java.util.UUID.randomUUID(), "team@g.us", "1111@lid", List.of(owner, contact));
+
+        var input = ClassificationInput.fromContext(batch, jid -> new ClassificationInput.SenderIdentity(jid, "João"));
+
+        assertEquals("owner", input.contextEntries().getFirst().role());
+        assertEquals("owner", input.contextEntries().getFirst().senderId());
+        assertEquals("group_participant", input.targetEntry().role());
+        assertEquals("sender_1", input.targetEntry().senderId());
+    }
+
     @Test void preservesOrdinaryAmountsDatesAndShortNumbers() {
         String text = "Budget R$ 1.234,56; due 27/10/2026; period 2026-10-27; ticket 12345";
 

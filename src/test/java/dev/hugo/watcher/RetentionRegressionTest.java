@@ -35,8 +35,8 @@ class RetentionRegressionTest {
         var jdbc = new JdbcTemplate(source);
         Flyway.configure().dataSource(source).load().migrate();
         Instant now = Instant.parse("2026-10-27T12:00:00Z");
-        String replacement = "{\"preview\":\"new preview\",\"previewExpiresAt\":\"2026-10-28T12:00:00Z\"}";
-        jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values ('race','{\"preview\":\"expired preview\",\"previewExpiresAt\":\"2026-10-26T12:00:00Z\"}',?,?,?)",
+        String replacement = "{\"preview\":\"new preview\",\"previewSenderJid\":\"newparticipant@lid\",\"previewExpiresAt\":\"2026-10-28T12:00:00Z\"}";
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values ('race','{\"preview\":\"expired preview\",\"previewSenderJid\":\"oldparticipant@lid\",\"previewExpiresAt\":\"2026-10-26T12:00:00Z\"}',?,?,?)",
                 Timestamp.from(now), Timestamp.from(now), Timestamp.from(now.plusSeconds(172800)));
         boolean[] replaced = {false};
         var interleavedJdbc = new JdbcTemplate(source) {
@@ -52,6 +52,21 @@ class RetentionRegressionTest {
         assertEquals(0, new SensitiveDataRetentionService(interleavedJdbc).purge(now));
         assertTrue(replaced[0], "the concurrent replacement must happen before scrub executes");
         assertEquals("new preview", jdbc.queryForObject("select payload->>'preview' from pending_notification where chat_jid='race'", String.class));
+        assertEquals("newparticipant@lid", jdbc.queryForObject("select payload->>'previewSenderJid' from pending_notification where chat_jid='race'", String.class));
         assertEquals("2026-10-28T12:00:00Z", jdbc.queryForObject("select payload->>'previewExpiresAt' from pending_notification where chat_jid='race'", String.class));
+    }
+
+    @Test void scrubRemovesGroupSenderIdentifierWithExpiredPreview() {
+        var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new JdbcTemplate(source);
+        Flyway.configure().dataSource(source).load().migrate();
+        Instant now = Instant.parse("2026-10-27T12:00:00Z");
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values ('group@g.us',?::jsonb,?,?,?)",
+                "{\"preview\":\"expired\",\"previewSenderJid\":\"5511999999999@s.whatsapp.net\",\"previewExpiresAt\":\"2026-10-26T12:00:00Z\"}",
+                Timestamp.from(now), Timestamp.from(now), Timestamp.from(now.plusSeconds(172800)));
+
+        assertEquals(1, new SensitiveDataRetentionService(jdbc).purge(now));
+        assertNull(jdbc.queryForObject("select payload->>'preview' from pending_notification where chat_jid='group@g.us'", String.class));
+        assertNull(jdbc.queryForObject("select payload->>'previewSenderJid' from pending_notification where chat_jid='group@g.us'", String.class));
     }
 }

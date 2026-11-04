@@ -23,12 +23,18 @@ public class ShadowDecisionQuery {
         int limit = args.isEmpty() ? 5 : Integer.parseInt(args.getFirst());
         List<String> rows = jdbc.query("""
                 select d.batch_id,d.decided_at,d.classification_status,d.classification_urgency,d.classification_confidence,
-                       d.would_alert,d.would_reply,d.blocked_reason,d.decision_state,d.classification_diagnostic,c.display_name,c.display_name_source,
+                       d.would_alert,d.would_reply,d.blocked_reason,d.decision_state,d.classification_diagnostic,
+                       case when b.chat_jid like '%@g.us' then s.display_name
+                            when c.display_name_source='CONTACT_NAME' then c.display_name
+                            else coalesce(c.display_name,c.manual_display_name) end as display_name,c.display_name_source,
+                       case when pc.display_name_source='CONTACT_NAME' then pc.display_name
+                            else coalesce(pc.display_name,pc.manual_display_name) end as participant_name,
                        d.triage_outcome,d.notification_recommended,d.reply_recommended,d.triage_reason,d.triage_blockers::text as triage_blockers,
                        s.display_name as snapshot_name,e.result->>'provider' as provider,
                        e.result->>'requestDetected' as request_detected
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
                   left join contact_identity c on c.canonical_jid=b.chat_jid
+                  left join contact_identity pc on pc.canonical_jid=b.participant_jid
                   left join chat_snapshot s on s.chat_jid=b.chat_jid and s.synchronized_snapshot=true
                   left join simulation_ai_evaluations e on e.batch_id=d.batch_id
                  where not d.production_mode and d.metadata_expires_at>? order by d.decided_at desc,d.batch_id limit ?
@@ -41,6 +47,13 @@ public class ShadowDecisionQuery {
             name = name.strip().replaceAll("[\\p{Cntrl}]", " ");
             if (!"Contato indisponível".equals(name) && name.length() > 16) name = name.substring(0,16);
             name = escape(name);
+            String participantName = rs.getString("participant_name");
+            if (participantName != null) {
+                String group = rs.getString("snapshot_name");
+                if (!safeName(group)) group = "Grupo";
+                if (!safeName(participantName)) participantName = "Participante";
+                name = escape(displayName(group)) + " · " + escape(displayName(participantName));
+            }
             return rs.getString("batch_id").substring(0,8) + " · " + DATE.format(rs.getTimestamp("decided_at").toInstant())
                     + " · " + name + "\n" + rs.getString("classification_status") + " / " + rs.getString("classification_urgency")
                     + " / " + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
@@ -62,11 +75,19 @@ public class ShadowDecisionQuery {
             throw new IllegalArgumentException("ID inválido. Use /decisao <id>.");
         String prefix=args.getFirst().toLowerCase(Locale.ROOT);
         var rows=jdbc.query("""
-                select d.*, b.chat_jid, e.result::text as evaluation,
+                select d.*, b.chat_jid, b.participant_jid,
+                       case when c.display_name_source='CONTACT_NAME' then c.display_name
+                            else coalesce(c.display_name,c.manual_display_name) end as contact_display_name,
+                       case when pc.display_name_source='CONTACT_NAME' then pc.display_name
+                            else coalesce(pc.display_name,pc.manual_display_name) end as participant_display_name,
+                       s.display_name as snapshot_name, e.result::text as evaluation,
                        t.body as template_body, h.body as hypothetical_body,
                        h.enabled as hypothetical_template_enabled
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
                   left join simulation_ai_evaluations e on e.batch_id=d.batch_id
+                  left join contact_identity c on c.canonical_jid=b.chat_jid
+                  left join contact_identity pc on pc.canonical_jid=b.participant_jid
+                  left join chat_snapshot s on s.chat_jid=b.chat_jid and s.synchronized_snapshot=true
                   left join response_templates t on d.template_id=t.template_id || '@v' || t.version::text
                     and t.enabled and t.identifies_automation
                     and t.situation=case when b.chat_jid like '%@g.us' then 'GROUP_TRIGGER' else 'CONTACT_REQUEST' end
@@ -117,7 +138,20 @@ public class ShadowDecisionQuery {
                     + escape(body.length()>500 ? body.substring(0,500) : body)
                     + (!reply && !rs.getBoolean("hypothetical_template_enabled") ? " (template atualmente inativo)" : "")
                     : "Prévia indisponível: template aprovado, autorização da conversa, política ou classificação ausente.";
-            return "Decisão " + rs.getString("batch_id") + "\nSituação persistida: " + situations + " · provedor: " + provider
+            String identityLine;
+            if (rs.getString("chat_jid").endsWith("@g.us")) {
+                String group = rs.getString("contact_display_name");
+                if (!safeName(group)) group = rs.getString("snapshot_name");
+                if (!safeName(group)) group = "Grupo indisponível";
+                String participant = rs.getString("participant_display_name");
+                if (!safeName(participant)) participant = "Participante";
+                identityLine = "Grupo: " + escape(displayName(group)) + " · participante: " + escape(displayName(participant)) + "\n";
+            } else {
+                String contact = rs.getString("contact_display_name");
+                if (!safeName(contact)) contact = "Contato indisponível";
+                identityLine = "Contato: " + escape(displayName(contact)) + "\n";
+            }
+            return "Decisão " + rs.getString("batch_id") + "\n" + identityLine + "Situação persistida: " + situations + " · provedor: " + provider
                     + "\nClassificação: " + rs.getString("classification_status") + " / " + urgency + " / "
                     + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
                     + "\nSolicitação detectada: " + requestDetected
@@ -157,6 +191,7 @@ public class ShadowDecisionQuery {
     }
     private static String provider(String value) { return "openrouter".equals(value) || "gemini".equals(value) ? value : "indisponível"; }
     private static boolean safeName(String value) { return value != null && !value.isBlank() && !value.contains("@") && value.replaceAll("\\D", "").length() < 8; }
+    private static String displayName(String value) { String clean=value.strip().replaceAll("[\\p{Cntrl}]", " "); return clean.length()>80 ? clean.substring(0,80) : clean; }
     private static String safe(String value) { return value==null || value.isBlank() ? "nenhum" : value; }
     private static String escape(String text) { return text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"); }
 }

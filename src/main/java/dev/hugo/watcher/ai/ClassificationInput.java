@@ -5,13 +5,18 @@ import dev.hugo.watcher.simulation.Batch;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 /** Bounded and deterministically minimized text passed to a classification provider. */
 public final class ClassificationInput {
     public static final int MAX_MESSAGES = 6;
     public static final int MAX_CHARS_PER_MESSAGE = 1_000;
-    public record ContextEntry(String role, String text) { }
+    public record ContextEntry(String role, String text, String senderName, String senderId) {
+        public ContextEntry(String role, String text) { this(role, text, null, null); }
+    }
+    public record SenderIdentity(String canonicalId, String displayName) { }
     private final List<ContextEntry> entries;
     private final java.util.UUID batchId;
 
@@ -21,7 +26,7 @@ public final class ClassificationInput {
     }
     private ClassificationInput(List<ContextEntry> source, java.util.UUID batchId) {
         var sanitized = source.stream().filter(e -> e.text() != null && !e.text().isBlank())
-                .map(e -> new ContextEntry(e.role(), sanitize(e.text()))).toList();
+                .map(e -> new ContextEntry(e.role(), sanitize(e.text()), safeDisplayName(e.senderName()), safeSenderId(e.senderId()))).toList();
         entries = List.copyOf(sanitized.subList(Math.max(0, sanitized.size() - MAX_MESSAGES), sanitized.size()));
         this.batchId = batchId;
     }
@@ -31,19 +36,29 @@ public final class ClassificationInput {
     }
     public List<String> messages() { return entries.stream().map(ContextEntry::text).toList(); }
     public String target() { return entries.isEmpty() ? "" : entries.getLast().text(); }
+    public ContextEntry targetEntry() { return entries.isEmpty() ? new ContextEntry("contact", "") : entries.getLast(); }
     public List<String> context() { return contextEntries().stream().map(ContextEntry::text).toList(); }
     public List<ContextEntry> contextEntries() { return entries.isEmpty() ? List.of() : entries.subList(0, entries.size() - 1); }
     public java.util.UUID batchId() { return batchId; }
 
     public static ClassificationInput fromBatch(Batch batch) {
-        return fromBatch(batch, false);
+        return fromBatch(batch, false, null);
+    }
+
+    public static ClassificationInput fromBatch(Batch batch, Function<String, SenderIdentity> senderResolver) {
+        return fromBatch(batch, false, senderResolver);
     }
 
     static ClassificationInput fromContext(Batch batch) {
-        return fromBatch(batch, true);
+        return fromBatch(batch, true, null);
     }
 
-    private static ClassificationInput fromBatch(Batch batch, boolean verifiedGroupOwnerContext) {
+    static ClassificationInput fromContext(Batch batch, Function<String, SenderIdentity> senderResolver) {
+        return fromBatch(batch, true, senderResolver);
+    }
+
+    private static ClassificationInput fromBatch(Batch batch, boolean verifiedGroupOwnerContext,
+                                                  Function<String, SenderIdentity> senderResolver) {
         if (batch == null || batch.messages() == null) return new ClassificationInput(List.of());
         var ordered = batch.messages().stream().filter(java.util.Objects::nonNull)
                 .filter(message -> !message.history())
@@ -58,13 +73,44 @@ public final class ClassificationInput {
         }
         if (targetIndex < 0) return new ClassificationInput(List.of());
         List<ContextEntry> text = new ArrayList<>();
+        Map<String, String> localSenderIds = new LinkedHashMap<>();
         for (int i = 0; i <= targetIndex; i++) {
             IncomingMessage message = ordered.get(i);
             if (message.fromMe() && batch.chatJid().endsWith("@g.us") && !verifiedGroupOwnerContext) continue;
             String extracted = extractText(message.content());
-            if (!extracted.isBlank()) text.add(new ContextEntry(message.fromMe() ? "owner" : "contact", extracted));
+            if (extracted.isBlank()) continue;
+            String role = message.fromMe() ? "owner" : batch.chatJid().endsWith("@g.us") ? "group_participant" : "contact";
+            String senderName = null;
+            String senderId = null;
+            if (senderResolver != null) {
+                if (message.fromMe()) {
+                    senderName = "Proprietário";
+                    senderId = "owner";
+                } else {
+                    String jid = "group_participant".equals(role)
+                            ? message.participantJid().orElse(null) : message.chatJid();
+                    SenderIdentity identity = jid == null ? null : senderResolver.apply(jid);
+                    String canonical = identity == null || identity.canonicalId() == null ? jid : identity.canonicalId();
+                    if (canonical != null) senderId = localSenderIds.computeIfAbsent(canonical,
+                            ignored -> "sender_" + (localSenderIds.size() + 1));
+                    senderName = safeDisplayName(identity == null ? null : identity.displayName());
+                    if (senderName == null) senderName = "contact".equals(role) ? "Contato" : "Participante do grupo";
+                }
+            }
+            text.add(new ContextEntry(role, extracted, senderName, senderId));
         }
         return new ClassificationInput(text, batch.id());
+    }
+
+    private static String safeDisplayName(String value) {
+        if (value == null || value.isBlank()) return null;
+        String cleaned = value.strip().replaceAll("[\\p{Cntrl}]", " ").replaceAll("\\s+", " ");
+        if (cleaned.isBlank() || cleaned.length() > 100 || cleaned.matches("(?i)^\\+?[0-9 .()/-]{7,}$")) return null;
+        return cleaned;
+    }
+
+    private static String safeSenderId(String value) {
+        return value != null && value.matches("(?:owner|sender_[1-9][0-9]*)") ? value : null;
     }
 
     public static String extractText(Map<String, Object> content) {
