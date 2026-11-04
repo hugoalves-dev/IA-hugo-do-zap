@@ -163,6 +163,6 @@
 - [x] **Step 2: Run focused integration tests** with Testcontainers and verify persistence, concurrency, callback replay, and provider failure cases.
 - [x] **Step 3: Document** commands/menu steps, draft expiry/chunk limits, AI provider/budget requirements, history, restore, reset, and audit revision behavior without exposing secrets or deployment instructions.
 - [x] **Step 4: Run `mvn verify`** and verify the full Maven verification gate passes; read the complete result and report any environment-blocked Testcontainers checks precisely.
-- [ ] **Step 5: Review the final diff against this plan and the design doc**, including `.env`, Compose, SQL boundaries, Telegram authorization, and immutable prompt/schema protections.
+- [x] **Step 5: Review the final diff against this plan and the design doc**, including `.env`, Compose, SQL boundaries, Telegram authorization, and immutable prompt/schema protections.
 - [x] **Step 6: Commit** as `feat: complete safe telegram prompt management`.
 - [ ] **Step 7: Prepare a PR description referencing `Closes #45` and verify the implementation is merged before closing issue #45.** Do not close the upstream issue while the implementation is only present on a local branch.
