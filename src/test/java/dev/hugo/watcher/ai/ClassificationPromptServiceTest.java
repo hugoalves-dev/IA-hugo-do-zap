@@ -1,5 +1,6 @@
 package dev.hugo.watcher.ai;
 
+import dev.hugo.watcher.telegram.RuntimeSettingVersionConflictException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
