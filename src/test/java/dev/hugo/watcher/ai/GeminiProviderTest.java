@@ -10,6 +10,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GeminiProviderTest {
+    @Test void acceptsMaximumLengthOperationalPromptWithImmutableCore() {
+        String prompt = "x".repeat(16_000) + "\n\n" + ClassificationPromptService.IMMUTABLE_CORE;
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, "{}"));
+        assertDoesNotThrow(() -> new GeminiProvider(URI.create("https://generativelanguage.googleapis.com/v1beta/models"), "test-model", "fake-key", transport, (name, input) -> true, Duration.ofSeconds(2), prompt));
+    }
+
     @Test void sendsMinimizedTextAndUntrustedInstructionThroughFakeTransport() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
                 {"candidates":[{"content":{"parts":[{"text":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":true,\\"replyRecommended\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91}"}]}}]}

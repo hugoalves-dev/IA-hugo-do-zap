@@ -31,7 +31,7 @@ class JdbcClassificationPromptRepositoryTest {
 
     @Test void activePointerIsOptimisticAndRevisionHistoryIsImmutable() {
         Instant now = Instant.parse("2026-11-04T12:00:00Z");
-        PromptRevision draft = repository.createDraft("Only an operational note.", "a".repeat(64), 1001, now);
+        PromptRevision draft = repository.createDraft("Only an operational note.", ClassificationPromptRepository.contentHash("Only an operational note."), 1001, now);
         repository.activate(draft.revision(), 0, 1001, now.plusSeconds(1));
 
         assertEquals(draft.body(), repository.active().orElseThrow().body());
@@ -47,11 +47,11 @@ class JdbcClassificationPromptRepositoryTest {
         assertTrue(repository.hasPendingInput(1001, 2002, now.plusSeconds(1)));
         assertFalse(repository.hasPendingInput(1002, 2002, now.plusSeconds(1)));
 
-        PromptRevision draft = repository.createDraftFromInput(1001, 2002, "Sensitive admin text.", "b".repeat(64), now.plusSeconds(2));
+        PromptRevision draft = repository.createDraftFromInput(1001, 2002, "Sensitive admin text.", ClassificationPromptRepository.contentHash("Sensitive admin text."), now.plusSeconds(2));
         assertEquals("Sensitive admin text.", draft.body());
         assertFalse(repository.hasPendingInput(1001, 2002, now.plusSeconds(3)));
         assertThrows(IllegalArgumentException.class,
-                () -> repository.createDraftFromInput(1001, 2002, "Replay.", "c".repeat(64), now.plusSeconds(4)));
+                () -> repository.createDraftFromInput(1001, 2002, "Replay.", ClassificationPromptRepository.contentHash("Replay."), now.plusSeconds(4)));
         assertEquals(1, jdbc.queryForObject("select count(*) from classification_prompt_revisions", Integer.class));
     }
 }

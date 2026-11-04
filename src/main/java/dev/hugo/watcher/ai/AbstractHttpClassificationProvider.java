@@ -46,7 +46,7 @@ abstract class AbstractHttpClassificationProvider implements ClassificationProvi
         this.authorization = java.util.Objects.requireNonNull(authorization, "authorization");
         this.timeout = java.util.Objects.requireNonNull(timeout, "timeout");
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
-        if (systemPrompt == null || systemPrompt.isBlank() || systemPrompt.length() > 12_000)
+        if (systemPrompt == null || systemPrompt.isBlank() || systemPrompt.length() > ClassificationPromptValidator.MAX_BODY_LENGTH + ClassificationPromptService.IMMUTABLE_CORE.length() + 2)
             throw new IllegalArgumentException("system prompt is invalid");
         this.systemPrompt = systemPrompt;
     }

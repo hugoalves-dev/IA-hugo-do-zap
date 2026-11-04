@@ -10,6 +10,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 class OpenRouterProviderTest {
+    @Test void acceptsMaximumLengthOperationalPromptWithImmutableCore() {
+        String prompt = "x".repeat(16_000) + "\n\n" + ClassificationPromptService.IMMUTABLE_CORE;
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, "{}"));
+        assertDoesNotThrow(() -> new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"), "test-model", "fake-key", transport, (name, input) -> true, Duration.ofSeconds(2), 300, false, prompt));
+    }
+
     @Test void acceptsNotificationAndReplyRecommendationsSeparatelyFromUrgency() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
                 {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":true,\\"replyRecommended\\":false,\\"urgency\\":\\"LOW\\",\\"evidence\\":[\\"EXPLICIT_REQUEST\\"],\\"confidence\\":0.91}"}}]}

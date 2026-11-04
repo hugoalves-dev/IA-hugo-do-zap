@@ -31,6 +31,7 @@ public class AdminCommandService {
     private final TelegramAdminPersistenceRepository persistence;
     private final ShadowDecisionQuery decisions;
     private final TransactionTemplate transactions;
+    private final TransactionTemplate promptLifecycleSavepoint;
     private final CallbackTokenService tokens;
     private final NotificationOutboxRepository outbox;
     private final Clock clock;
@@ -39,7 +40,9 @@ public class AdminCommandService {
     private RuntimeSettingsService runtimeSettings;
     private dev.hugo.watcher.ai.AiClassificationProperties aiProperties;
     private dev.hugo.watcher.ai.ClassificationPromptService promptSettings;
+    private dev.hugo.watcher.ai.PromptGenerationService promptGeneration;
     private dev.hugo.watcher.ai.PromptCalibrationQueueRepository promptCalibrationQueue;
+    private dev.hugo.watcher.ai.PromptGenerationQueueRepository promptGenerationQueue;
     private ContactPolicyOverviewService contactOverview;
     private dev.hugo.watcher.OperationalState operational;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
@@ -52,6 +55,8 @@ public class AdminCommandService {
         this.persistence = persistence;
         this.decisions = decisions;
         this.transactions = new TransactionTemplate(manager);
+        this.promptLifecycleSavepoint = new TransactionTemplate(manager);
+        this.promptLifecycleSavepoint.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_NESTED);
         this.tokens = tokens;
         this.outbox = outbox;
         this.clock = clock;
@@ -78,20 +83,47 @@ public class AdminCommandService {
                 ? new AdminCommand(command.name().substring(4), command.arguments(),
                         command.userId(), command.chatId(), false, command.sourceMessageId())
                 : command;
-        if (isMutation(effective.name(), effective.arguments()) && !effective.confirmed() && !effective.name().equals("emergencia"))
-            return requestConfirmation(effective);
-        return transactions.execute(status -> {
-            try {
-                String message = apply(effective);
-                enqueueReply(message, effective);
-                return AdminResult.accepted(message);
-            } catch (IllegalArgumentException | java.time.format.DateTimeParseException ex) {
-                String message = safeError(effective.name(), ex);
+        try {
+            if (effective.name().equals("prompt_preview")) return previewPrompt(effective);
+            if (List.of("prompt_generate", "prompt_refine").contains(effective.name())) return transactions.execute(status -> generatePrompt(effective));
+            if (!effective.confirmed() && (effective.name().equals("prompt_reset")
+                    || (effective.name().equals("prompt_restore") && effective.arguments().size() == 1)))
+                return requestPromptTransition(effective);
+            if (!effective.confirmed() && effective.name().equals("prompt_publish")) validatePublishRequest(effective);
+            if (!effective.confirmed() && List.of("prompt_restore_apply", "prompt_reset_apply").contains(effective.name()))
+                throw new IllegalArgumentException("invalid_confirmation");
+            if (!effective.confirmed() && List.of("prompt_activate", "prompt_restore", "prompt_test").contains(effective.name()))
+                validateLegacyPromptArguments(effective);
+            if (isMutation(effective.name(), effective.arguments()) && !effective.confirmed() && !effective.name().equals("emergencia"))
+                return requestConfirmation(effective);
+            return transactions.execute(status -> {
+                try {
+                    rejectStalePromptTransition(effective);
+                    String message = isPromptLifecycleMutation(effective.name())
+                            ? promptLifecycleSavepoint.execute(nested -> apply(effective)) : apply(effective);
+                    enqueueReply(message, effective);
+                    return AdminResult.accepted(message);
+                } catch (RuntimeException ex) {
+                    if (!(ex instanceof IllegalArgumentException) && !(ex instanceof java.time.format.DateTimeParseException)
+                            && !(effective.name().startsWith("prompt") && ex instanceof IllegalStateException)) throw ex;
+                    String message = safeError(effective.name(), ex);
+                    if (isMutation(effective.name(), effective.arguments())) audit(effective, "REJECTED");
+                    enqueueReply(message, effective);
+                    return AdminResult.rejected(message);
+                }
+            });
+        } catch (RuntimeException ex) {
+            boolean prompt = effective.name().startsWith("prompt");
+            if (!(ex instanceof IllegalArgumentException) && !(ex instanceof java.time.format.DateTimeParseException)
+                    && !(prompt && ex instanceof IllegalStateException)) throw ex;
+            String message = prompt ? "Não foi possível concluir a operação de prompt. Verifique a sessão e tente novamente."
+                    : safeError(effective.name(), ex);
+            return transactions.execute(status -> {
                 if (isMutation(effective.name(), effective.arguments())) audit(effective, "REJECTED");
                 enqueueReply(message, effective);
                 return AdminResult.rejected(message);
-            }
-        });
+            });
+        }
     }
 
     private AdminResult requestConfirmation(AdminCommand command) {
@@ -139,6 +171,14 @@ public class AdminCommandService {
             case "prompt_list" -> promptList();
             case "prompt_new" -> beginPromptInput(command);
             case "prompt_activate", "prompt_restore" -> activatePrompt(command);
+            case "prompt_publish" -> publishPrompt(command);
+            case "prompt_restore_apply" -> restorePrompt(command);
+            case "prompt_reset_apply" -> resetPrompt(command);
+            case "prompt_cancel" -> cancelPrompt(command);
+            case "prompt_clear" -> clearPrompt(command);
+            case "prompt_history" -> promptHistory(args);
+            case "prompt_ai" -> beginAiPromptInput(command);
+            case "prompt_ai_default" -> beginAiPromptInput(command, true);
             case "prompt_compare" -> comparePrompt(args);
             case "prompt_page" -> promptPage(args);
             case "prompt_test" -> queuePromptTest(command);
@@ -264,7 +304,8 @@ public class AdminCommandService {
         var active = promptSettings.current(true);
         return "Prompts\nVersão Shadow ativa: v" + active.revision() + " · SHA-256 " + active.sha256().substring(0,12)
                 + "\nRevisões são imutáveis; ativação afeta somente o classificador Shadow."
-                + "\nUse /prompt_current, /prompt_list, /prompt_new ou /prompt_compare <v1> <v2>.";
+                + "\nUse /prompt_new para editar, /prompt_preview para revisar, /prompt_history para histórico e /prompt_reset para o Java default."
+                + "\nUse /prompt_current, /prompt_list ou /prompt_compare <v1> <v2> para consultar versões.";
     }
 
     private String promptCurrent() {
@@ -290,9 +331,181 @@ public class AdminCommandService {
 
     private String beginPromptInput(AdminCommand command) {
         if (promptSettings == null) return "Prompts: gerenciamento de versões indisponível.";
-        promptSettings.beginInput(command.userId(), command.chatId(), clock.instant().plus(Duration.ofMinutes(10)), clock.instant());
-        return "Envie o trecho operacional em uma mensagem privada nos próximos 10 minutos. Limite: 4000 caracteres. "
-                + "O sistema valida o rascunho; isso não o ativa.";
+        promptSettings.beginManualInput(command.userId(), command.chatId(), clock.instant());
+        return "Rascunho criado a partir do prompt ativo. Envie partes de até 4096 caracteres nos próximos 10 minutos "
+                + "(limite total: 16000). Use /prompt_clear para reescrever, /prompt_preview para revisar ou /prompt_cancel para descartar.";
+    }
+
+    private String beginAiPromptInput(AdminCommand command) {
+        return beginAiPromptInput(command, false);
+    }
+
+    private String beginAiPromptInput(AdminCommand command, boolean useJavaDefault) {
+        if (promptSettings == null) return "Prompts: gerenciamento de versões indisponível.";
+        Instant now = clock.instant();
+        if (useJavaDefault) promptSettings.beginDefaultInput(command.userId(), command.chatId(), now);
+        else promptSettings.beginManualInput(command.userId(), command.chatId(), now);
+        return "Rascunho iniciado com o " + (useJavaDefault ? "Java default" : "prompt ativo")
+                + ". Use /prompt_generate <objetivo, tom e regras explícitas> para criar a proposta; /prompt_refine <instruções> refina até três vezes. Não inclua mensagens de conversas. A proposta continua em rascunho.";
+    }
+
+    private AdminResult generatePrompt(AdminCommand command) {
+        if (promptGenerationQueue == null || promptSettings == null)
+            return AdminResult.rejected("Geração de prompt indisponível no momento.");
+        if (command.arguments().isEmpty()) return AdminResult.rejected("Informe instruções explícitas de objetivo, tom ou regras.");
+        try {
+            var draft = pendingPrompt(command, clock.instant());
+            String instructions = String.join(" ", command.arguments());
+            if (instructions.length() > 4096) throw new IllegalArgumentException("instructions_too_long");
+            var jobId = promptGenerationQueue.enqueue(draft.id(), draft.version(), command.userId(), command.chatId(),
+                    command.name().equals("prompt_refine") ? "REFINE" : "GENERATE", instructions, clock.instant());
+            String message = "Solicitação de proposta recebida (" + jobId.toString().substring(0, 8)
+                    + "). O resultado será enviado nesta conversa privada quando estiver pronto.";
+            enqueueReply(message, command);
+            return AdminResult.accepted(message);
+        } catch (RuntimeException exception) {
+            String message = "Não foi possível gerar a proposta; o rascunho atual foi preservado.";
+            return transactions.execute(status -> {
+                enqueueReply(message, command);
+                return AdminResult.rejected(message);
+            });
+        }
+    }
+
+    private dev.hugo.watcher.ai.ClassificationPromptRepository.Draft pendingPrompt(AdminCommand command, Instant now) {
+        if (promptSettings == null) throw new IllegalStateException("prompt_unavailable");
+        return promptSettings.pendingManualInput(command.userId(), command.chatId(), now)
+                .orElseThrow(() -> new IllegalStateException("prompt_session_unavailable"));
+    }
+
+    private AdminResult previewPrompt(AdminCommand command) {
+        if (!command.arguments().isEmpty()) throw new IllegalArgumentException("invalid_preview");
+        return transactions.execute(status -> {
+            Instant now = clock.instant();
+            var draft = pendingPrompt(command, now);
+            var preview = promptSettings.preview(draft.id(), command.userId(), now);
+            String message = "Prévia do rascunho\n" + preview.diffSummary() + "\nValidação: "
+                    + (preview.validation().valid() ? "válida" : "inválida (" + String.join(", ", preview.validation().violationCodes()) + ")")
+                    + "\n\n" + preview.body();
+            List<List<Map<String, String>>> keyboard = List.of();
+            var active = promptSettings.activeState();
+            boolean sameBase = java.util.Objects.equals(active.revisionId(), preview.baseRevision());
+            if (!sameBase) message += "\n\nO prompt ativo mudou; inicie um novo rascunho antes de ativar.";
+            if (preview.validation().valid() && sameBase) {
+                Instant expiry = now.plus(CONFIRMATION_TTL).isBefore(draft.expiresAt()) ? now.plus(CONFIRMATION_TTL) : draft.expiresAt();
+                String token = tokens.issue(command.userId(), command.chatId(), new CallbackAction("nav_prompt_publish",
+                        List.of(draft.id().toString(), Long.toString(preview.draftVersion()),
+                                Long.toString(preview.baseRevision() == null ? 0 : preview.baseRevision()),
+                                Long.toString(active.version()))), expiry);
+                message += "\n\nPara solicitar ativação: /confirm " + token;
+                if (inlineCallbacksEnabled()) keyboard = List.of(List.of(Map.of("text", "Ativar após confirmação", "data", token)));
+            }
+            enqueueReply(message, command, keyboard);
+            return AdminResult.accepted(message);
+        });
+    }
+
+    private String publishPrompt(AdminCommand command) {
+        if (command.arguments().size() != 4) throw new IllegalArgumentException("invalid_prompt_confirmation");
+        Instant now = clock.instant();
+        UUID id = UUID.fromString(command.arguments().get(0));
+        var draft = pendingPrompt(command, now);
+        if (!draft.id().equals(id) || !draft.status().equals("preview")) throw new IllegalStateException("stale_preview");
+        var saved = promptSettings.activate(id, command.userId(), Long.parseLong(command.arguments().get(1)),
+                Long.parseLong(command.arguments().get(2)), Long.parseLong(command.arguments().get(3)), now);
+        if (!promptSettings.endManualInput(command.userId(), command.chatId(), id, now)) throw new IllegalStateException("stale_session");
+        return "Prompt v" + saved.revision() + " ativado em Shadow.";
+    }
+
+    private void validatePublishRequest(AdminCommand command) {
+        if (command.arguments().size() != 4) throw new IllegalArgumentException("invalid_confirmation");
+        UUID id = UUID.fromString(command.arguments().get(0));
+        long version = Long.parseLong(command.arguments().get(1));
+        long base = Long.parseLong(command.arguments().get(2));
+        long stateVersion = Long.parseLong(command.arguments().get(3));
+        var draft = pendingPrompt(command, clock.instant());
+        var active = promptSettings.activeState();
+        if (!draft.id().equals(id) || !draft.status().equals("preview") || draft.version() != version
+                || (draft.baseRevision() == null ? 0 : draft.baseRevision()) != base
+                || (active.revisionId() == null ? 0 : active.revisionId()) != base || active.version() != stateVersion
+                || !promptSettings.validateDraft(draft.body()).valid()) throw new IllegalStateException("stale_preview");
+    }
+
+    private static void validateLegacyPromptArguments(AdminCommand command) {
+        int size = command.name().equals("prompt_test") ? 1 : 2;
+        if (command.arguments().size() != size) throw new IllegalArgumentException("invalid_prompt_arguments");
+        for (String argument : command.arguments()) Long.parseLong(argument);
+    }
+
+    private String cancelPrompt(AdminCommand command) {
+        Instant now = clock.instant();
+        var draft = pendingPrompt(command, now);
+        if (!promptSettings.cancel(draft.id(), command.userId(), now)
+                || !promptSettings.endManualInput(command.userId(), command.chatId(), draft.id(), now))
+            throw new IllegalStateException("stale_session");
+        audit(command, "APPLIED");
+        return "Rascunho descartado.";
+    }
+
+    private String clearPrompt(AdminCommand command) {
+        Instant now = clock.instant();
+        var draft = pendingPrompt(command, now);
+        promptSettings.clearManualDraft(draft.id(), command.userId(), now);
+        audit(command, "APPLIED");
+        return "Rascunho limpo. Envie o novo texto em partes e use /prompt_preview para revisar.";
+    }
+
+    private AdminResult requestPromptTransition(AdminCommand command) {
+        return transactions.execute(status -> {
+            if (promptSettings == null) throw new IllegalStateException("prompt_unavailable");
+            boolean reset = command.name().equals("prompt_reset");
+            if (reset && !command.arguments().isEmpty()) throw new IllegalArgumentException("invalid_reset");
+            var state = promptSettings.activeState();
+            var current = promptSettings.forRevision(state.revisionId() == null ? 0 : Math.toIntExact(state.revisionId()));
+            int targetId = reset ? 0 : Integer.parseInt(command.arguments().getFirst());
+            if (!reset && targetId <= 0) throw new IllegalArgumentException("invalid_revision");
+            var target = promptSettings.forRevision(targetId);
+            List<String> args = reset ? List.of(Integer.toString(current.revision()), Long.toString(state.version()))
+                    : List.of(Integer.toString(targetId), Integer.toString(current.revision()), Long.toString(state.version()));
+            String token = tokens.issue(command.userId(), command.chatId(), new CallbackAction(
+                    reset ? "prompt_reset_apply" : "prompt_restore_apply", args), clock.instant().plus(CONFIRMATION_TTL));
+            String message = "Prompt atual v" + current.revision() + ":\n" + current.content()
+                    + "\n\nDestino " + (reset ? "Java default" : "v" + targetId) + ":\n" + target.content()
+                    + "\n\n" + (reset ? "O Java default será usado; as revisões personalizadas permanecem no histórico.\n" : "")
+                    + "Confirme em até 5 minutos: /confirm " + token;
+            List<List<Map<String, String>>> keyboard = inlineCallbacksEnabled()
+                    ? List.of(List.of(Map.of("text", "Confirmar", "data", token))) : List.of();
+            enqueueReply(message, command, keyboard);
+            return AdminResult.confirmation(message);
+        });
+    }
+
+    private String restorePrompt(AdminCommand command) {
+        if (command.arguments().size() != 3) throw new IllegalArgumentException("invalid_restore");
+        var restored = promptSettings.restore(Long.parseLong(command.arguments().get(0)), command.userId(),
+                Long.parseLong(command.arguments().get(1)), Long.parseLong(command.arguments().get(2)), clock.instant());
+        return "Prompt v" + restored.revision() + " restaurado em Shadow.";
+    }
+
+    private String resetPrompt(AdminCommand command) {
+        if (command.arguments().size() != 2) throw new IllegalArgumentException("invalid_reset");
+        promptSettings.resetToDefault(command.userId(), Long.parseLong(command.arguments().getFirst()),
+                Long.parseLong(command.arguments().get(1)), clock.instant());
+        return "Prompt Java default restaurado em Shadow; o histórico foi preservado.";
+    }
+
+    private String promptHistory(List<String> args) {
+        if (promptSettings == null || args.size() > 1) throw new IllegalArgumentException("invalid_history");
+        int page = args.isEmpty() ? 0 : Integer.parseInt(args.getFirst());
+        if (page < 0 || page > 9) throw new IllegalArgumentException("invalid_history_page");
+        var history = promptSettings.history(100);
+        int start = Math.min(page * 10, history.size()), end = Math.min(start + 10, history.size());
+        StringBuilder message = new StringBuilder("Histórico de prompts · página ").append(page + 1).append('\n');
+        for (var entry : history.subList(start, end)) message.append(entry.event()).append(" · v")
+                .append(entry.nextRevision() == null ? 0 : entry.nextRevision()).append(" · ")
+                .append(entry.contentHash(), 0, 12).append(" · ").append(entry.createdAt()).append('\n');
+        if (end < history.size()) message.append("Próxima: /prompt_history ").append(page + 1);
+        return message.toString();
     }
 
     private String activatePrompt(AdminCommand command) {
@@ -335,8 +548,16 @@ public class AdminCommandService {
     public AdminResult acceptPromptInput(String body, long userId, long chatId, Integer messageId) {
         if (promptSettings == null || !promptSettings.hasPendingInput(userId, chatId, clock.instant())) return null;
         AdminCommand command = new AdminCommand("prompt_draft", List.of(), userId, chatId, true);
-        return transactions.execute(status -> {
-            try {
+        try {
+            return transactions.execute(status -> {
+                Instant now = clock.instant();
+                var pending = promptSettings.pendingManualInput(userId, chatId, now);
+                if (pending.isPresent()) {
+                    promptSettings.appendManualPart(pending.get().id(), userId, body, now);
+                    String message = "Parte adicionada. Envie outra parte, use /prompt_preview ou /prompt_cancel.";
+                    enqueueReply(message, command);
+                    return AdminResult.accepted(message);
+                }
                 var draft = promptSettings.acceptInput(userId, chatId, body, clock.instant());
                 String message = "Rascunho v" + draft.revision() + " salvo · SHA-256 " + draft.sha256().substring(0,12)
                         + ". Compare com /prompt_compare, depois use /prompt_activate " + draft.revision() + " "
@@ -344,12 +565,14 @@ public class AdminCommandService {
                 persistence.audit("prompt_draft", "APPLIED", userId, chatId, clock.instant());
                 enqueueReply(message, command);
                 return AdminResult.accepted(message);
-            } catch (IllegalArgumentException exception) {
-                String message = safeError("prompt", exception);
+            });
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            return transactions.execute(status -> {
+                String message = "Não foi possível adicionar a parte. Verifique a sessão e o limite de caracteres.";
                 enqueueReply(message, command, keyboardFor(new AdminCommand("settings_prompt", List.of(), userId, chatId, false)));
                 return AdminResult.rejected(message);
-            }
-        });
+            });
+        }
     }
 
     private String setContextWindow(AdminCommand command) {
@@ -523,6 +746,20 @@ public class AdminCommandService {
     }
 
     private void enqueueReply(String message, AdminCommand command, List<List<Map<String, String>>> keyboard) {
+        final int partLimit = 3000;
+        int offset = 0;
+        do {
+            int end = Math.min(offset + partLimit, message.length());
+            if (end < message.length() && end > offset && Character.isHighSurrogate(message.charAt(end - 1))) end--;
+            boolean last = end == message.length();
+            AdminCommand part = offset == 0 ? command : new AdminCommand(command.name(), command.arguments(),
+                    command.userId(), command.chatId(), command.confirmed());
+            enqueueReplyPart(message.substring(offset, end), part, last ? keyboard : List.of());
+            offset = end;
+        } while (offset < message.length());
+    }
+
+    private void enqueueReplyPart(String message, AdminCommand command, List<List<Map<String, String>>> keyboard) {
         Instant now = clock.instant();
         String event = command.sourceMessageId() == null ? "telegram_admin_reply" : "telegram_admin_edit";
         try {
@@ -586,9 +823,25 @@ public class AdminCommandService {
                 rows.add(List.of(button("Segurança", "settings_security", List.of(), user, chat, expiry),
                         button("Status / auditoria", "settings_audit", List.of(), user, chat, expiry)));
             }
-            case "settings_prompt" -> rows.add(List.of(button("Prompt atual", "prompt_current", List.of(), user, chat, expiry),
-                    button("Revisões", "prompt_list", List.of(), user, chat, expiry),
-                    button("Novo rascunho", "prompt_new", List.of(), user, chat, expiry)));
+            case "settings_prompt" -> {
+                rows.add(List.of(button("Prompt atual", "prompt_current", List.of(), user, chat, expiry),
+                        button("Histórico", "prompt_history", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Editar manualmente", "prompt_new", List.of(), user, chat, expiry),
+                        button("Criar com IA · ativo", "prompt_ai", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Criar com IA · Java default", "prompt_ai_default", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Prévia", "prompt_preview", List.of(), user, chat, expiry),
+                        button("Restaurar Java default", "prompt_reset", List.of(), user, chat, expiry)));
+            }
+            case "prompt_new", "prompt_draft", "prompt_clear" -> {
+                rows.add(List.of(button("Prévia", "prompt_preview", List.of(), user, chat, expiry),
+                        button("Limpar rascunho", "prompt_clear", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Cancelar rascunho", "prompt_cancel", List.of(), user, chat, expiry)));
+            }
+            case "prompt_history" -> {
+                if (promptSettings != null) for (var revision : promptSettings.latest())
+                    rows.add(List.of(button("Restaurar v" + revision.revision(), "prompt_restore",
+                            List.of(Integer.toString(revision.revision())), user, chat, expiry)));
+            }
             case "settings_ai" -> {
                 if (runtimeSettings != null) {
                     RuntimeSettingView setting = runtimeSettings.list().getFirst();
@@ -659,6 +912,8 @@ public class AdminCommandService {
 
     @Autowired(required = false)
     public void configurePromptSettings(dev.hugo.watcher.ai.ClassificationPromptService settings) { this.promptSettings = settings; }
+    @Autowired(required = false)
+    public void configurePromptGeneration(dev.hugo.watcher.ai.PromptGenerationService generation) { this.promptGeneration = generation; }
 
     @Autowired(required = false)
     public void configureContactOverview(ContactPolicyOverviewService service) { this.contactOverview = service; }
@@ -668,9 +923,44 @@ public class AdminCommandService {
         this.promptCalibrationQueue = queue;
     }
 
+    @Autowired(required = false)
+    public void configurePromptGenerationQueue(dev.hugo.watcher.ai.PromptGenerationQueueRepository queue) {
+        this.promptGenerationQueue = queue;
+    }
+
     private static boolean isMutation(String name, List<String> args) {
-        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem", "apelido", "contexto", "contexto_default", "prompt_activate", "prompt_restore", "prompt_test").contains(name)
+        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem", "apelido", "contexto", "contexto_default", "prompt_activate", "prompt_restore", "prompt_publish", "prompt_restore_apply", "prompt_reset_apply", "prompt_test").contains(name)
                 || (name.equals("orcamento") && !args.isEmpty());
+    }
+
+    private static boolean isPromptLifecycleMutation(String name) {
+        return List.of("prompt_publish", "prompt_restore_apply", "prompt_reset_apply", "prompt_activate", "prompt_restore").contains(name);
+    }
+
+    /** Reject stale version-bound actions before lifecycle services can throw inside a joined transaction. */
+    private void rejectStalePromptTransition(AdminCommand command) {
+        if (promptSettings == null) return;
+        List<String> args = command.arguments();
+        var state = promptSettings.activeState();
+        long currentRevision = state.revisionId() == null ? 0 : state.revisionId();
+        switch (command.name()) {
+            case "prompt_activate" -> {
+                if (args.size() == 2 && Long.parseLong(args.get(1)) != state.version()) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            case "prompt_reset_apply" -> {
+                if (args.size() == 2 && (Long.parseLong(args.get(0)) != currentRevision
+                        || Long.parseLong(args.get(1)) != state.version())) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            case "prompt_restore_apply" -> {
+                if (args.size() == 3 && (Long.parseLong(args.get(1)) != currentRevision
+                        || Long.parseLong(args.get(2)) != state.version())) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            case "prompt_publish" -> {
+                if (args.size() == 4 && (Long.parseLong(args.get(2)) != currentRevision
+                        || Long.parseLong(args.get(3)) != state.version())) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            default -> { }
+        }
     }
 
     private static int minutes(List<String> args) {
@@ -689,7 +979,7 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/menu, /status, /contexto <horas> <versão>, /contexto_default <versão>, /prompt, /prompt_current, /prompt_list, /prompt_new, /prompt_compare <v1> <v2>, /prompt_activate <revisão> <versão-ativa>, /prompt_page <revisão> <posição>, /prompt_test <revisão>, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /contato <jid>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /apelido <jid> <nome...>|remover, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/menu, /status, /contexto <horas> <versão>, /contexto_default <versão>, /prompt, /prompt_current, /prompt_list, /prompt_new, /prompt_clear, /prompt_preview, /prompt_cancel, /prompt_history, /prompt_restore <revisão>, /prompt_reset, /prompt_compare <v1> <v2>, /prompt_activate <revisão> <versão-ativa>, /prompt_page <revisão> <posição>, /prompt_test <revisão>, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /contato <jid>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /apelido <jid> <nome...>|remover, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
 }

@@ -62,7 +62,7 @@ class PromptCalibrationServiceTest {
         when(budgets.reserve(any(), any())).thenReturn(new Reservation(java.util.UUID.randomUUID(), 10,
                 java.time.LocalDate.now(), java.time.LocalDate.now().withDayOfMonth(1)));
         var repo = new ClassificationPromptServiceTest.MemoryRepository();
-        repo.createDraft("Prioritize a reply to the owner's recent question.", "a".repeat(64), 1001,
+        repo.createDraft("Prioritize a reply to the owner's recent question.", ClassificationPromptRepository.contentHash("Prioritize a reply to the owner's recent question."), 1001,
                 java.time.Instant.now());
         var service = new PromptCalibrationService(new ClassificationPromptService(repo), props, budgets,
                 operational, Clock.systemUTC(), fake);

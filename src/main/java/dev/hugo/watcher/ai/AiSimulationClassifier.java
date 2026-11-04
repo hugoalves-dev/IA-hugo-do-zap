@@ -135,7 +135,9 @@ public final class AiSimulationClassifier {
                 encode(classification, usedProvider.get(), purposes, input.contextEntries(), effectiveContextWindowHours,
                         prompt.revision(), prompt.sha256()),
                 clock.instant());
-        Classification finalResult = saved == 1 ? classification : Classification.unavailable();
+        Classification finalResult = saved == 1
+                ? classification.withPromptRevision(prompt.revision(), prompt.sha256())
+                : Classification.unavailable();
         if (metrics != null) metrics.classification(finalResult.status());
         return finalResult;
         } finally {
