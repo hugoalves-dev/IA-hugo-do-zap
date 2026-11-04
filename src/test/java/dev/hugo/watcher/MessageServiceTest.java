@@ -80,17 +80,23 @@ class MessageServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from simulation_batch_messages", Integer.class));
     }
 
-    @Test void outgoingGroupAndHistoryNeverEnterContext() {
+    @Test void outgoingGroupContextRequiresAnExplicitReplyAndHistoryNeverEntersContext() {
         var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        properties.setIncludeGroups(true);
         var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
                 new DebounceService(jdbc, new WatcherSimulationProperties(), manager));
-        var group = new IncomingMessage(Optional.of("owner-group"), "fixture@g.us", Optional.empty(), Optional.empty(),
+        var unlinkedGroup = new IncomingMessage(Optional.of("owner-group-unlinked"), "fixture@g.us", Optional.empty(), Optional.empty(),
                 Optional.empty(), true, "notify", false, Map.of("conversation", "group"), Instant.now());
+        var linkedGroup = new IncomingMessage(Optional.of("owner-group-linked"), "fixture@g.us", Optional.empty(), Optional.empty(),
+                Optional.empty(), true, "notify", false, Map.of("extendedTextMessage", Map.of("text", "group reply",
+                "contextInfo", Map.of("stanzaId", "quoted-message"))), Instant.now());
         var history = new IncomingMessage(Optional.of("owner-history"), "fixture@s.whatsapp.net", Optional.empty(), Optional.empty(),
                 Optional.empty(), true, "notify", true, Map.of("conversation", "history"), Instant.now());
-        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(group));
+        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(unlinkedGroup));
+        assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(linkedGroup));
         assertEquals(MessageService.Acceptance.IGNORED, integrated.accept(history));
-        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id in ('owner-group','owner-history')", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id='owner-group-linked' and reply_to_external_id='quoted-message'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id in ('owner-group-unlinked','owner-history')", Integer.class));
     }
 
     @Test void outgoingContextRespectsUnknownOrExcludedArchiveScope() {

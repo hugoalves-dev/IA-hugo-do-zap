@@ -199,23 +199,31 @@ class AiSimulationAcceptanceTest {
         assertEquals(0, calls.get());
     }
 
-    @Test void missingStructuredGroupMentionPersistsSpecificDiagnosticWithoutHttp() {
+    @Test void missingStructuredGroupMentionCanBeClassifiedButCannotAuthorizeReply() {
         String group = "missing-mention@g.us";
         jdbc.update("""
                 insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at)
                 values (?,'GROUP_TRIGGER','openrouter',true,now()+interval '1 day')
                 """, group);
         var current = batch(group, Map.of("conversation", "@owner, pode ajudar?"));
-        var ai = classifier(true, fake());
-        assertEquals("group_trigger_missing", ai.classify(current).diagnostic());
+        var ai = classifier(true, (request, timeout, max) -> {
+            calls.incrementAndGet();
+            return openrouter(valid().replace("CONTACT_REQUEST", "GROUP_TRIGGER"));
+        });
+        Classification result = ai.classify(current);
+        assertTrue(result.available());
+        assertFalse(result.groupTriggerMatched());
+        assertEquals(1, calls.get());
 
         var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(),
                 new DecisionEngine(), new PersistedPolicyRepository(jdbc, new PolicyResolver()),
                 new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai));
-        assertEquals("classification_unavailable", service.evaluate(current).blockedReason());
-        assertEquals("group_trigger_missing", jdbc.queryForObject(
-                "select classification_diagnostic from simulation_decisions where batch_id=?", String.class, current.id()));
-        assertEquals(0, calls.get());
+        var decision = service.evaluate(current);
+        assertFalse(decision.wouldReply());
+        assertEquals("no_authorized_action", decision.reason());
+        assertEquals("CLASSIFIED", jdbc.queryForObject(
+                "select classification_status from simulation_decisions where batch_id=?", String.class, current.id()));
+        assertEquals(1, calls.get());
     }
 
     @Test void privacyAndUnknownArchivedStateBlockBeforeHttp() {
@@ -456,7 +464,7 @@ class AiSimulationAcceptanceTest {
         assertFalse(telegram.getFirst().contains(chat));
         assertEquals(0,jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'",Integer.class));
     }
-    @Test void groupAndPrivateConsentCannotBeSubstitutedAndGroupsRequireObjectiveMention() {
+    @Test void groupAndPrivateConsentCannotBeSubstitutedAndMissingMentionBlocksOnlyAction() {
         String group = "team@g.us";
         jdbc.update("delete from ai_data_consents");
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'GROUP_TRIGGER','openrouter',true,now()+interval '1 day')",chat);
@@ -464,11 +472,15 @@ class AiSimulationAcceptanceTest {
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CONTACT_REQUEST','openrouter',true,now()+interval '1 day')",group);
         assertFalse(classifier(true,fake()).classify(batch(group,mention())).available());
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'GROUP_TRIGGER','openrouter',true,now()+interval '1 day')",group);
-        assertFalse(classifier(true,fake()).classify(batch(group,Map.of("conversation","@owner urgently reply"))).available());
-        assertEquals(0,calls.get());
+        var unmentioned = classifier(true,(request,timeout,max) -> {
+            calls.incrementAndGet(); return openrouter(valid().replace("CONTACT_REQUEST","GROUP_TRIGGER"));
+        }).classify(batch(group,Map.of("conversation","Could someone help with this?")));
+        assertTrue(unmentioned.available());
+        assertFalse(unmentioned.groupTriggerMatched());
+        assertEquals(1,calls.get());
         var ai = classifier(true,(request,timeout,max) -> { calls.incrementAndGet(); return openrouter(valid().replace("CONTACT_REQUEST","GROUP_TRIGGER")); });
         var result = ai.classify(batch(group,mention()));
-        assertTrue(result.available()); assertTrue(result.groupTriggerMatched()); assertTrue(result.explicitPersonalReference()); assertEquals(1,calls.get());
+        assertTrue(result.available()); assertTrue(result.groupTriggerMatched()); assertTrue(result.explicitPersonalReference()); assertEquals(2,calls.get());
     }
     @Test void realProducerPersistsModelMetadataAndQueuesBothChannelsFromOneAudit() {
         authorizeProducer();

@@ -46,6 +46,18 @@ public final class ShadowMetrics {
                 status == null ? "UNAVAILABLE" : status.name()).increment();
     }
 
+    public void context(java.util.List<ClassificationInput.ContextEntry> entries) {
+        if (entries == null) return;
+        long owner = entries.stream().filter(entry -> "owner".equals(entry.role())).count();
+        long contact = entries.stream().filter(entry -> "contact".equals(entry.role())).count();
+        if (owner > 0) registry.counter("watcher.shadow.context.messages", "role", "owner").increment(owner);
+        if (contact > 0) registry.counter("watcher.shadow.context.messages", "role", "contact").increment(contact);
+    }
+
+    public void contextDiagnostic(String reason) {
+        registry.counter("watcher.shadow.context.diagnostics", "reason", safeReason(reason)).increment();
+    }
+
     public void fallback() {
         registry.counter("watcher.shadow.fallbacks").increment();
     }
