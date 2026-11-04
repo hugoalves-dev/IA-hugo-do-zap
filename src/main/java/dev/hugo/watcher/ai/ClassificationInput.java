@@ -41,6 +41,14 @@ public final class ClassificationInput {
     public List<ContextEntry> contextEntries() { return entries.isEmpty() ? List.of() : entries.subList(0, entries.size() - 1); }
     public java.util.UUID batchId() { return batchId; }
 
+    /** Synthetic prompt-calibration input contains no WhatsApp identity or persisted conversation text. */
+    public static ClassificationInput sanitizedFixture(List<ContextEntry> entries) {
+        if (entries == null || entries.isEmpty() || entries.size() > MAX_MESSAGES
+                || entries.stream().anyMatch(entry -> entry == null || !List.of("owner", "contact").contains(entry.role())))
+            throw new IllegalArgumentException("Invalid synthetic classification fixture.");
+        return new ClassificationInput(entries, null);
+    }
+
     public static ClassificationInput fromBatch(Batch batch) {
         return fromBatch(batch, false, null);
     }

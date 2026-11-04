@@ -60,14 +60,15 @@ public class SimulationPersistenceRepository {
                 insert into simulation_decisions(batch_id,would_alert,would_reply,template_id,decision_reason,blocked_reason,
                     decided_at,metadata_expires_at,real_action_allowed,real_blocked_reason,decision_state,policy_snapshot,availability_state,availability_source,availability_reason,
                     classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash,production_mode,alert_template_reference,classification_diagnostic,
-                    triage_outcome,notification_recommended,reply_recommended,triage_reason,triage_blockers)
-                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb) on conflict (batch_id) do nothing
+                    prompt_revision,prompt_hash,triage_outcome,notification_recommended,reply_recommended,triage_reason,triage_blockers)
+                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb) on conflict (batch_id) do nothing
                 """, batchId, decision.wouldAlert(), decision.wouldReply(), decision.templateId(), decision.decisionReason(),
                 decision.blockedReason(), Timestamp.from(now), Timestamp.from(metadataExpiry),
                 decision.realActionAllowed(), decision.realBlockedReason(), decision.status().name(),
                 policyJson, availability.state().name(), availability.source().name(), availability.reason(),
                 classification.status().name(), classification.urgency().name(), classification.confidence(),
                 classification.personalReferenceHash(), productionMode, alertTemplate, classification.diagnostic(),
+                classification.promptRevision(), classification.promptHash() == null ? "0".repeat(64) : classification.promptHash(),
                 decision.triageOutcome().name(), decision.notificationRecommended(), decision.replyRecommended(),
                 decision.triageReason(), JSON.writeValueAsString(decision.triageBlockers()));
     }

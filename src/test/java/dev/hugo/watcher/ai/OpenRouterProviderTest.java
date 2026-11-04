@@ -24,6 +24,20 @@ class OpenRouterProviderTest {
         assertEquals(List.of(ClassificationResult.Evidence.EXPLICIT_REQUEST), result.evidence());
     }
 
+    @Test void sendsSelectedPromptRevisionThroughTheProviderSystemField() {
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+        var provider = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
+                "test-model", "fake-key", transport, (name, input) -> true, Duration.ofSeconds(2),
+                300, false, "Operational revision 4\\n\\nImmutable safety core.");
+
+        provider.classify(new ClassificationInput(List.of("Olá")));
+
+        String payload = FakeProviderTransport.requestBody(transport.requests().getFirst());
+        assertTrue(payload.contains("Operational revision 4"));
+        assertTrue(payload.contains("Immutable safety core."));
+    }
+
     @Test void rejectsReplyRecommendationWithoutNotification() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
                 {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":false,\\"replyRecommended\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.95}"}}]}

@@ -26,11 +26,15 @@ class AdminCommandServiceTest {
     private JdbcTemplate jdbc;
     private AdminCommandService commands;
     private CallbackTokenService tokens;
+    private dev.hugo.watcher.ai.ClassificationPromptService promptService;
+    private dev.hugo.watcher.ai.PromptCalibrationQueueRepository calibrationQueue;
     private final MutableClock clock = new MutableClock();
 
     @BeforeEach void migrate() {
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
-        Flyway.configure().dataSource(source).load().migrate();
+        Flyway flyway = Flyway.configure().dataSource(source).cleanDisabled(false).load();
+        flyway.clean();
+        flyway.migrate();
         jdbc = new JdbcTemplate(source);
         jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
         jdbc.update("delete from telegram_admin_audit");
@@ -40,6 +44,11 @@ class AdminCommandServiceTest {
         var outbox = new NotificationOutboxRepository(jdbc, new DataSourceTransactionManager(source));
         commands = new AdminCommandService(jdbc, new DataSourceTransactionManager(source), tokens, outbox, clock);
         commands.configureOperationalState(dev.hugo.watcher.TestOperational.state(jdbc));
+        promptService = new dev.hugo.watcher.ai.ClassificationPromptService(
+                new dev.hugo.watcher.ai.JdbcClassificationPromptRepository(jdbc, new DataSourceTransactionManager(source)));
+        commands.configurePromptSettings(promptService);
+        calibrationQueue = new dev.hugo.watcher.ai.PromptCalibrationQueueRepository(jdbc, new DataSourceTransactionManager(source));
+        commands.configurePromptCalibration(calibrationQueue);
     }
 
 
@@ -200,6 +209,50 @@ class AdminCommandServiceTest {
         assertTrue(commands.execute(command("feriados", List.of(), false)).message().contains("/feriado"));
         assertTrue(commands.execute(command("orcamento", List.of(), false)).message().contains("/orcamento"));
         assertFalse(commands.execute(command("status", List.of(), false)).message().contains("synthetic-test-token"));
+    }
+
+    @Test void settingsMenuShowsImplementedSectionsAndContextSettingMetadata() {
+        commands.configureRuntimeSettings(new RuntimeSettingsService(new RuntimeSettingsServiceTest.MemoryRepository(), 24));
+        assertTrue(commands.execute(command("settings", List.of(), false)).message().contains("Configurações"));
+        String ai = commands.execute(command("settings_ai", List.of(), false)).message();
+        assertTrue(ai.contains("ai.context_window_hours"));
+        assertTrue(ai.contains("Origem: ENV"));
+        assertTrue(ai.contains("/contexto"));
+        assertFalse(ai.contains("synthetic-test-token"));
+    }
+
+    @Test void contextWindowSettingRequiresConfirmationAndPreservesVersion() {
+        var runtime = new RuntimeSettingsService(new RuntimeSettingsServiceTest.MemoryRepository(), 24);
+        commands.configureRuntimeSettings(runtime);
+        assertTrue(commands.execute(command("contexto", List.of("12", "0"), false)).confirmationRequired());
+        assertEquals(24, runtime.contextWindowHours());
+        assertTrue(commands.execute(command("contexto", List.of("12", "0"), true)).accepted());
+        assertEquals(12, runtime.contextWindowHours());
+        assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='contexto' and outcome='APPLIED'", Integer.class));
+    }
+
+    @Test void promptRevisionFlowBindsInputConfirmsActivationAndDoesNotExposeBodyInAudit() {
+        assertTrue(commands.execute(command("prompt_new", List.of(), false)).accepted());
+        assertNull(commands.acceptPromptInput("Only the urgent items should be emphasized.", 1002, 2002, null));
+        String body = "Prioritize a response to a recent owner question.";
+        assertTrue(commands.acceptPromptInput(body, 1001, 2002, null).accepted());
+        var draft = promptService.latest().getFirst();
+        assertEquals(0, promptService.current(false).revision());
+        assertTrue(commands.execute(command("prompt_activate", List.of(Integer.toString(draft.revision()), "0"), false)).confirmationRequired());
+        assertTrue(commands.execute(command("prompt_activate", List.of(Integer.toString(draft.revision()), "0"), true)).accepted());
+        assertEquals(draft.revision(), promptService.current(true).revision());
+        assertEquals(0, promptService.current(false).revision());
+        assertFalse(jdbc.queryForObject("select coalesce(string_agg(action,' '),'') from telegram_admin_audit", String.class).contains(body));
+        assertEquals(1, jdbc.queryForObject("select count(*) from classification_prompt_state_history", Integer.class));
+    }
+
+    @Test void paidPromptCalibrationRequiresConfirmationAndOnlyEnqueuesDurableWork() {
+        var pending = commands.execute(command("prompt_test", List.of("0"), false));
+        assertTrue(pending.confirmationRequired());
+        assertEquals(0, calibrationQueue.count("PENDING"));
+        assertTrue(commands.execute(command("prompt_test", List.of("0"), true)).accepted());
+        assertEquals(1, calibrationQueue.count("PENDING"));
+        assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='prompt_test' and outcome='APPLIED'", Integer.class));
     }
 
     @Test void simulationToggleIsConfirmedAndReplyUsesTheDurableOutbox() {

@@ -36,6 +36,11 @@ public class AdminCommandService {
     private final Clock clock;
     private final ReportService reports;
     private final IdentityService identities;
+    private RuntimeSettingsService runtimeSettings;
+    private dev.hugo.watcher.ai.AiClassificationProperties aiProperties;
+    private dev.hugo.watcher.ai.ClassificationPromptService promptSettings;
+    private dev.hugo.watcher.ai.PromptCalibrationQueueRepository promptCalibrationQueue;
+    private ContactPolicyOverviewService contactOverview;
     private dev.hugo.watcher.OperationalState operational;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
@@ -116,6 +121,27 @@ public class AdminCommandService {
         List<String> args = command.arguments();
         String message = switch (name) {
             case "menu", "start" -> "⚙️ Administração Hugo do Zap\nEscolha uma opção:";
+            case "settings" -> settingsMenu();
+            case "settings_general" -> "Geral e Shadow\n" + status()
+                    + "\nO ambiente define o teto de Shadow; a pausa salva no PostgreSQL pode bloquear, nunca liberar, o modo.";
+            case "settings_ai" -> aiSettings();
+            case "settings_notifications" -> notificationSettings();
+            case "settings_profiles" -> profiles();
+            case "contato" -> contactOverview(args);
+            case "settings_availability" -> availabilitySettings();
+            case "settings_templates" -> templates();
+            case "settings_budget" -> budget(List.of());
+            case "settings_security" -> securitySettings();
+            case "settings_audit" -> persistence.recentAudit();
+            case "settings_prompt" -> promptSettings();
+            case "prompt" -> promptSettings();
+            case "prompt_current" -> promptCurrent();
+            case "prompt_list" -> promptList();
+            case "prompt_new" -> beginPromptInput(command);
+            case "prompt_activate", "prompt_restore" -> activatePrompt(command);
+            case "prompt_compare" -> comparePrompt(args);
+            case "prompt_page" -> promptPage(args);
+            case "prompt_test" -> queuePromptTest(command);
             case "availability" -> "Disponibilidade: escolha uma duração ou use /ocupado e /disponivel.";
             case "shadow" -> "Shadow Mode: escolha ligar/desligar a simulação. Ações reais seguem bloqueadas.";
             case "emergency_menu" -> "Emergência: ativação imediata, recuperação mediante confirmação.";
@@ -139,6 +165,8 @@ public class AdminCommandService {
             case "feriado" -> addHoliday(args);
             case "apelido" -> setContactAlias(args);
             case "orcamento" -> budget(args);
+            case "contexto" -> setContextWindow(command);
+            case "contexto_default" -> restoreContextWindow(command);
             default -> help();
         };
         if (isMutation(name, args)) audit(command, "APPLIED");
@@ -174,7 +202,173 @@ public class AdminCommandService {
                 + "; kill switch " + on(operational.killSwitch())
                 + "; emergência " + on(operational.emergency()) + "; alertas reais " + on(operational.realModeEnabled() && operational.alerts())
                 + "; respostas reais " + on(operational.realModeEnabled() && operational.replies()) + "; simulação " + on(operational.simulation())
-                + "; pausa de simulação " + on(operational.simulationPaused()) + "; " + override + ".";
+                + "; pausa de simulação " + on(operational.simulationPaused())
+                + (runtimeSettings == null ? "" : "; contexto " + runtimeSettings.contextWindowHours() + " h") + "; " + override + ".";
+    }
+
+    private String settingsMenu() {
+        return "⚙️ Configurações\nEscolha uma seção para consultar valores efetivos, origem, dependências e controles disponíveis.";
+    }
+
+    private String aiSettings() {
+        StringBuilder message = new StringBuilder("IA e modelos\nOpenRouter: ")
+                .append(aiProperties != null && aiProperties.openRouterApiKey() != null
+                        && !aiProperties.openRouterApiKey().isBlank() ? "configurado" : "não configurado");
+        if (aiProperties != null && aiProperties.openRouterModel() != null)
+            message.append("\nModelo OpenRouter: ").append(aiProperties.openRouterModel());
+        if (aiProperties != null)
+            message.append("\nClassificação configurada: ").append(aiProperties.configured() ? "sim" : "não");
+        if (runtimeSettings == null) return message.append("\nJanela de contexto: indisponível.").toString();
+        RuntimeSettingView setting = runtimeSettings.list().getFirst();
+        return message.append("\n\n").append(setting.key()).append(": ").append(setting.effectiveValue())
+                .append(" h\nOrigem: ").append(setting.source())
+                .append("\nConfigurado: ").append(setting.configuredValue()).append(" h")
+                .append("\nEditável: sim · versão ").append(setting.version())
+                .append("\nDependências: WATCHER_AI_CONTEXT_WINDOW_HOURS, consentimento do chat e retenção máxima de 7 dias")
+                .append("\nAlterar: /contexto <horas> <versão>; restaurar: /contexto_default <versão>. Ambas as operações exigem confirmação.")
+                .toString();
+    }
+
+    private String notificationSettings() {
+        if (operational == null) return "Notificações e triagem: estado operacional indisponível.";
+        return "Notificações e triagem\nAlertas simulados configurados: " + on(operational.simulatedAlerts())
+                + "\nRespostas simuladas configuradas: " + on(operational.simulatedReplies())
+                + "\nAlertas reais efetivos: " + on(operational.alerts())
+                + "\nRespostas reais efetivas: " + on(operational.replies())
+                + "\nBloqueios da decisão: consulte /decisao <id>; consentimento, política e horário continuam independentes.";
+    }
+
+    private String availabilitySettings() {
+        List<Status> rows = persistence.availability();
+        if (rows.isEmpty() || rows.getFirst().overrideState() == null)
+            return "Disponibilidade: sem override temporário. Use /ocupado ou /disponivel; /ferias registra um período.";
+        Status row = rows.getFirst();
+        if (row.overrideExpiresAt() == null || !row.overrideExpiresAt().isAfter(clock.instant()))
+            return "Disponibilidade: override expirado. As regras de política voltaram a valer.";
+        return "Disponibilidade: " + row.overrideState().toLowerCase() + " até " + row.overrideExpiresAt()
+                + ". Use /ocupado ou /disponivel para alterar.";
+    }
+
+    private String securitySettings() {
+        if (operational == null) return "Segurança: configuração operacional indisponível.";
+        return "Segurança\nKill switch: " + on(operational.killSwitch())
+                + "\nEmergência: " + on(operational.emergency())
+                + "\nEnvio real WhatsApp: " + on(operational.realModeEnabled() && !operational.killSwitch())
+                + "\nChaves: " + (aiProperties != null && aiProperties.openRouterApiKey() != null
+                        && !aiProperties.openRouterApiKey().isBlank() ? "OpenRouter configurada" : "OpenRouter não configurada")
+                + "\nGates reais e segredos só podem ser alterados no ambiente de implantação.";
+    }
+
+    private String promptSettings() {
+        if (promptSettings == null) return "Prompts: gerenciamento de versões indisponível.";
+        var active = promptSettings.current(true);
+        return "Prompts\nVersão Shadow ativa: v" + active.revision() + " · SHA-256 " + active.sha256().substring(0,12)
+                + "\nRevisões são imutáveis; ativação afeta somente o classificador Shadow."
+                + "\nUse /prompt_current, /prompt_list, /prompt_new ou /prompt_compare <v1> <v2>.";
+    }
+
+    private String promptCurrent() {
+        if (promptSettings == null) return "Prompts: gerenciamento de versões indisponível.";
+        var active = promptSettings.current(true);
+        String body = active.revision() == 0 ? dev.hugo.watcher.ai.ClassificationPromptService.DEFAULT_OPERATIONAL_PROMPT
+                : promptSettings.revision(active.revision()).body();
+        int end = Math.min(1800, body.length());
+        return "Prompt operacional ativo v" + active.revision() + " · SHA-256 " + active.sha256().substring(0,12)
+                + "\n\n" + body.substring(0,end)
+                + (end < body.length() ? "\n… use /prompt_page " + active.revision() + " 1800" : "");
+    }
+
+    private String promptList() {
+        if (promptSettings == null) return "Prompts: gerenciamento de versões indisponível.";
+        int active = promptSettings.current(true).revision();
+        List<String> revisions = promptSettings.latest().stream().map(value -> "v" + value.revision()
+                + (active == value.revision() ? " · ativa em Shadow" : " · rascunho")
+                + " · SHA-256 " + value.sha256().substring(0,12)).toList();
+        return "Revisões do prompt:\n" + (revisions.isEmpty() ? "nenhuma; o default está ativo" : String.join("\n", revisions))
+                + "\nComparar: /prompt_compare <v1> <v2>.";
+    }
+
+    private String beginPromptInput(AdminCommand command) {
+        if (promptSettings == null) return "Prompts: gerenciamento de versões indisponível.";
+        promptSettings.beginInput(command.userId(), command.chatId(), clock.instant().plus(Duration.ofMinutes(10)), clock.instant());
+        return "Envie o trecho operacional em uma mensagem privada nos próximos 10 minutos. Limite: 4000 caracteres. "
+                + "O sistema valida o rascunho; isso não o ativa.";
+    }
+
+    private String activatePrompt(AdminCommand command) {
+        if (command.arguments().size() != 2) throw new IllegalArgumentException("Use /prompt_activate <revisão> <versão-ativa>.");
+        int revision = Integer.parseInt(command.arguments().get(0));
+        long version = Long.parseLong(command.arguments().get(1));
+        long updated = promptSettings.activate(revision, version, command.userId(), clock.instant());
+        return "Prompt v" + revision + " ativado no Shadow (estado " + updated + "). Gates e ações reais não foram alterados.";
+    }
+
+    private String comparePrompt(List<String> args) {
+        if (args.size() != 2) throw new IllegalArgumentException("Use /prompt_compare <v1> <v2>.");
+        return promptSettings.compare(Integer.parseInt(args.get(0)), Integer.parseInt(args.get(1)), 2600);
+    }
+
+    private String promptPage(List<String> args) {
+        if (args.size() != 2) throw new IllegalArgumentException("Use /prompt_page <revisão> <posição>.");
+        int revision = Integer.parseInt(args.get(0)), offset = Integer.parseInt(args.get(1));
+        String body = revision == 0 ? dev.hugo.watcher.ai.ClassificationPromptService.DEFAULT_OPERATIONAL_PROMPT
+                : promptSettings.revision(revision).body();
+        if (offset < 0 || offset > body.length()) throw new IllegalArgumentException("Posição fora do prompt.");
+        int end = Math.min(offset + 1800, body.length());
+        return "Prompt v" + revision + " · caracteres " + offset + "–" + end + "\n\n" + body.substring(offset,end)
+                + (end < body.length() ? "\n\nPróxima página: /prompt_page " + revision + " " + end : "");
+    }
+
+    private String queuePromptTest(AdminCommand command) {
+        if (command.arguments().size() != 1) throw new IllegalArgumentException("Use /prompt_test <revisão>.");
+        if (promptCalibrationQueue == null) throw new IllegalStateException("prompt calibration queue unavailable");
+        int revision = Integer.parseInt(command.arguments().getFirst());
+        if (revision < 0 || revision != 0 && promptSettings == null)
+            throw new IllegalArgumentException("Revisão de prompt inválida.");
+        if (revision != 0) promptSettings.revision(revision);
+        var id = promptCalibrationQueue.enqueue(revision, command.userId(), command.chatId(), clock.instant());
+        return "Teste sintético do prompt v" + revision + " enfileirado (" + id.toString().substring(0,8)
+                + "). Será executado uma vez, somente em Shadow, com orçamento e sem usar conversa real.";
+    }
+
+    /** Accept prompt text only from a live, one-use session bound to this authorized Telegram identity. */
+    public AdminResult acceptPromptInput(String body, long userId, long chatId, Integer messageId) {
+        if (promptSettings == null || !promptSettings.hasPendingInput(userId, chatId, clock.instant())) return null;
+        AdminCommand command = new AdminCommand("prompt_draft", List.of(), userId, chatId, true);
+        return transactions.execute(status -> {
+            try {
+                var draft = promptSettings.acceptInput(userId, chatId, body, clock.instant());
+                String message = "Rascunho v" + draft.revision() + " salvo · SHA-256 " + draft.sha256().substring(0,12)
+                        + ". Compare com /prompt_compare, depois use /prompt_activate " + draft.revision() + " "
+                        + promptSettings.activeVersion() + " para ativar após confirmação.";
+                persistence.audit("prompt_draft", "APPLIED", userId, chatId, clock.instant());
+                enqueueReply(message, command);
+                return AdminResult.accepted(message);
+            } catch (IllegalArgumentException exception) {
+                String message = safeError("prompt", exception);
+                enqueueReply(message, command, keyboardFor(new AdminCommand("settings_prompt", List.of(), userId, chatId, false)));
+                return AdminResult.rejected(message);
+            }
+        });
+    }
+
+    private String setContextWindow(AdminCommand command) {
+        if (command.arguments().size() != 2) throw new IllegalArgumentException("Use /contexto <horas> <versão>.");
+        RuntimeSettingView setting = requireRuntimeSettings().set("ai.context_window_hours", command.arguments().get(0),
+                Long.parseLong(command.arguments().get(1)), command.userId(), clock.instant());
+        return "Janela de contexto atualizada para " + setting.effectiveValue() + " horas (versão " + setting.version() + ").";
+    }
+
+    private String restoreContextWindow(AdminCommand command) {
+        if (command.arguments().size() != 1) throw new IllegalArgumentException("Use /contexto_default <versão>.");
+        RuntimeSettingView setting = requireRuntimeSettings().restore("ai.context_window_hours",
+                Long.parseLong(command.arguments().getFirst()), command.userId(), clock.instant());
+        return "Janela de contexto restaurada ao valor " + setting.effectiveValue() + " horas (" + setting.source() + ").";
+    }
+
+    private RuntimeSettingsService requireRuntimeSettings() {
+        if (runtimeSettings == null) throw new IllegalStateException("runtime settings unavailable");
+        return runtimeSettings;
     }
 
     private String setAvailability(AvailabilityState state, int minutes) {
@@ -232,7 +426,14 @@ public class AdminCommandService {
 
     private String profiles() {
         List<String> names = persistence.profileNames();
-        return "Perfis: " + String.join(", ", names) + ". Controle: /perfil <chat> <perfil>; alteração exige confirmação.";
+        return "Perfis: " + String.join(", ", names) + ". Controle: /perfil <chat> <perfil>; alteração exige confirmação.\n"
+                + "Consulta somente leitura: /contato <jid>.";
+    }
+
+    private String contactOverview(List<String> args) {
+        if (args.size() != 1) throw new IllegalArgumentException("Use /contato <jid>.");
+        if (contactOverview == null) throw new IllegalStateException("contact overview unavailable");
+        return contactOverview.describe(args.getFirst());
     }
 
     private String setProfile(List<String> args) {
@@ -358,6 +559,7 @@ public class AdminCommandService {
                         button("💰 Orçamento", "orcamento", List.of(), user, chat, expiry)));
                 rows.add(List.of(button("📈 Relatórios", "relatorio", List.of(), user, chat, expiry),
                         button("🚨 Emergência", "emergency_menu", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("⚙️ Configurações", "settings", List.of(), user, chat, expiry)));
                 if (telegramProperties != null && telegramProperties.getMiniAppUrl() != null
                         && !telegramProperties.getMiniAppUrl().isBlank())
                     rows.add(List.of(Map.of("text", "🌐 Abrir Mini App",
@@ -372,10 +574,66 @@ public class AdminCommandService {
             case "emergency_menu" -> rows.add(List.of(
                     button("🚨 Ativar emergência", "emergencia", List.of(), user, chat, expiry),
                     button("Recuperar", "recuperar", List.of(), user, chat, expiry)));
+            case "settings" -> {
+                rows.add(List.of(button("Geral e Shadow", "settings_general", List.of(), user, chat, expiry),
+                        button("IA e modelos", "settings_ai", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Prompts", "settings_prompt", List.of(), user, chat, expiry),
+                        button("Notificações / triagem", "settings_notifications", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Perfis / contatos", "settings_profiles", List.of(), user, chat, expiry),
+                        button("Disponibilidade", "settings_availability", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Templates", "settings_templates", List.of(), user, chat, expiry),
+                        button("Orçamento / limites", "settings_budget", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Segurança", "settings_security", List.of(), user, chat, expiry),
+                        button("Status / auditoria", "settings_audit", List.of(), user, chat, expiry)));
+            }
+            case "settings_prompt" -> rows.add(List.of(button("Prompt atual", "prompt_current", List.of(), user, chat, expiry),
+                    button("Revisões", "prompt_list", List.of(), user, chat, expiry),
+                    button("Novo rascunho", "prompt_new", List.of(), user, chat, expiry)));
+            case "settings_ai" -> {
+                if (runtimeSettings != null) {
+                    RuntimeSettingView setting = runtimeSettings.list().getFirst();
+                    int ceiling = (Integer) setting.configuredValue();
+                    long version = setting.version();
+                    for (int value : new int[]{6, 12, 24, 48, 72, 168}) if (value <= ceiling)
+                        rows.add(List.of(button("Contexto " + value + " h", "contexto",
+                                List.of(Integer.toString(value), Long.toString(version)), user, chat, expiry)));
+                    if ("RUNTIME".equals(setting.source()) || "ENV_CEILING".equals(setting.source()))
+                        rows.add(List.of(button("Restaurar contexto", "contexto_default", List.of(Long.toString(version)), user, chat, expiry)));
+                }
+            }
+            case "prompt_list" -> {
+                int active = promptSettings == null ? 0 : promptSettings.current(true).revision();
+                long version = promptSettings == null ? 0 : promptSettings.activeVersion();
+                if (promptSettings != null) for (var revision : promptSettings.latest())
+                    if (revision.revision() != active) {
+                        rows.add(List.of(button("Ativar v" + revision.revision(),
+                                "prompt_activate", List.of(Integer.toString(revision.revision()), Long.toString(version)), user, chat, expiry)));
+                    }
+                if (promptCalibrationQueue != null && active != 0)
+                    rows.add(List.of(button("Testar v" + active, "prompt_test", List.of(Integer.toString(active)), user, chat, expiry)));
+                if (promptCalibrationQueue != null)
+                    rows.add(List.of(button("Testar default", "prompt_test", List.of("0"), user, chat, expiry)));
+                if (promptSettings != null) for (var revision : promptSettings.latest())
+                    if (revision.revision() != active && promptCalibrationQueue != null)
+                        rows.add(List.of(button("Testar v" + revision.revision(), "prompt_test",
+                                List.of(Integer.toString(revision.revision())), user, chat, expiry)));
+                rows.add(List.of(button("Prompt atual", "prompt_current", List.of(), user, chat, expiry),
+                        button("Novo rascunho", "prompt_new", List.of(), user, chat, expiry)));
+            }
+            case "prompt_current" -> rows.add(List.of(button("Revisões", "prompt_list", List.of(), user, chat, expiry),
+                    button("Prompts", "settings_prompt", List.of(), user, chat, expiry)));
             default -> { }
         }
         if (!List.of("menu", "start").contains(name))
-            rows.add(List.of(button("⬅️ Menu principal", "menu", List.of(), user, chat, expiry)));
+            rows.add(List.of(button(List.of("settings_general", "settings_ai", "settings_prompt", "settings_notifications",
+                    "settings_profiles", "settings_availability", "settings_templates", "settings_budget",
+                    "settings_security", "settings_audit").contains(name) ? "⬅️ Configurações"
+                    : List.of("prompt_current", "prompt_list", "prompt_new", "prompt_page").contains(name) ? "⬅️ Prompts" : "⬅️ Menu principal",
+                    List.of("settings_general", "settings_ai", "settings_prompt", "settings_notifications",
+                            "settings_profiles", "settings_availability", "settings_templates", "settings_budget",
+                            "settings_security", "settings_audit").contains(name) ? "settings"
+                            : List.of("prompt_current", "prompt_list", "prompt_new", "prompt_page").contains(name) ? "settings_prompt" : "menu",
+                    List.of(), user, chat, expiry)));
         return rows;
     }
 
@@ -393,8 +651,25 @@ public class AdminCommandService {
         this.telegramProperties = properties;
     }
 
+    @Autowired(required = false)
+    public void configureRuntimeSettings(RuntimeSettingsService settings) { this.runtimeSettings = settings; }
+
+    @Autowired(required = false)
+    public void configureAiProperties(dev.hugo.watcher.ai.AiClassificationProperties properties) { this.aiProperties = properties; }
+
+    @Autowired(required = false)
+    public void configurePromptSettings(dev.hugo.watcher.ai.ClassificationPromptService settings) { this.promptSettings = settings; }
+
+    @Autowired(required = false)
+    public void configureContactOverview(ContactPolicyOverviewService service) { this.contactOverview = service; }
+
+    @Autowired(required = false)
+    public void configurePromptCalibration(dev.hugo.watcher.ai.PromptCalibrationQueueRepository queue) {
+        this.promptCalibrationQueue = queue;
+    }
+
     private static boolean isMutation(String name, List<String> args) {
-        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem", "apelido").contains(name)
+        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem", "apelido", "contexto", "contexto_default", "prompt_activate", "prompt_restore", "prompt_test").contains(name)
                 || (name.equals("orcamento") && !args.isEmpty());
     }
 
@@ -414,7 +689,7 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/menu, /status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /apelido <jid> <nome...>|remover, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/menu, /status, /contexto <horas> <versão>, /contexto_default <versão>, /prompt, /prompt_current, /prompt_list, /prompt_new, /prompt_compare <v1> <v2>, /prompt_activate <revisão> <versão-ativa>, /prompt_page <revisão> <posição>, /prompt_test <revisão>, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /contato <jid>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /apelido <jid> <nome...>|remover, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
 }
