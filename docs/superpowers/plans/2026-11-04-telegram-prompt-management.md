@@ -138,15 +138,15 @@
 - Consumes: Task 2 draft/proposal lifecycle, Task 4 Telegram prompt flow, `AiClassificationProperties`, `ProviderTransport`, `BudgetService`, `BudgetedProviderTransport`, and `Clock`.
 - Produces: `PromptGenerationService.propose(UUID draftId, long adminId, String explicitInstructions, Instant now)` and `.refine(UUID draftId, long adminId, String explicitInstructions, Instant now)`, returning a validated editable proposal plus a bounded change summary.
 
-- [ ] **Step 1: Write generator tests** asserting the request includes only explicit admin instructions and the relevant operational prompt; it excludes any `ClassificationInput`, WhatsApp message, credentials, and logs. Assert a strict JSON proposal schema and bounded output tokens.
-- [ ] **Step 2: Run `mvn -Dtest=OpenRouterPromptGeneratorTest test`** and verify tests fail before the generator exists.
-- [ ] **Step 3: Implement OpenRouter prompt generation** using the existing provider endpoint policy, configured provider/model, timeout, token ceiling, and budgeted transport. Enable the action only when existing AI classification/provider configuration and budget controls permit it; do not use Gemini fallback for authoring.
-- [ ] **Step 4: Write service tests** for proposal storage as a draft, manual edit after proposal, refinement count cap, invalid output rejection, timeout/429/5xx/budget failure preserving prior draft, and no active revision change.
-- [ ] **Step 5: Run `mvn -Dtest=PromptGenerationServiceTest test`** and verify expected failures.
-- [ ] **Step 6: Implement propose/refine orchestration.** Allow at most three refinements per draft, reserve the existing conservative per-attempt budget, never log model content, and run all output through the Task 2 validator before returning a proposal.
-- [ ] **Step 7: Integrate Telegram flow** to collect goal/tone/rules/examples as explicit admin text, offer starting from active or Java default, and show proposal/change summary with Preview, Refine, Edit manually, Save version, and Cancel. Saving still creates a draft; activation requires the manual confirmation flow from Task 4.
-- [ ] **Step 8: Run `mvn -Dtest=OpenRouterPromptGeneratorTest,PromptGenerationServiceTest,TelegramPromptCommandServiceTest test`** and verify all tests pass.
-- [ ] **Step 9: Commit** as `feat: draft prompt proposals with bounded ai assistance`.
+- [x] **Step 1: Write generator tests** asserting the request includes only explicit admin instructions and the relevant operational prompt; it excludes any `ClassificationInput`, WhatsApp message, credentials, and logs. Assert a strict JSON proposal schema and bounded output tokens.
+- [x] **Step 2: Run `mvn -Dtest=OpenRouterPromptGeneratorTest test`** and verify tests fail before the generator exists.
+- [x] **Step 3: Implement OpenRouter prompt generation** using the existing provider endpoint policy, configured provider/model, timeout, token ceiling, and budgeted transport. Enable the action only when existing AI classification/provider configuration and budget controls permit it; do not use Gemini fallback for authoring.
+- [x] **Step 4: Write service tests** for proposal storage as a draft, manual edit after proposal, refinement count cap, invalid output rejection, timeout/429/5xx/budget failure preserving prior draft, and no active revision change.
+- [x] **Step 5: Run `mvn -Dtest=PromptGenerationServiceTest test`** and verify expected failures.
+- [x] **Step 6: Implement propose/refine orchestration.** Allow at most three refinements per draft, reserve the existing conservative per-attempt budget, never log model content, and run all output through the Task 2 validator before returning a proposal.
+- [x] **Step 7: Integrate Telegram flow** to collect goal/tone/rules/examples as explicit admin text, offer starting from active or Java default, and show proposal/change summary with Preview, Refine, Edit manually, Save version, and Cancel. Saving still creates a draft; activation requires the manual confirmation flow from Task 4. (Instructions are supplied in command arguments; proposal stays editable until explicitly published.)
+- [x] **Step 8: Run `mvn -Dtest=OpenRouterPromptGeneratorTest,PromptGenerationServiceTest,TelegramPromptCommandServiceTest test`** and verify all tests pass.
+- [x] **Step 9: Commit** as `feat: draft prompt proposals with bounded ai assistance`.
 
 ### Task 6: End-to-end regression, documentation, and issue closure handoff
 

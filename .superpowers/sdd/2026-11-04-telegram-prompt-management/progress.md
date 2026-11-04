@@ -41,3 +41,7 @@ Branch update: Important finding addressed (legacy 4,000 character validation ra
 Task 3: complete (commits 997f57c..2ad0806, 95 focused tests passed, review clean).
 Task 4: in_progress (baseline 0a8c9cf; Task 3 has been pushed to PR #49).
 Task 4: complete (commits 0a8c9cf..3582a97, 95 focused tests passed, review clean).
+Task 5: in_progress (baseline b2437b0; Task 4 has been pushed to PR #49).
+Task 5: fix round 1/5 (1 Important addressed, 0 open — failure-preservation tests for invalid output, provider errors, budget and configuration gates; commits 4601a3a..15cf592).
+Task 5: complete (commits b2437b0..15cf592, 55 focused tests passed, review clean).
+Task 5: minor (deferred): AI instruction text is supplied as `/prompt_generate` or `/prompt_refine` arguments rather than multiple plain-text messages; arguments are not placed in callbacks, audits, logs, or generic errors.
