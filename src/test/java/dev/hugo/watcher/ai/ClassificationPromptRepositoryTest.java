@@ -28,8 +28,10 @@ class ClassificationPromptRepositoryTest {
         String schema = "prompt_" + UUID.randomUUID().toString().replace("-", "");
         var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema).load().migrate();
-        source.setUrl(postgres.getJdbcUrl() + "?currentSchema=" + schema);
+        String jdbcUrl = postgres.getJdbcUrl();
+        source.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
         jdbc = new JdbcTemplate(source);
+        assertEquals(schema, jdbc.queryForObject("select current_schema()", String.class));
         repository = new ClassificationPromptRepository(jdbc);
     }
 
