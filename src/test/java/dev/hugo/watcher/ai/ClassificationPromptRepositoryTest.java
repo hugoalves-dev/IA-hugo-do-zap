@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -32,7 +33,7 @@ class ClassificationPromptRepositoryTest {
         source.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
         jdbc = new JdbcTemplate(source);
         assertEquals(schema, jdbc.queryForObject("select current_schema()", String.class));
-        repository = new ClassificationPromptRepository(jdbc);
+        repository = new JdbcClassificationPromptRepository(jdbc, new DataSourceTransactionManager(jdbc.getDataSource()));
     }
 
     private ClassificationPromptRepository.Revision revision(String body) {
@@ -46,7 +47,7 @@ class ClassificationPromptRepositoryTest {
         assertTrue(repository.appendDraftPart(id, 42, 0, "second", NOW));
         assertFalse(repository.appendDraftPart(id, 42, 0, "stale", NOW));
         assertFalse(repository.appendDraftPart(id, 43, 1, "foreign", NOW));
-        var stored = new ClassificationPromptRepository(jdbc).draft(id, 42, NOW).orElseThrow();
+        var stored = new JdbcClassificationPromptRepository(jdbc, new DataSourceTransactionManager(jdbc.getDataSource())).draft(id, 42, NOW).orElseThrow();
         assertEquals("first\nsecond", stored.body());
         assertEquals(1, stored.version());
         assertTrue(repository.draft(id, 43, NOW).isEmpty());
@@ -89,13 +90,13 @@ class ClassificationPromptRepositoryTest {
         assertNull(repository.activeState().revisionId());
         assertTrue(repository.history(10).isEmpty());
         assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(
-                "update classification_prompt_revisions set body='changed' where id=?", first.id()));
+                "update classification_prompt_revisions set prompt_body='changed' where revision=?", first.id()));
         assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(
-                "delete from classification_prompt_revisions where id=?", first.id()));
+                "delete from classification_prompt_revisions where revision=?", first.id()));
         assertThrows(DataIntegrityViolationException.class, () -> repository.insertRevision(
                 new ClassificationPromptRepository.Revision(0, "x", "invalid", "manual", "", 42, NOW)));
         assertThrows(DataIntegrityViolationException.class, () -> jdbc.update(
-                "insert into classification_prompt_active(singleton_id) values (2)"));
+                "insert into classification_prompt_state(singleton_id) values (2)"));
     }
 
     @Test void databaseRejectsInvalidMetadataAndOversizedDrafts() {

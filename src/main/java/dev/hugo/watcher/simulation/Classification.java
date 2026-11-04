@@ -9,7 +9,19 @@ public record Classification(Set<Situation> situations, boolean requestDetected,
                              boolean explicitPersonalReference, boolean groupTriggerMatched,
                              boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
                              double confidence, dev.hugo.watcher.ai.ClassificationResult.Status status,
-                             String personalReferenceHash, String diagnostic) {
+                             String personalReferenceHash, String diagnostic,
+                             int promptRevision, String promptHash) {
+    public Classification(Set<Situation> situations, boolean requestDetected,
+                          boolean notificationRecommended, boolean replyRecommended,
+                          java.util.List<dev.hugo.watcher.ai.ClassificationResult.Evidence> evidence,
+                          boolean explicitPersonalReference, boolean groupTriggerMatched,
+                          boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
+                          double confidence, dev.hugo.watcher.ai.ClassificationResult.Status status,
+                          String personalReferenceHash, String diagnostic) {
+        this(situations, requestDetected, notificationRecommended, replyRecommended, evidence,
+                explicitPersonalReference, groupTriggerMatched, available, urgency, confidence, status,
+                personalReferenceHash, diagnostic, 0, null);
+    }
     public Classification(Set<Situation> situations, boolean requestDetected,
                           boolean explicitPersonalReference, boolean groupTriggerMatched,
                           boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
@@ -63,6 +75,11 @@ public record Classification(Set<Situation> situations, boolean requestDetected,
         return new Classification(situations, requestDetected, notificationRecommended, replyRecommended,
                 evidence, explicitPersonalReference, groupTriggerMatched, true, urgency, confidence,
                 dev.hugo.watcher.ai.ClassificationResult.Status.CLASSIFIED, personalReferenceHash, null);
+    }
+    public Classification withPromptRevision(int revision, String hash) {
+        return new Classification(situations, requestDetected, notificationRecommended, replyRecommended, evidence,
+                explicitPersonalReference, groupTriggerMatched, available, urgency, confidence, status,
+                personalReferenceHash, diagnostic, revision, hash);
     }
     public static Classification groupTriggerCritical(boolean personalReference) {
         return new Classification(Set.of(Situation.GROUP_TRIGGER, Situation.CRITICAL_URGENCY), true, personalReference, true, true);

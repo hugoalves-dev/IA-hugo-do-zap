@@ -25,6 +25,8 @@ public final class AiSimulationClassifier {
     private final Clock clock;
     private final AiClassificationProperties properties;
     private final ProviderTransport transport;
+    private dev.hugo.watcher.telegram.RuntimeSettingsService runtimeSettings;
+    private ClassificationPromptService promptSettings;
     private dev.hugo.watcher.OperationalState operational;
     private ShadowMetrics metrics;
     @Autowired(required = false) public void configureMetrics(ShadowMetrics value) { this.metrics = value; }
@@ -35,6 +37,12 @@ public final class AiSimulationClassifier {
         contextWindowHours = hours;
     }
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
+    @Autowired(required = false) public void configureRuntimeSettings(dev.hugo.watcher.telegram.RuntimeSettingsService value) {
+        this.runtimeSettings = value;
+    }
+    @Autowired(required = false) public void configurePromptSettings(ClassificationPromptService value) {
+        this.promptSettings = value;
+    }
 
     /** Production collaborators keep SQL and message-history reads in repositories. */
     public AiSimulationClassifier(AiClassificationEvaluationRepository persistence,
@@ -77,7 +85,21 @@ public final class AiSimulationClassifier {
         purposes = contextualPurposes(batch, purposes);
         if (purposes.isEmpty()) return unavailable("consent_missing");
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
-        ClassificationInput input = context.input(batch, clock.instant(), java.time.Duration.ofHours(contextWindowHours));
+        long effectiveContextWindowHours = contextWindowHours;
+        if (runtimeSettings != null) {
+            try { effectiveContextWindowHours = runtimeSettings.contextWindowHours(); }
+            catch (org.springframework.dao.DataAccessException | IllegalStateException ex) {
+                return unavailable("runtime_settings_unavailable");
+            }
+        }
+        ClassificationPromptSnapshot prompt = ClassificationPromptService.defaultSnapshot();
+        if (promptSettings != null) {
+            try { prompt = promptSettings.current(operational != null && operational.simulation()); }
+            catch (org.springframework.dao.DataAccessException | IllegalStateException ex) {
+                return unavailable("classification_prompt_unavailable");
+            }
+        }
+        ClassificationInput input = context.input(batch, clock.instant(), java.time.Duration.ofHours(effectiveContextWindowHours));
         if (input.messages().isEmpty()) {
             if (metrics != null) metrics.contextDiagnostic("no_eligible_text");
             return unavailable("no_eligible_text");
@@ -101,16 +123,17 @@ public final class AiSimulationClassifier {
         var primary = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                 properties.openRouterModel(), properties.openRouterApiKey(), guarded(http, batch, "openrouter", approvedPurposes, usedProvider),
                 (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout(),
-                properties.openRouterMaxTokens(), properties.openRouterReasoningEnabled());
+                properties.openRouterMaxTokens(), properties.openRouterReasoningEnabled(), prompt.systemText());
         ClassificationProvider fallback = null;
         if (properties.fallbackConfigured()) fallback = new GeminiProvider(URI.create("https://generativelanguage.googleapis.com/v1beta/models"),
                 properties.geminiModel(), properties.geminiApiKey(), guarded(http, batch, "gemini", approvedPurposes, usedProvider),
-                (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
+                (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout(), prompt.systemText());
         if (metrics != null) metrics.context(input.contextEntries());
         ClassificationResult result = new ClassificationService(primary, fallback, metrics).classify(input);
         Classification classification = authorized(batch, usedProvider.get(), purposes) ? convert(batch, result, purposes) : Classification.unavailable();
         int saved = persistence.saveIfCurrent(batch.id(), token,
-                encode(classification, usedProvider.get(), purposes, input.contextEntries(), contextWindowHours),
+                encode(classification, usedProvider.get(), purposes, input.contextEntries(), effectiveContextWindowHours,
+                        prompt.revision(), prompt.sha256()),
                 clock.instant());
         Classification finalResult = saved == 1 ? classification : Classification.unavailable();
         if (metrics != null) metrics.classification(finalResult.status());
@@ -153,7 +176,8 @@ public final class AiSimulationClassifier {
         return new Classification(decoded.situations(), decoded.requestDetected(), decoded.notificationRecommended(),
                 decoded.replyRecommended(), decoded.evidence(), reference != null,
                 reference != null && batch.chatJid().endsWith("@g.us"), decoded.available(), decoded.urgency(),
-                decoded.confidence(), decoded.status(), reference, decoded.diagnostic());
+                decoded.confidence(), decoded.status(), reference, decoded.diagnostic())
+                .withPromptRevision(decoded.promptRevision(), decoded.promptHash());
     }
     private ProviderTransport guarded(ProviderTransport http, Batch batch, String provider, Set<Situation> purposes,
                                       java.util.concurrent.atomic.AtomicReference<String> usedProvider) {
@@ -253,7 +277,8 @@ public final class AiSimulationClassifier {
     }
     private boolean structuredMention(Batch batch) { return referenceHash(batch) != null; }
     private static String encode(Classification result, String provider, Set<Situation> purposes,
-                                 List<ClassificationInput.ContextEntry> contextEntries, long contextWindowHours) {
+                                 List<ClassificationInput.ContextEntry> contextEntries, long contextWindowHours,
+                                 int promptRevision, String promptHash) {
         Map<String,Object> metadata = new LinkedHashMap<>();
         metadata.put("provider",provider); metadata.put("purposes",purposes.stream().map(Enum::name).toList());
         metadata.put("situations",result.situations().stream().map(Enum::name).toList());
@@ -271,6 +296,8 @@ public final class AiSimulationClassifier {
         metadata.put("contextContactCount", contextEntries.stream().filter(e -> "contact".equals(e.role())).count());
         metadata.put("contextGroupParticipantCount", contextEntries.stream().filter(e -> "group_participant".equals(e.role())).count());
         metadata.put("contextWindowHours", contextWindowHours);
+        metadata.put("promptRevision", promptRevision);
+        metadata.put("promptHash", promptHash);
         return JSON.writeValueAsString(metadata);
     }
     private static Classification decode(String value) {
@@ -289,6 +316,8 @@ public final class AiSimulationClassifier {
                 ClassificationResult.Urgency.valueOf(Objects.toString(result.get("urgency"),"UNCERTAIN")),
                 result.get("confidence") instanceof Number n ? n.doubleValue() : 0,
                 ClassificationResult.Status.valueOf(Objects.toString(result.get("status"),"UNCERTAIN")),
-                (String)result.get("personalReferenceHash"), (String)result.get("diagnostic"));
+                (String)result.get("personalReferenceHash"), (String)result.get("diagnostic"))
+                .withPromptRevision(result.get("promptRevision") instanceof Number revision ? revision.intValue() : 0,
+                        (String) result.get("promptHash"));
     }
 }

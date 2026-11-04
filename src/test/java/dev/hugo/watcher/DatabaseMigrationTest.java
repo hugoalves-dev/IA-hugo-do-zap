@@ -19,7 +19,25 @@ class DatabaseMigrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
-    @Test void v55AddsDefaultPromptStateWithoutChangingExistingAdministration() {
+    @Test void v58PreservesExistingPromptRevisionAndActiveHistory() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_existing_prompt").defaultSchema("upgrade_existing_prompt")
+                .target("57").load().migrate();
+        // The previous schema permitted a valid-looking hash supplied by a caller.
+        jdbc.update("insert into upgrade_existing_prompt.classification_prompt_revisions(prompt_body,sha256,author_user_id,created_at) values (?,?,?,now())", "Legacy prompt", "a".repeat(64), 42);
+        jdbc.update("update upgrade_existing_prompt.classification_prompt_state set active_revision=1,version=1,updated_by=42 where singleton_id=1");
+        jdbc.update("insert into upgrade_existing_prompt.classification_prompt_state_history(version,previous_revision,next_revision,actor_user_id,changed_at) values (1,null,1,42,now())");
+        Flyway.configure().dataSource(source).schemas("upgrade_existing_prompt").defaultSchema("upgrade_existing_prompt").load().migrate();
+        assertEquals(1, jdbc.queryForObject("select active_revision from upgrade_existing_prompt.classification_prompt_state", Integer.class));
+        assertEquals("Legacy prompt", jdbc.queryForObject("select prompt_body from upgrade_existing_prompt.classification_prompt_revisions where revision=1", String.class));
+        assertEquals("manual", jdbc.queryForObject("select origin from upgrade_existing_prompt.classification_prompt_revisions where revision=1", String.class));
+        assertEquals("activate", jdbc.queryForObject("select event from upgrade_existing_prompt.classification_prompt_state_history where version=1", String.class));
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("insert into upgrade_existing_prompt.classification_prompt_revisions(prompt_body,sha256,author_user_id,created_at) values (?,?,?,now())", "new", "b".repeat(64), 42));
+    }
+
+    @Test void promptMigrationsAddDefaultStateWithoutChangingExistingAdministration() {
         var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
@@ -32,11 +50,11 @@ class DatabaseMigrationTest {
         flyway.migrate();
         flyway.migrate();
 
-        assertEquals(1, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_active", Integer.class));
-        assertNull(jdbc.queryForObject("select revision_id from upgrade_prompt.classification_prompt_active where singleton_id=1", Long.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_state", Integer.class));
+        assertNull(jdbc.queryForObject("select active_revision from upgrade_prompt.classification_prompt_state where singleton_id=1", Long.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_revisions", Integer.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_drafts", Integer.class));
-        assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_transitions", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_state_history", Integer.class));
         assertEquals("ARCHIVED_ONLY", jdbc.queryForObject(
                 "select mode from upgrade_prompt.archive_monitor_settings where singleton_id=1", String.class));
     }

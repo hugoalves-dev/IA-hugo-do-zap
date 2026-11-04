@@ -29,7 +29,7 @@ public class ShadowDecisionQuery {
                             else coalesce(c.display_name,c.manual_display_name) end as display_name,c.display_name_source,
                        case when pc.display_name_source='CONTACT_NAME' then pc.display_name
                             else coalesce(pc.display_name,pc.manual_display_name) end as participant_name,
-                       d.triage_outcome,d.notification_recommended,d.reply_recommended,d.triage_reason,d.triage_blockers::text as triage_blockers,
+                       d.prompt_revision,d.prompt_hash,d.triage_outcome,d.notification_recommended,d.reply_recommended,d.triage_reason,d.triage_blockers::text as triage_blockers,
                        s.display_name as snapshot_name,e.result->>'provider' as provider,
                        e.result->>'requestDetected' as request_detected
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
@@ -61,6 +61,7 @@ public class ShadowDecisionQuery {
                     + " · pedido=" + (rs.getString("request_detected") == null ? "indisponível" : "true".equals(rs.getString("request_detected")) ? "sim" : "não")
                     + " · Shadow " + rs.getString("decision_state") + " · alerta=" + rs.getBoolean("would_alert")
                     + " resposta=" + rs.getBoolean("would_reply") + " · bloqueio=" + code(rs.getString("blocked_reason"))
+                    + " · prompt=v" + rs.getInt("prompt_revision") + "/" + safePromptHash(rs.getString("prompt_hash"))
                     + "\ntriagem=" + triage(rs.getString("triage_outcome"))
                     + " · motivo=" + code(rs.getString("triage_reason"))
                     + ("nenhum".equals(blockers(rs.getString("triage_blockers"))) ? ""
@@ -155,6 +156,7 @@ public class ShadowDecisionQuery {
                     + "\nClassificação: " + rs.getString("classification_status") + " / " + urgency + " / "
                     + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
                     + "\nSolicitação detectada: " + requestDetected
+                    + "\nPrompt usado: v" + rs.getInt("prompt_revision") + "/" + safePromptHash(rs.getString("prompt_hash"))
                     + "\nResultado semântico: " + triageOutcome
                     + "; alerta recomendado: " + yesNo(notificationRecommended)
                     + "; Resposta recomendada: " + yesNo(replyRecommended)
@@ -180,6 +182,9 @@ public class ShadowDecisionQuery {
                 ? value : "UNDECIDED";
     }
     private static String yesNo(boolean value) { return value ? "sim" : "não"; }
+    private static String safePromptHash(String hash) {
+        return hash != null && hash.matches("[0-9a-f]{64}") ? hash.substring(0,12) : "indisponível";
+    }
     private static String blockers(String json) {
         if (json == null || json.isBlank()) return "nenhum";
         try {

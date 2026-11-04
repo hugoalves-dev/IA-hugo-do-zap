@@ -43,8 +43,11 @@ public class TelegramUpdateHandler {
         Chat chat = message.chat();
         if (!authorized(sender, chat)) return rejectUnauthorized();
         String text = message.text();
-        if (text == null || text.isBlank() || !text.stripLeading().startsWith("/"))
-            return queueUnknown();
+        if (text == null || text.isBlank()) return queueUnknown();
+        if (!text.stripLeading().startsWith("/")) {
+            AdminResult draft = commands.acceptPromptInput(text, sender.id(), chat.id(), null);
+            return draft == null ? queueUnknown() : draft;
+        }
         Parsed parsed = parse(text);
         if (parsed.name().equals("confirm")) return confirm(parsed.arguments(), sender.id(), chat.id());
         return commands.execute(new AdminCommand(parsed.name(), parsed.arguments(), sender.id(), chat.id(), false));

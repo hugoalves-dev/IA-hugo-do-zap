@@ -27,6 +27,20 @@ class GeminiProviderTest {
         assertFalse(body.contains("person.test@example.com"));
     }
 
+    @Test void sendsTheSelectedPromptRevisionAsSystemInstruction() {
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
+                "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}]}}]}"));
+        var provider = new GeminiProvider(URI.create("https://generativelanguage.googleapis.com/v1beta/models"),
+                "test-model", "fake-key", transport, (name, input) -> true, Duration.ofSeconds(2),
+                "Operational revision 4\\n\\nImmutable safety core.");
+
+        provider.classify(new ClassificationInput(List.of("Olá")));
+
+        String payload = FakeProviderTransport.requestBody(transport.requests().getFirst());
+        assertTrue(payload.contains("Operational revision 4"));
+        assertTrue(payload.contains("Immutable safety core."));
+    }
+
     @Test void deniedAuthorizationMakesNoTransportCall() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, "{}"));
 
