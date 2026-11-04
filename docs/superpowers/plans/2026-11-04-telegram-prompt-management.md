@@ -90,14 +90,14 @@
 - Produces: code-owned `IMMUTABLE_CORE`; providers accept the Task 2 snapshot while retaining compatibility constructors for existing provider tests/callers.
 - Produces: evaluation JSON metadata fields `promptRevision` and `promptHash`, persisted with the classification result and returned unchanged for stored evaluations.
 
-- [ ] **Step 1: Add failing provider assertions** that the request includes immutable core plus supplied operational text while its JSON response schema remains byte-for-byte/code-structurally fixed for both OpenRouter and Gemini.
-- [ ] **Step 2: Run `mvn -Dtest=OpenRouterProviderTest,GeminiProviderTest test`** and verify the new assertions fail against the hardcoded-only prompt.
-- [ ] **Step 3: Split the existing prompt into immutable code instructions and the default operational text.** Keep untrusted-input handling, authorization/action restrictions, fixed evidence values, JSON-only response rules, and the provider schema code-owned.
-- [ ] **Step 4: Add a failing Shadow acceptance assertion** that the active revision/hash are recorded once and reused for an already-stored classification.
-- [ ] **Step 5: Run `mvn -Dtest=AiSimulationAcceptanceTest test`** and verify that assertion fails.
-- [ ] **Step 6: Resolve one prompt snapshot before provider construction, pass it to primary and fallback, persist revision/hash inside the existing evaluation result JSON, and fail closed if resolution fails.** Do not reprocess stored evaluations.
-- [ ] **Step 7: Run `mvn -Dtest=OpenRouterProviderTest,GeminiProviderTest,AiSimulationAcceptanceTest,ClassificationServiceTest test`** and verify all tests pass.
-- [ ] **Step 8: Commit** as `feat: apply versioned prompts to shadow classification`.
+- [x] **Step 1: Add failing provider assertions** that the request includes immutable core plus supplied operational text while its JSON response schema remains byte-for-byte/code-structurally fixed for both OpenRouter and Gemini.
+- [x] **Step 2: Run `mvn -Dtest=OpenRouterProviderTest,GeminiProviderTest test`** and verify the new assertions fail against the hardcoded-only prompt.
+- [x] **Step 3: Split the existing prompt into immutable code instructions and the default operational text.** Keep untrusted-input handling, authorization/action restrictions, fixed evidence values, JSON-only response rules, and the provider schema code-owned.
+- [x] **Step 4: Add a failing Shadow acceptance assertion** that the active revision/hash are recorded once and reused for an already-stored classification.
+- [x] **Step 5: Run `mvn -Dtest=AiSimulationAcceptanceTest test`** and verify that assertion fails.
+- [x] **Step 6: Resolve one prompt snapshot before provider construction, pass it to primary and fallback, persist revision/hash inside the existing evaluation result JSON, and fail closed if resolution fails.** Do not reprocess stored evaluations.
+- [x] **Step 7: Run `mvn -Dtest=OpenRouterProviderTest,GeminiProviderTest,AiSimulationAcceptanceTest,ClassificationServiceTest test`** and verify all tests pass.
+- [x] **Step 8: Commit** as `test: verify versioned prompts in shadow evaluations`.
 
 ### Task 4: Private Telegram manual editing, preview, history, restore, and reset
 
