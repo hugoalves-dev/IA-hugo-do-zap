@@ -34,9 +34,11 @@ class RabbitPublisherIntegrationTest {
     @Test
     void confirmsPersistentRoutedEventsAndRejectsUnroutableEvents() throws Exception {
         try {
-            assertEquals(0, rabbit.execInContainer("rabbitmqctl", "set_user_tags", USER).getExitCode());
-            assertEquals(0, rabbit.execInContainer("rabbitmqctl", "set_permissions", "-p", "watcher", USER,
-                    "^watcher\\.", "^watcher\\.", "^watcher\\.").getExitCode());
+            var clearTags = rabbit.execInContainer("rabbitmqctl", "set_user_tags", USER);
+            assertEquals(0, clearTags.getExitCode(), clearTags.getStdout() + clearTags.getStderr());
+            var setPermissions = rabbit.execInContainer("rabbitmqctl", "set_permissions", "-p", "watcher", USER,
+                    "^watcher\\.", "^watcher\\.", "^watcher\\.");
+            assertEquals(0, setPermissions.getExitCode(), setPermissions.getStdout() + setPermissions.getStderr());
         } catch (java.io.IOException | InterruptedException ex) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Could not restrict the RabbitMQ application user", ex);
