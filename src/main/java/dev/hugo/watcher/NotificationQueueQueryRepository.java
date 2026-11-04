@@ -84,8 +84,9 @@ public class NotificationQueueQueryRepository {
         return jdbc.update("""
                 delete from pending_notification
                  where chat_jid=? and generation=?::uuid
-                   and payload->>'lastMessageAt'=? and coalesce((payload->>'messageCount')::integer,0)=?
-                """, chatJid, generation, lastMessageAt.toString(), messageCount);
+                   and (payload->>'lastMessageAt')::timestamptz=?
+                   and coalesce((payload->>'messageCount')::integer,0)=?
+                """, chatJid, generation, Timestamp.from(lastMessageAt), messageCount);
     }
 
     private record ConnectionState(String connectionState, long generation) { }
