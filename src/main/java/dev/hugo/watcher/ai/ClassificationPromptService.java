@@ -39,7 +39,7 @@ public final class ClassificationPromptService {
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
-    public record PromptPreview(UUID draftId, Long baseRevision, String body, String diffSummary,
+    public record PromptPreview(UUID draftId, long draftVersion, Long baseRevision, String body, String diffSummary,
                                 ValidationResult validation) {}
     public record HistoryEntry(Long revision, String contentHash, String origin, String description, long authorId,
                                Instant createdAt, String event, Long previousRevision, Long nextRevision) {}
@@ -74,7 +74,7 @@ public final class ClassificationPromptService {
         Draft draft = editable(draftId, adminId, now);
         String normalized = normalize(body);
         requireBody(normalized, ClassificationPromptValidator.MAX_BODY_LENGTH);
-        if (!List.of("manual", "ai_assisted").contains(origin) || description == null || description.length() > 500)
+        if (origin == null || !List.of("manual", "ai_assisted").contains(origin) || description == null || description.length() > 500)
             throw new IllegalArgumentException("invalid_proposal_metadata");
         if (draft.refinementCount() >= MAX_REFINEMENTS
                 || !repository.saveProposal(draftId, adminId, draft.version(), normalized, origin, description, now))
@@ -87,15 +87,16 @@ public final class ClassificationPromptService {
             Draft draft = editable(draftId, adminId, now);
             if (!repository.setDraftStatus(draftId, adminId, draft.version(), "preview")) throw conflict();
             String body = normalize(draft.body());
-            return new PromptPreview(draftId, draft.baseRevision(), body,
+            return new PromptPreview(draftId, draft.version() + 1, draft.baseRevision(), body,
                     diff(snapshot(draft.baseRevision()).content(), body), validateDraft(body));
         });
     }
 
-    public ClassificationPromptSnapshot activate(UUID draftId, long adminId, Long expectedActiveRevision, Instant now) {
+    public ClassificationPromptSnapshot activate(UUID draftId, long adminId, long expectedDraftVersion, Long expectedActiveRevision, Instant now) {
         Objects.requireNonNull(now, "now");
         return transactions.execute(status -> {
             Draft draft = editable(draftId, adminId, now);
+            if (draft.version() != expectedDraftVersion) throw conflict();
             String body = normalize(draft.body());
             ValidationResult validation = validateDraft(body);
             if (!validation.valid()) throw new IllegalArgumentException(String.join(",", validation.violationCodes()));

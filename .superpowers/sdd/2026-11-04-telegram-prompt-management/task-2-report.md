@@ -43,3 +43,17 @@ Comando de teste usa host Maven 3.9.11, JDK 25, truststore `/tmp/issue45-tools/c
 - O histórico apresenta o autor e instante da transição; conteúdo/hash/origem/descrição pertencem à revisão escolhida, ou ao padrão quando nextRevision é NULL.
 - O serviço conserva a semântica de CAS por identidade da revisão ativa. Ativação seguida de restauração à mesma revisão não altera uma geração de ponteiro, pois o contrato não inclui esse campo.
 - Descrição padrão e hash são determinísticos. A data EPOCH identifica o padrão Java sem inventar uma data de criação persistida.
+
+## Correção após revisão independente — confirmação vinculada à versão
+
+A revisão identificou uma lacuna Important: a API anterior verificava a versão lida durante a própria ativação, mas não recebia a versão confirmada pelo administrador. Assim, preview do corpo A, edição para B e confirmação antiga publicavam B. Também identificou o Minor em que origin null causava NullPointerException.
+
+Antes da correção, foram adicionados `stalePreviewConfirmationCannotPublishEditedBody` e `nullProposalOriginIsRejectedAsInvalidMetadata`. A execução RED observada teve dois testes e duas falhas de assertion, sem erros/skips: a ativação obsoleta não lançou exceção e origin null lançou NPE em vez de IllegalArgumentException. Log: `/tmp/issue45-task2-review-red.log`.
+
+A assinatura pública agora é obrigatoriamente `activate(UUID draftId, long adminId, long expectedDraftVersion, Long expectedActiveRevision, Instant now)`. Não existe overload que omita expectedDraftVersion. `PromptPreview` passa a incluir `long draftVersion`, correspondente à versão depois da alteração de status para preview. O chamador deve guardar essa versão junto à confirmação e enviá-la na ativação. A transação compara a versão confirmada com o rascunho atual antes de criar qualquer revisão, mantendo também o CAS final para proteger uma edição concorrente posterior à leitura.
+
+O teste verifica que uma confirmação antiga não altera revisão ativa, revisões nem histórico; a edição B permanece intacta. Um novo preview retorna outra versão e permite publicar B. Origin null agora é rejeitado como metadado inválido por IllegalArgumentException sem alterar o rascunho.
+
+GREEN focado após a correção: 22 testes, zero falhas/erros/skips (12 de serviço, quatro de validador, cinco de repositório e um de startup), com PostgreSQL real através do acesso Docker autorizado. Log: `/tmp/issue45-task2-review-green.log`. `git diff --check` também passou. Não foi repetida a suíte completa neste loop, conforme escopo de verificação solicitado pelo agente principal.
+
+Minor diferido: o resumo de linhas é baseado na contagem de conteúdo de linhas e pode indicar +0/-0 quando apenas a ordem das linhas muda. Isso não interfere no vínculo de versão, no corpo completo mostrado no preview, no hash ou nas garantias de publicação. O commit deste follow-up usa a mensagem `fix: bind prompt activation to confirmed draft version`; o hash é informado no retorno ao agente principal. Sem push por este agente.
