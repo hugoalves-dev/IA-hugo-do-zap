@@ -118,7 +118,7 @@ class NotificationServiceTest {
         Instant messageAt = fixture(messageTime);
         seed(chat, "Cliente", false, 1, messageTime, messageTime, "mensagem sintética", NOW);
         String generation = jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, chat);
-        Instant expires = NOW.plusSeconds(86_400);
+        Instant expires = Instant.now().plusSeconds(86_400);
         String payload = JSON.writeValueAsString(Map.of("eventType", NotificationService.ARCHIVED_MESSAGES,
                 "archiveMode", "ALL", "totalChats", 1, "totalMessages", 1,
                 "chats", List.of(Map.of("displayName", "Cliente", "messageCount", 1, "isGroup", false, "policy", "ANYTIME"))));
@@ -133,8 +133,8 @@ class NotificationServiceTest {
 
         assertFalse(delivered);
         assertEquals(0, requestCount.get());
-        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
         assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key='queued-legacy-triage'", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
     }
 
     @Test void triageFilterCompareAndSwapKeepsAConcurrentlyAggregatedMessage() {
