@@ -37,8 +37,8 @@ public record Classification(Set<Situation> situations, boolean requestDetected,
     public Classification {
         situations = situations == null ? Set.of() : Set.copyOf(situations);
         evidence = evidence == null ? java.util.List.of() : evidence.stream().distinct().limit(3).toList();
-        if (replyRecommended && !notificationRecommended)
-            throw new IllegalArgumentException("reply recommendation requires notification recommendation");
+        if (available && replyRecommended && (!notificationRecommended || !requestDetected))
+            throw new IllegalArgumentException("reply recommendation requires a detected request and notification recommendation");
         if (!available) {
             requestDetected = false;
             notificationRecommended = false;

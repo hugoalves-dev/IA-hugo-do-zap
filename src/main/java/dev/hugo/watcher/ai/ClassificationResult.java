@@ -51,8 +51,8 @@ public record ClassificationResult(Intent intent, boolean requestDetected,
             evidence = List.of();
             status = Status.UNCERTAIN;
         } else {
-            if (replyRecommended && !notificationRecommended)
-                throw new IllegalArgumentException("reply recommendation requires notification recommendation");
+            if (replyRecommended && (!notificationRecommended || !requestDetected))
+                throw new IllegalArgumentException("reply recommendation requires a detected request and notification recommendation");
             status = Status.CLASSIFIED;
         }
     }

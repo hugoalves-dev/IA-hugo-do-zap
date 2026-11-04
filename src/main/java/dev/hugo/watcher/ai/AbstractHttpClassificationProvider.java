@@ -102,7 +102,7 @@ abstract class AbstractHttpClassificationProvider implements ClassificationProvi
             if ((parsedIntent == ClassificationResult.Intent.NONE && request)
                     || (parsedIntent != ClassificationResult.Intent.NONE
                     && parsedIntent != ClassificationResult.Intent.UNCERTAIN && !request)
-                    || (reply && !notification))
+                    || (reply && (!notification || !request)))
                 throw new IllegalArgumentException("inconsistent classification fields");
             return ClassificationResult.classified(parsedIntent, request, notification, reply,
                     parsedUrgency, parsedEvidence, confidence.doubleValue());

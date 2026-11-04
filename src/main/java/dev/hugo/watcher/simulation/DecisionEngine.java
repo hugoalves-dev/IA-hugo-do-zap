@@ -55,7 +55,7 @@ public final class DecisionEngine {
                 && criticalAlertTemplate.situation() == Situation.CRITICAL_URGENCY
                 && criticalAlertTemplate.isPreapprovedAndDisclosed();
         boolean alertAuthorized = highOrCritical
-                ? settings.authorizedSituations().contains(Situation.CRITICAL_URGENCY) && criticalAlertTemplateReady
+                ? authorized && settings.authorizedSituations().contains(Situation.CRITICAL_URGENCY) && criticalAlertTemplateReady
                     && (!batch.chatJid().endsWith("@g.us") || settings.authorizedSituations().contains(Situation.GROUP_TRIGGER))
                 : authorized;
         boolean group = batch.chatJid().endsWith("@g.us");
@@ -68,7 +68,7 @@ public final class DecisionEngine {
         if (notificationRecommended && !alert) {
             if (!settings.intelligentAlertsEnabled()) blockers.add("intelligent_alerts_disabled");
             if (!ownerAvailable && !(critical && classification.explicitPersonalReference())) blockers.add("owner_unavailable");
-            if (highOrCritical && !settings.authorizedSituations().contains(Situation.CRITICAL_URGENCY))
+            if (highOrCritical && (!authorized || !settings.authorizedSituations().contains(Situation.CRITICAL_URGENCY)))
                 blockers.add("conversation_authorization_required");
             else if (!highOrCritical && !authorized) blockers.add("conversation_authorization_required");
             if (highOrCritical && !criticalAlertTemplateReady) blockers.add("critical_alert_template_required");
