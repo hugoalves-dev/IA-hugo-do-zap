@@ -19,6 +19,19 @@ class DatabaseMigrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
+    @Test void v59PreservesExistingPromptInputSessions() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_prompt_session").defaultSchema("upgrade_prompt_session")
+                .target("58").load().migrate();
+        jdbc.update("insert into upgrade_prompt_session.telegram_prompt_input_sessions(user_id,chat_id,expires_at,created_at) values (42,84,now()+interval '10 minutes',now())");
+        Flyway.configure().dataSource(source).schemas("upgrade_prompt_session").defaultSchema("upgrade_prompt_session")
+                .load().migrate();
+        assertEquals(84L, jdbc.queryForObject("select chat_id from upgrade_prompt_session.telegram_prompt_input_sessions where user_id=42", Long.class));
+        assertNull(jdbc.queryForObject("select draft_id from upgrade_prompt_session.telegram_prompt_input_sessions where user_id=42", java.util.UUID.class));
+    }
+
     @Test void v58PreservesExistingPromptRevisionAndActiveHistory() {
         var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());

@@ -72,6 +72,27 @@ public class ClassificationPromptService {
         return repository.hasPendingInput(user, chat, now);
     }
 
+    /** Associate a durable editing session with one unexpired draft in the authorized private chat. */
+    public Draft beginManualInput(long user, long chat, Instant now) {
+        if (user <= 0 || chat <= 0 || now == null) throw new IllegalArgumentException("invalid_prompt_session");
+        return transactions.execute(status -> {
+            repository.pendingDraftInput(user, chat, now).ifPresent(id -> cancel(id, user, now));
+            Draft draft = createManualDraft(user, (long) activeSnapshot().revision(), now);
+            repository.beginDraftInput(user, chat, draft.id(), draft.expiresAt(), now);
+            return draft;
+        });
+    }
+
+    public java.util.Optional<Draft> pendingManualInput(long user, long chat, Instant now) {
+        if (user <= 0 || chat <= 0 || now == null) return java.util.Optional.empty();
+        return repository.pendingDraftInput(user, chat, now)
+                .flatMap(id -> repository.draft(id, user, now)).filter(ClassificationPromptService::isEditable);
+    }
+
+    public boolean endManualInput(long user, long chat, UUID draftId, Instant now) {
+        return repository.endDraftInput(user, chat, draftId, now);
+    }
+
     public PromptRevision acceptInput(long user, long chat, String body, Instant at) {
         validate(body, user, at);
         String normalized = body.strip();
@@ -161,6 +182,8 @@ public class ClassificationPromptService {
         return snapshot(repository.activeState().revisionId());
     }
 
+    public ClassificationPromptRepository.ActiveState activeState() { return repository.activeState(); }
+
     public ValidationResult validateDraft(String body) { return validator.validate(normalize(body)); }
 
     public Draft createManualDraft(long adminId, Long baseRevision, Instant now) {
@@ -180,6 +203,12 @@ public class ClassificationPromptService {
         requireBody(normalized, MAX_PART_LENGTH);
         requireBody(draft.body() + "\n" + normalized, ClassificationPromptValidator.MAX_BODY_LENGTH);
         if (!repository.appendDraftPart(draftId, adminId, draft.version(), normalized, now)) throw conflict();
+        return editable(draftId, adminId, now);
+    }
+
+    public Draft clearManualDraft(UUID draftId, long adminId, Instant now) {
+        Draft draft = editable(draftId, adminId, now);
+        if (!repository.clearDraft(draftId, adminId, draft.version(), now)) throw conflict();
         return editable(draftId, adminId, now);
     }
 
@@ -221,6 +250,14 @@ public class ClassificationPromptService {
         });
     }
 
+    public ClassificationPromptSnapshot activate(UUID draftId, long adminId, long expectedDraftVersion,
+                                                  Long expectedActiveRevision, long expectedStateVersion, Instant now) {
+        return transactions.execute(status -> {
+            requireStateVersion(expectedStateVersion);
+            return activate(draftId, adminId, expectedDraftVersion, expectedActiveRevision, now);
+        });
+    }
+
     public ClassificationPromptSnapshot restore(long revisionId, long adminId, Long expectedActiveRevision, Instant now) {
         Objects.requireNonNull(now, "now");
         return transactions.execute(status -> {
@@ -232,12 +269,32 @@ public class ClassificationPromptService {
         });
     }
 
+    public ClassificationPromptSnapshot restore(long revisionId, long adminId, Long expectedActiveRevision,
+                                                 long expectedStateVersion, Instant now) {
+        return transactions.execute(status -> {
+            requireStateVersion(expectedStateVersion);
+            return restore(revisionId, adminId, expectedActiveRevision, now);
+        });
+    }
+
     public ClassificationPromptSnapshot resetToDefault(long adminId, Long expectedActiveRevision, Instant now) {
         Objects.requireNonNull(now, "now");
         return transactions.execute(status -> {
             if (!repository.transition(pointer(expectedActiveRevision), null, "reset", adminId, now)) throw conflict();
             return lifecycleDefaultSnapshot();
         });
+    }
+
+    public ClassificationPromptSnapshot resetToDefault(long adminId, Long expectedActiveRevision,
+                                                        long expectedStateVersion, Instant now) {
+        return transactions.execute(status -> {
+            requireStateVersion(expectedStateVersion);
+            return resetToDefault(adminId, expectedActiveRevision, now);
+        });
+    }
+
+    private void requireStateVersion(long expectedStateVersion) {
+        if (repository.lockActiveState().version() != expectedStateVersion) throw conflict();
     }
 
     public boolean cancel(UUID draftId, long adminId, Instant now) {
