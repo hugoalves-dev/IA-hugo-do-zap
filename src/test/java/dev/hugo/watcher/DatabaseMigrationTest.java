@@ -19,6 +19,28 @@ class DatabaseMigrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
+    @Test void v55AddsDefaultPromptStateWithoutChangingExistingAdministration() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        Flyway.configure().dataSource(source).schemas("upgrade_prompt").defaultSchema("upgrade_prompt")
+                .target("54").load().migrate();
+        jdbc.update("update upgrade_prompt.archive_monitor_settings set mode='ARCHIVED_ONLY' where singleton_id=1");
+
+        var flyway = Flyway.configure().dataSource(source).schemas("upgrade_prompt").defaultSchema("upgrade_prompt")
+                .load();
+        flyway.migrate();
+        flyway.migrate();
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_active", Integer.class));
+        assertNull(jdbc.queryForObject("select revision_id from upgrade_prompt.classification_prompt_active where singleton_id=1", Long.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_revisions", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_drafts", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from upgrade_prompt.classification_prompt_transitions", Integer.class));
+        assertEquals("ARCHIVED_ONLY", jdbc.queryForObject(
+                "select mode from upgrade_prompt.archive_monitor_settings where singleton_id=1", String.class));
+    }
+
     @Test void addsRabbitPublicationMarkerWithoutChangingExistingPendingOutboxActions() {
         var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
