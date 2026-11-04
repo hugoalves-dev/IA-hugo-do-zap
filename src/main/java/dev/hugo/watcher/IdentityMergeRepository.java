@@ -189,7 +189,8 @@ public class IdentityMergeRepository {
 
     public List<ContactRow> contactsForCanonical(String canonical, boolean forUpdate) {
         return jdbc.query("""
-                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at
+                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,
+                       manual_display_name,manual_display_name_updated_at,updated_at
                   from contact_identity where canonical_jid=?
                 """ + (forUpdate ? " for update" : ""), IdentityMergeRepository::contact, canonical);
     }
@@ -198,9 +199,32 @@ public class IdentityMergeRepository {
         if (canonicals.isEmpty()) return List.of();
         String params = String.join(",", java.util.Collections.nCopies(canonicals.size(), "?"));
         return jdbc.query("""
-                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at
+                select canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,
+                       manual_display_name,manual_display_name_updated_at,updated_at
                   from contact_identity where canonical_jid in (""" + params + ") order by canonical_jid for update",
                 IdentityMergeRepository::contact, canonicals.toArray());
+    }
+
+    public void upsertManualDisplayName(String target, String lid, String phone, String username, String name) {
+        jdbc.update("""
+                insert into contact_identity(canonical_jid,lid_jid,phone_jid,username,manual_display_name,
+                                             manual_display_name_updated_at,updated_at)
+                values (?,?,?,?,?,?,?)
+                on conflict (canonical_jid) do update set
+                    lid_jid=coalesce(excluded.lid_jid,contact_identity.lid_jid),
+                    phone_jid=coalesce(excluded.phone_jid,contact_identity.phone_jid),
+                    username=coalesce(excluded.username,contact_identity.username),
+                    manual_display_name=excluded.manual_display_name,
+                    manual_display_name_updated_at=excluded.manual_display_name_updated_at,
+                    updated_at=excluded.updated_at
+                """, target, lid, phone, username, name, Timestamp.from(Instant.now()), Timestamp.from(Instant.now()));
+    }
+
+    public void clearManualDisplayName(String target) {
+        jdbc.update("""
+                update contact_identity set manual_display_name=null,manual_display_name_updated_at=null,updated_at=?
+                 where canonical_jid=?
+                """, Timestamp.from(Instant.now()), target);
     }
 
     public void upsertContactName(String target, String lid, String phone, String username,
@@ -224,14 +248,17 @@ public class IdentityMergeRepository {
     }
 
     public void replaceContacts(List<String> candidates, String canonical, String lid, String phone,
-                                String username, String displayName, ContactNameSource source) {
+                                String username, String displayName, ContactNameSource source,
+                                String manualDisplayName, Instant manualDisplayNameUpdatedAt) {
         if (candidates.isEmpty()) throw new IllegalArgumentException("Empty identity merge");
         String params = String.join(",", java.util.Collections.nCopies(candidates.size(), "?"));
         jdbc.update("delete from contact_identity where canonical_jid in (" + params + ")", candidates.toArray());
         jdbc.update("""
-                insert into contact_identity(canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,updated_at)
-                values (?,?,?,?,?,?,?)
+                insert into contact_identity(canonical_jid,lid_jid,phone_jid,username,display_name,display_name_source,
+                                             manual_display_name,manual_display_name_updated_at,updated_at)
+                values (?,?,?,?,?,?,?,?,?)
                 """, canonical, lid, phone, username, displayName, source == null ? null : source.name(),
+                manualDisplayName, manualDisplayNameUpdatedAt == null ? null : Timestamp.from(manualDisplayNameUpdatedAt),
                 Timestamp.from(Instant.now()));
     }
 
@@ -291,7 +318,10 @@ public class IdentityMergeRepository {
     private static ContactRow contact(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
         return new ContactRow(rs.getString("canonical_jid"), rs.getString("lid_jid"),
                 rs.getString("phone_jid"), rs.getString("username"), rs.getString("display_name"),
-                source(rs.getString("display_name_source")), rs.getTimestamp("updated_at").toInstant());
+                source(rs.getString("display_name_source")), rs.getString("manual_display_name"),
+                rs.getTimestamp("manual_display_name_updated_at") == null ? null
+                        : rs.getTimestamp("manual_display_name_updated_at").toInstant(),
+                rs.getTimestamp("updated_at").toInstant());
     }
 
     private static ContactNameSource source(String value) {
@@ -301,7 +331,8 @@ public class IdentityMergeRepository {
     }
 
     public record ContactRow(String canonicalJid, String lidJid, String phoneJid, String username,
-                             String displayName, ContactNameSource nameSource, Instant updatedAt) { }
+                             String displayName, ContactNameSource nameSource, String manualDisplayName,
+                             Instant manualDisplayNameUpdatedAt, Instant updatedAt) { }
     public record ChatSnapshotRow(String chatJid, Boolean archived, Instant snapshotAt, String displayName,
                                   boolean group, boolean synchronizedSnapshot, Instant lastReadAt) { }
     public record PendingRow(String chatJid, String payload, Instant dueAt, Instant updatedAt, Instant expiresAt) { }

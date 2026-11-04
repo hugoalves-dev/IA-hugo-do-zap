@@ -320,6 +320,23 @@ class NotificationServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
     }
 
+    @Test void groupMessageShowsGroupAndCanonicalParticipantNameSeparately() {
+        String group = "120363000000000000@g.us";
+        String participant = "5511999999999@s.whatsapp.net";
+        seed(group, "Equipe", true, 1, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "Olá", NOW);
+        jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?)", participant, participant);
+        jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?,'CONTACT_NAME')",
+                participant, "João <Oficina> & Café");
+        jdbc.update("update pending_notification set payload=jsonb_set(payload,'{previewSenderJid}',to_jsonb(?::text),true) where chat_jid=?",
+                participant, group);
+
+        notifications.flush(NOW);
+
+        assertTrue(receivedBody.get().contains("Equipe"));
+        assertTrue(receivedBody.get().contains("<b>João &lt;Oficina&gt; &amp; Café</b>: Olá"));
+        assertFalse(receivedBody.get().contains("5511999999999@s.whatsapp.net"));
+    }
+
     @Test void emergencyKillSwitchDoesNotBlockQueuedTelegramAdminReply() {
         Instant now = Instant.now();
         jdbc.update("update automation_settings set kill_switch_enabled=true,intelligent_alerts_enabled=false,auto_reply_enabled=false where singleton_id=1");

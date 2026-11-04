@@ -269,6 +269,7 @@ public final class AiSimulationClassifier {
         metadata.put("contextCount", contextEntries.size());
         metadata.put("contextOwnerCount", contextEntries.stream().filter(e -> "owner".equals(e.role())).count());
         metadata.put("contextContactCount", contextEntries.stream().filter(e -> "contact".equals(e.role())).count());
+        metadata.put("contextGroupParticipantCount", contextEntries.stream().filter(e -> "group_participant".equals(e.role())).count());
         metadata.put("contextWindowHours", contextWindowHours);
         return JSON.writeValueAsString(metadata);
     }

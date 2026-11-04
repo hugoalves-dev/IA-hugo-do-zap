@@ -42,6 +42,18 @@ class TelegramMessageFormatterTest {
         assertTrue(text.contains("&lt;b&gt;oi &amp; tchau&lt;/b&gt;"));
     }
 
+    @Test void showsGroupNameAndSenderNameSeparatelyWithHtmlEscaping() {
+        String text = formatter.format(new OutboxAction(9, "archive", "archived_messages", """
+                {"eventType":"archived_messages","archiveMode":"ALL","totalChats":1,"totalMessages":1,"chats":[
+                 {"displayName":"Equipe","isGroup":true,"lastMessageSender":"João <Oficina> & Cia",
+                  "messageCount":1,"lastMessageAt":"2026-10-29T19:53:14Z","lastMessagePreview":"Olá"}]}
+                """, "[]", 1, null, null, null));
+
+        assertTrue(text.contains("Equipe"));
+        assertTrue(text.contains("<b>João &lt;Oficina&gt; &amp; Cia</b>: Olá"));
+        assertFalse(text.contains("João <Oficina>"));
+    }
+
     @Test void unarchivedModeNeverLinksLidsGroupsOrInvalidNumbersAndOmitsInvalidDates() {
         String text = formatter.format(new OutboxAction(9, "archive", "archived_messages", """
                 {"eventType":"archived_messages","archiveMode":"UNARCHIVED_ONLY","totalChats":3,"totalMessages":3,"chats":[

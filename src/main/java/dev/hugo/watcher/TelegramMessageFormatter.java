@@ -94,8 +94,13 @@ public class TelegramMessageFormatter {
                 line.append("\nÚltima: ").append(LOCAL_DATE.withZone(timezone).format(last));
             } catch (RuntimeException ignored) { }
             String preview = cleanPreview(chat.path("lastMessagePreview").asString(""));
-            if (!preview.isEmpty()) line.append("\n<blockquote>")
-                    .append(escape(limit(preview, MAX_PREVIEW_LENGTH))).append("</blockquote>");
+            if (!preview.isEmpty()) {
+                line.append("\n<blockquote>");
+                String sender = chat.path("isGroup").asBoolean(false)
+                        ? clean(chat.path("lastMessageSender").asString("")) : "";
+                if (!sender.isBlank()) line.append("<b>").append(escape(limit(sender, MAX_NAME_LENGTH))).append("</b>: ");
+                line.append(escape(limit(preview, MAX_PREVIEW_LENGTH))).append("</blockquote>");
+            }
             if (text.length() + line.length() > MAX_MESSAGE_LENGTH) {
                 if (text.length() < MAX_MESSAGE_LENGTH) text.append("…");
                 break;

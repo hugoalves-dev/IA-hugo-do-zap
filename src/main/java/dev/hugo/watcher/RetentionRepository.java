@@ -80,7 +80,7 @@ public class RetentionRepository {
         for (PendingPreview row : rows) {
             Instant previewExpiresAt = previewExpiresAt(row.payload(), row.expiresAt());
             if (!previewExpiresAt.isAfter(now)) {
-                scrubbed += jdbc.update("update pending_notification set payload=payload-'preview' where chat_jid=? and expires_at>? and jsonb_exists(payload, 'preview') and payload=?::jsonb and expires_at=?",
+                scrubbed += jdbc.update("update pending_notification set payload=payload-'preview'-'previewSenderJid' where chat_jid=? and expires_at>? and jsonb_exists(payload, 'preview') and payload=?::jsonb and expires_at=?",
                         row.chatJid(), Timestamp.from(now), row.payload(), Timestamp.from(row.expiresAt()));
             }
         }

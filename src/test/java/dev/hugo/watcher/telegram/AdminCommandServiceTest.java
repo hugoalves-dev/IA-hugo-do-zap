@@ -66,6 +66,24 @@ class AdminCommandServiceTest {
         }
     }
 
+    @Test void manualContactAliasRequiresConfirmationAndCanBeRemoved() {
+        String jid = "5511999999999@s.whatsapp.net";
+        jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?)", jid, jid);
+        jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?,'NOTIFY')",
+                jid, "Perfil original");
+
+        AdminResult confirmation = commands.execute(command("apelido", List.of(jid, "João", "Oficina"), false));
+        assertTrue(confirmation.confirmationRequired());
+        assertNull(jdbc.queryForObject("select manual_display_name from contact_identity where canonical_jid=?", String.class, jid));
+
+        assertTrue(commands.execute(command("apelido", List.of(jid, "João", "Oficina"), true)).accepted());
+        assertEquals("João Oficina", jdbc.queryForObject("select manual_display_name from contact_identity where canonical_jid=?", String.class, jid));
+
+        assertTrue(commands.execute(command("apelido", List.of(jid, "remover"), true)).accepted());
+        assertNull(jdbc.queryForObject("select manual_display_name from contact_identity where canonical_jid=?", String.class, jid));
+        assertEquals("Perfil original", jdbc.queryForObject("select display_name from contact_identity where canonical_jid=?", String.class, jid));
+    }
+
     @Test void webhookMenuUsesOpaqueCallbackTokensAndCancelRevokesConfirmation() {
         assertMenuAndConfirmationCallbacks(false);
     }
@@ -293,6 +311,9 @@ class AdminCommandServiceTest {
         String result = commands.execute(command("ultimas", List.of("10"), false)).message();
         assertTrue(result.contains("Amazon &amp; Filhos"));
         assertFalse(result.contains(chat));
+        String detail = commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message();
+        assertTrue(detail.contains("Contato: Amazon &amp; Filhos"));
+        assertFalse(detail.contains(chat));
     }
 
     @Test void diagnosticIsShownForNewDecisionsWithoutInventingOldReasons() {

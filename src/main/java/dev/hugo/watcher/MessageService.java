@@ -187,6 +187,9 @@ public class MessageService {
         Pending current = persistence.readPendingForUpdate(canonicalJid);
         Instant lastAt = current == null || receivedAt.isAfter(current.lastAt()) ? receivedAt : current.lastAt();
         String lastPreview = current == null || !receivedAt.isBefore(current.lastAt()) ? preview : current.preview();
+        String lastPreviewSenderJid = current == null || !receivedAt.isBefore(current.lastAt())
+                ? (group && !participant.isBlank() ? participant : null)
+                : current.previewSenderJid();
         int retentionDays = Math.min(7, Math.max(1, properties.getRetentionDays()));
         Instant expiresAt = now.plusSeconds(retentionDays * 86_400L);
         Instant previewExpiresAt = current == null || !receivedAt.isBefore(current.lastAt())
@@ -196,6 +199,7 @@ public class MessageService {
         payload.put("firstMessageAt", current == null ? receivedAt.toString() : current.firstAt().toString());
         payload.put("lastMessageAt", lastAt.toString());
         payload.put("preview", lastPreview);
+        if (lastPreviewSenderJid != null) payload.put("previewSenderJid", lastPreviewSenderJid);
         payload.put("previewExpiresAt", previewExpiresAt.toString());
         payload.put("isGroup", chat.group());
         payload.put("notificationPolicy", policy.name());

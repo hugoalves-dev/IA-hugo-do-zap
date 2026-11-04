@@ -1,7 +1,9 @@
 package dev.hugo.watcher.ai;
 
 import dev.hugo.watcher.IncomingMessage;
+import dev.hugo.watcher.IdentityService;
 import dev.hugo.watcher.simulation.Batch;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.json.JsonMapper;
@@ -18,14 +20,24 @@ public class ConversationContextRepository {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
     private final Duration window;
+    private final IdentityService identities;
+    @Autowired public ConversationContextRepository(JdbcTemplate jdbc, IdentityService identities) {
+        this(jdbc, identities, Duration.ofHours(24));
+    }
+
     public ConversationContextRepository(JdbcTemplate jdbc) {
-        this(jdbc, Duration.ofHours(24));
+        this(jdbc, null, Duration.ofHours(24));
     }
 
     ConversationContextRepository(JdbcTemplate jdbc, Duration window) {
+        this(jdbc, null, window);
+    }
+
+    ConversationContextRepository(JdbcTemplate jdbc, IdentityService identities, Duration window) {
         if (window == null || window.isNegative() || window.isZero() || window.compareTo(Duration.ofDays(7)) > 0)
             throw new IllegalArgumentException("context window must be between zero and seven days");
         this.jdbc = jdbc;
+        this.identities = identities;
         this.window = window;
     }
 
@@ -36,7 +48,7 @@ public class ConversationContextRepository {
     public ClassificationInput input(Batch batch, Instant now, Duration window) {
         if (window == null || window.isNegative() || window.isZero() || window.compareTo(Duration.ofDays(7)) > 0)
             throw new IllegalArgumentException("context window must be between zero and seven days");
-        ClassificationInput target = ClassificationInput.fromBatch(batch);
+        ClassificationInput target = input(batch, false);
         if (target.target().isEmpty()) return target;
         if (batch.messages().isEmpty() || batch.chatJid().endsWith("@g.us") && batch.participantJid().isBlank())
             return target;
@@ -44,7 +56,7 @@ public class ConversationContextRepository {
                 .min(Comparator.naturalOrder()).orElse(null);
         Instant latest = batch.messages().stream().filter(m -> !m.fromMe() && !m.history() && !ClassificationInput.extractText(m.content()).isBlank())
                 .map(IncomingMessage::receivedAt).filter(java.util.Objects::nonNull).max(Comparator.naturalOrder()).orElse(null);
-        if (first == null || latest == null) return ClassificationInput.fromBatch(batch);
+        if (first == null || latest == null) return input(batch, false);
         List<String> rows = jdbc.query("""
                 select m.payload::text from simulation_batch_messages m
                   join simulation_batches b on b.batch_id=m.batch_id
@@ -82,6 +94,15 @@ public class ConversationContextRepository {
         combined.addAll(batch.messages());
         combined.sort(Comparator.comparing(IncomingMessage::receivedAt,
                 Comparator.nullsFirst(Comparator.naturalOrder())).thenComparing(m -> m.externalId().orElse("")));
-        return ClassificationInput.fromContext(new Batch(batch.id(), batch.chatJid(), batch.participantJid(), combined));
+        return input(new Batch(batch.id(), batch.chatJid(), batch.participantJid(), combined), true);
+    }
+
+    private ClassificationInput input(Batch batch, boolean includeVerifiedGroupOwnerContext) {
+        if (identities == null) return includeVerifiedGroupOwnerContext
+                ? ClassificationInput.fromContext(batch) : ClassificationInput.fromBatch(batch);
+        java.util.function.Function<String, ClassificationInput.SenderIdentity> resolver = jid ->
+                new ClassificationInput.SenderIdentity(identities.canonicalJidFor(jid), identities.resolveFriendlyDisplayName(jid));
+        return includeVerifiedGroupOwnerContext
+                ? ClassificationInput.fromContext(batch, resolver) : ClassificationInput.fromBatch(batch, resolver);
     }
 }

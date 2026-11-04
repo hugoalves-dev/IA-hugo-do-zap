@@ -474,7 +474,9 @@ public class NotificationService {
             String username = cleanUsername(rs.getString("username"));
             if (username == null && canonicalJid.startsWith("@")) username = cleanUsername(canonicalJid);
             return new PendingRow(rs.getString("chat_jid"), canonicalJid,
-                    rs.getString("chat_name"), rs.getString("identity_name"), rs.getBoolean("is_group"),
+                    rs.getString("chat_name"), rs.getString("identity_name"),
+                    validName(rs.getString("preview_sender_name")) ? rs.getString("preview_sender_name").trim() : null,
+                    rs.getBoolean("is_group"),
                     phoneJid, lidJid, username, integer(payload.get("messageCount")),
                     first, last, preview, previewExpiry, rs.getTimestamp("updated_at").toInstant(),
                 rs.getTimestamp("expires_at").toInstant(), rs.getString("pending_generation"),
@@ -500,6 +502,8 @@ public class NotificationService {
         chat.put("firstMessageAt", localIso(row.firstMessageAt(), zone));
         chat.put("lastMessageAt", localIso(row.lastMessageAt(), zone));
         chat.put("lastMessagePreview", row.preview());
+        if (row.group() && row.preview() != null && !row.preview().isBlank())
+            chat.put("lastMessageSender", row.previewSenderName() == null ? "Participante" : row.previewSenderName());
         chat.put("isGroup", row.group());
         chat.put("policy", policy);
         return new LegacyChat(row.messageCount(), chat);
@@ -629,7 +633,7 @@ public class NotificationService {
     private static Instant min(Instant left, Instant right) { return left.isBefore(right) ? left : right; }
 
     private record PendingRow(String chatJid, String canonicalJid, String chatName, String identityName,
-                              boolean group, String phoneJid, String lidJid, String username, int messageCount,
+                              String previewSenderName, boolean group, String phoneJid, String lidJid, String username, int messageCount,
                               Instant firstMessageAt, Instant lastMessageAt, String preview, Instant previewExpiry,
                               Instant updatedAt, Instant expiresAt, String generation, Boolean archived,
                               boolean synchronizedSnapshot) { }

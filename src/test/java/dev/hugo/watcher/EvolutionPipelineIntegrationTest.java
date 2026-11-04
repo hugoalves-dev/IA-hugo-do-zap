@@ -99,6 +99,12 @@ class EvolutionPipelineIntegrationTest {
         assertEquals(202, post(contact.replace("Loja & Café", "Outro nome")).statusCode());
         assertEquals(1, jobs.processAvailable());
         assertEquals("Agenda", identities.resolveDisplayName(jid));
+        identities.setManualAlias(jid, "João - Oficina");
+        assertEquals(202, post(contact.replace("Loja & Café", "Perfil de empresa")).statusCode());
+        assertEquals(1, jobs.processAvailable());
+        assertEquals("João - Oficina", identities.resolveDisplayName(jid));
+        identities.clearManualAlias(jid);
+        assertEquals("Agenda", identities.resolveDisplayName(jid));
     }
 
     @Test void incomingPushNameSurvivesConfirmedLidPhoneMergeAndRendersEscaped() throws Exception {

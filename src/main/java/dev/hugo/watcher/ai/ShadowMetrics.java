@@ -50,8 +50,10 @@ public final class ShadowMetrics {
         if (entries == null) return;
         long owner = entries.stream().filter(entry -> "owner".equals(entry.role())).count();
         long contact = entries.stream().filter(entry -> "contact".equals(entry.role())).count();
+        long groupParticipant = entries.stream().filter(entry -> "group_participant".equals(entry.role())).count();
         if (owner > 0) registry.counter("watcher.shadow.context.messages", "role", "owner").increment(owner);
         if (contact > 0) registry.counter("watcher.shadow.context.messages", "role", "contact").increment(contact);
+        if (groupParticipant > 0) registry.counter("watcher.shadow.context.messages", "role", "group_participant").increment(groupParticipant);
     }
 
     public void contextDiagnostic(String reason) {
