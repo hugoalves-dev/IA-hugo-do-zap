@@ -23,7 +23,13 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
     public OpenRouterProvider(URI endpoint, String model, String apiKey, ProviderTransport transport,
                               ProviderAuthorization authorization, Duration timeout,
                               int maxTokens, boolean reasoningEnabled) {
-        super("openrouter", transport, authorization, timeout);
+        this(endpoint, model, apiKey, transport, authorization, timeout, maxTokens, reasoningEnabled, SYSTEM_PROMPT);
+    }
+
+    public OpenRouterProvider(URI endpoint, String model, String apiKey, ProviderTransport transport,
+                              ProviderAuthorization authorization, Duration timeout,
+                              int maxTokens, boolean reasoningEnabled, String systemPrompt) {
+        super("openrouter", transport, authorization, timeout, systemPrompt);
         this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint, "openrouter");
         this.model = requireText(model, "model");
         this.apiKey = requireText(apiKey, "apiKey");
@@ -45,7 +51,7 @@ public final class OpenRouterProvider extends AbstractHttpClassificationProvider
     private HttpRequest request(ClassificationInput input) {
         Map<String, Object> body = new java.util.LinkedHashMap<>(Map.of(
                 "model", model,
-                "messages", List.of(Map.of("role", "system", "content", SYSTEM_PROMPT),
+                "messages", List.of(Map.of("role", "system", "content", systemPrompt),
                         Map.of("role", "user", "content", userPayload(input))),
                 "max_tokens", maxTokens,
                 "provider", Map.of("zdr", true, "data_collection", "deny", "allow_fallbacks", false,

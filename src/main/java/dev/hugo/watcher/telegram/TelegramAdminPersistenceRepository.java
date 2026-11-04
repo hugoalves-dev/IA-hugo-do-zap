@@ -150,6 +150,12 @@ public class TelegramAdminPersistenceRepository {
                 action, outcome, user, chat, Timestamp.from(now));
     }
 
+    public String recentAudit() {
+        List<String> rows = jdbc.query("select action || ' · ' || outcome || ' · ' || created_at from telegram_admin_audit order by created_at desc limit 10",
+                (rs, row) -> rs.getString(1));
+        return "Status / auditoria\n" + (rows.isEmpty() ? "Nenhuma alteração registrada." : String.join("\n", rows));
+    }
+
     public record Status(String overrideState, Instant overrideExpiresAt) { }
     public record Budget(Long daily, Long monthly) { }
 }

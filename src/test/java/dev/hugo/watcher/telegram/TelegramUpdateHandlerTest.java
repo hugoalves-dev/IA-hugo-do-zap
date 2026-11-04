@@ -34,6 +34,17 @@ class TelegramUpdateHandlerTest {
         verify(commands).execute(argThat((AdminCommand command) -> command.name().equals("status") && command.userId() == 1001 && command.chatId() == 2002));
     }
 
+    @Test void routesPlainTextOnlyToAnAuthorizedPromptInputSession() {
+        AdminCommandService commands = mock(AdminCommandService.class);
+        when(commands.acceptPromptInput("Operational note.", 1001, 2002, null)).thenReturn(AdminResult.accepted("draft saved"));
+        TelegramUpdateHandler handler = new TelegramUpdateHandler(1001, 2002, commands, mock(CallbackTokenService.class));
+
+        assertTrue(handler.handle(messageUpdate("Operational note.", 1001, 2002, "private")).accepted());
+        assertFalse(handler.handle(messageUpdate("Operational note.", 9999, 2002, "private")).accepted());
+        verify(commands).acceptPromptInput("Operational note.", 1001, 2002, null);
+        verifyNoMoreInteractions(commands);
+    }
+
     @Test void callbackMustMatchPrivateAdminIdentityBeforeTokenConsumption() {
         CallbackTokenService tokens = mock(CallbackTokenService.class);
         TelegramUpdateHandler handler = new TelegramUpdateHandler(1001, 2002, mock(AdminCommandService.class), tokens);

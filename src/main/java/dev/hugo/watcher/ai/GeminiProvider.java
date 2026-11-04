@@ -15,7 +15,12 @@ public final class GeminiProvider extends AbstractHttpClassificationProvider {
 
     public GeminiProvider(URI endpoint, String model, String apiKey, ProviderTransport transport,
                           ProviderAuthorization authorization, Duration timeout) {
-        super("gemini", transport, authorization, timeout);
+        this(endpoint, model, apiKey, transport, authorization, timeout, SYSTEM_PROMPT);
+    }
+
+    public GeminiProvider(URI endpoint, String model, String apiKey, ProviderTransport transport,
+                          ProviderAuthorization authorization, Duration timeout, String systemPrompt) {
+        super("gemini", transport, authorization, timeout, systemPrompt);
         this.endpoint = ProviderEndpointPolicy.requireSafe(endpoint, "gemini");
         this.model = requireText(model, "model");
         this.apiKey = requireText(apiKey, "apiKey");
@@ -38,7 +43,7 @@ public final class GeminiProvider extends AbstractHttpClassificationProvider {
 
     private HttpRequest request(ClassificationInput input) {
         Map<String, Object> body = Map.of(
-                "systemInstruction", Map.of("parts", List.of(Map.of("text", SYSTEM_PROMPT))),
+                "systemInstruction", Map.of("parts", List.of(Map.of("text", systemPrompt))),
                 "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", userPayload(input))))),
                 "generationConfig", Map.of("responseMimeType", "application/json", "responseSchema", SCHEMA,
                         "temperature", 0, "maxOutputTokens", 300));
