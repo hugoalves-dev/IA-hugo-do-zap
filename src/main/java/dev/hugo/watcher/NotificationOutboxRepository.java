@@ -128,6 +128,21 @@ public class NotificationOutboxRepository {
         return keys.size();
     }
 
+    /** Publishes only pending Telegram admin replies, keeping the admin path isolated from other outbox work. */
+    public int publishPendingAdminReplies() {
+        if (rabbitPublisher == null) return 0;
+        List<String> keys = jdbc.query("""
+                select action_key from outbox_actions
+                where action_type in ('telegram_admin_reply','telegram_admin_edit')
+                  and rabbit_confirmed_at is null
+                  and sensitive_expires_at>clock_timestamp()
+                  and (status='PENDING' or (status='PROCESSING' and lease_expires_at<=clock_timestamp()))
+                order by created_at,id limit 20
+                """, (rs, row) -> rs.getString(1));
+        keys.forEach(this::publishAction);
+        return keys.size();
+    }
+
     private void publishAfterCommit(String actionKey) {
         if (rabbitPublisher == null) return;
         Runnable publish = () -> publishAction(actionKey);

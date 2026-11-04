@@ -14,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -23,6 +25,7 @@ import java.util.Map;
 @Component
 @ConditionalOnProperty(prefix = "watcher.rabbitmq", name = "enabled", havingValue = "true")
 public class TelegramRabbitConsumer {
+    private static final Logger log = LoggerFactory.getLogger(TelegramRabbitConsumer.class);
     private static final int MAX_RETRIES = 3;
     private static final long[] RETRY_DELAY_MILLIS = {1_000, 5_000, 30_000};
 
@@ -59,6 +62,7 @@ public class TelegramRabbitConsumer {
     public void receive(Message message, Channel channel) throws java.io.IOException {
         java.time.Instant ingressAt = ingressAt(message);
         RabbitDeliveryContext.set(ingressAt);
+        String stage = "parse";
         try {
             process(message, channel);
         } finally {
@@ -69,22 +73,31 @@ public class TelegramRabbitConsumer {
     private void process(Message message, Channel channel) throws java.io.IOException {
         String body = new String(message.getBody(), StandardCharsets.UTF_8);
         String messageId = message.getMessageProperties().getMessageId();
+        String stage = "parse";
         try {
             Update update = BotUtils.parseUpdate(body);
             if (update == null || update.updateId() == null || update.updateId() < 0)
                 throw new IllegalArgumentException("invalid Telegram update");
             long updateId = update.updateId().longValue();
+            stage = "inbox_persist";
             inbox.insertIfAbsent(updateId, body);
+            stage = "admin_command";
             Processed processed = transactions.execute(status -> processPending(updateId));
             if (processed != null && processed.callbackId() != null) {
+                stage = "callback_feedback";
                 if (!callbacks.answerDurably(processed.callbackId(), processed.feedback()))
                     throw new IllegalStateException("Telegram callback acknowledgement was not confirmed");
                 inbox.markCallbackAnswered(processed.updateId());
             }
-            notifications.flushAfterInbound(Instant.now());
+            stage = "reply_dispatch";
+            notifications.dispatchAdminRepliesAfterInbound(Instant.now());
+            stage = "ack";
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (RuntimeException failure) {
-            retryOrDeadLetter(message, channel, messageId == null ? "telegram-unknown" : messageId, body);
+            int retries = retryCount(message);
+            log.error("Telegram admin update failed: messageId={}, retryCount={}, stage={}, cause={}",
+                    safeMessageId(messageId), retries, stage, failure.getClass().getSimpleName(), failure);
+            retryOrDeadLetter(message, channel, messageId == null ? "telegram-unknown" : messageId);
         }
     }
 
@@ -114,16 +127,28 @@ public class TelegramRabbitConsumer {
         return callbackId == null ? null : new Processed(updateId, callbackId, feedback);
     }
 
-    private void retryOrDeadLetter(Message message, Channel channel, String id, String body) throws java.io.IOException {
+    private void retryOrDeadLetter(Message message, Channel channel, String id) throws java.io.IOException {
         int retries = retryCount(message);
         if (retries >= MAX_RETRIES) {
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
             return;
         }
         int nextRetry = retries + 1;
-        publisher.publishDelayed("admin.retry." + nextRetry, id, body,
-                Map.of("x-retry-count", nextRetry), RETRY_DELAY_MILLIS[nextRetry - 1]);
+        try {
+            publisher.publishDelayed("admin.retry." + nextRetry, id,
+                    new String(message.getBody(), StandardCharsets.UTF_8),
+                    Map.of("x-retry-count", nextRetry), RETRY_DELAY_MILLIS[nextRetry - 1]);
+        } catch (RuntimeException publishFailure) {
+            log.error("Telegram admin retry publication failed: messageId={}, retryCount={}, stage=retry_publish, cause={}",
+                    safeMessageId(id), retries, publishFailure.getClass().getSimpleName(), publishFailure);
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, true);
+            return;
+        }
         channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+    }
+
+    private static String safeMessageId(String id) {
+        return id != null && id.matches("[A-Za-z0-9_.:-]{1,80}") ? id : "redacted";
     }
 
     private static int retryCount(Message message) {

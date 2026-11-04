@@ -21,7 +21,7 @@ class TelegramRabbitConsumerTest {
     private static final String CALLBACK_BODY = "{\"update_id\":42,\"callback_query\":{\"id\":\"callback-1\",\"from\":{\"id\":1001},\"message\":{\"message_id\":4,\"chat\":{\"id\":2002,\"type\":\"private\"}},\"data\":\"token-1\"}}";
 
     @Test
-    void acknowledgesAfterTheUpdateIsCommittedAndItsReplyIsDispatched() throws Exception {
+    void acknowledgesAfterDurableAdminProcessingWithoutWaitingForUnrelatedNotificationDispatch() throws Exception {
         var inbox = mock(TelegramWebhookInboxRepository.class);
         when(inbox.insertIfAbsent(42L, BODY)).thenReturn(1);
         when(inbox.pendingByIdForUpdate(42L)).thenReturn(java.util.List.of(new TelegramWebhookInboxRepository.Item(42L, BODY)));
@@ -35,9 +35,31 @@ class TelegramRabbitConsumerTest {
         consumer.receive(message(0), channel);
 
         verify(inbox).markDone(42L, null, "✅ Comando recebido.");
-        verify(notifications).flushAfterInbound(any());
+        verify(notifications).dispatchAdminRepliesAfterInbound(any());
         verify(channel).basicAck(31L, false);
         verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void menuAndUltimasReadCommandsDoNotDependOnNotificationFlush() throws Exception {
+        for (String commandBody : new String[] {
+                BODY.replace("/status", "/menu"), BODY.replace("/status", "/ultimas 1")}) {
+            var inbox = mock(TelegramWebhookInboxRepository.class);
+            when(inbox.insertIfAbsent(42L, commandBody)).thenReturn(1);
+            when(inbox.pendingByIdForUpdate(42L)).thenReturn(java.util.List.of(
+                    new TelegramWebhookInboxRepository.Item(42L, commandBody)));
+            var handler = mock(TelegramUpdateHandler.class);
+            when(handler.handle(any())).thenReturn(AdminResult.accepted("ok"));
+            var notifications = mock(NotificationService.class);
+            var consumer = consumer(inbox, handler, notifications, mock(RabbitEventPublisher.class));
+            Channel channel = mock(Channel.class);
+
+            consumer.receive(message(commandBody, 0), channel);
+
+            verify(inbox).markDone(42L, null, "✅ Comando recebido.");
+            verify(channel).basicAck(31L, false);
+            verify(notifications).dispatchAdminRepliesAfterInbound(any());
+        }
     }
 
     @Test
@@ -57,6 +79,36 @@ class TelegramRabbitConsumerTest {
         verify(publisher).publishDelayed("admin.retry.1", "42", BODY, Map.of("x-retry-count", 1), 1_000);
         verify(channel).basicAck(31L, false);
         verify(inbox, never()).markDone(42L);
+    }
+
+    @Test
+    void deadLettersAfterRetryExhaustionWithoutExposingPayload() throws Exception {
+        var inbox = mock(TelegramWebhookInboxRepository.class);
+        when(inbox.insertIfAbsent(42L, BODY)).thenReturn(1);
+        when(inbox.pendingByIdForUpdate(42L)).thenThrow(new IllegalStateException("database unavailable"));
+        var consumer = consumer(inbox, mock(TelegramUpdateHandler.class), mock(NotificationService.class),
+                mock(RabbitEventPublisher.class));
+        Channel channel = mock(Channel.class);
+
+        consumer.receive(message(3), channel);
+
+        verify(channel).basicNack(31L, false, false);
+    }
+
+    @Test
+    void requeuesOriginalMessageWhenPublishingRetryFails() throws Exception {
+        var inbox = mock(TelegramWebhookInboxRepository.class);
+        when(inbox.insertIfAbsent(42L, BODY)).thenReturn(1);
+        when(inbox.pendingByIdForUpdate(42L)).thenThrow(new IllegalStateException("database unavailable"));
+        var publisher = mock(RabbitEventPublisher.class);
+        doThrow(new IllegalStateException("broker unavailable")).when(publisher)
+                .publishDelayed(anyString(), anyString(), anyString(), anyMap(), anyLong());
+        var consumer = consumer(inbox, mock(TelegramUpdateHandler.class), mock(NotificationService.class), publisher);
+        Channel channel = mock(Channel.class);
+
+        consumer.receive(message(0), channel);
+
+        verify(channel).basicNack(31L, false, true);
     }
 
     @Test

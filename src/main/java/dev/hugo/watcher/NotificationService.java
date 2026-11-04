@@ -107,6 +107,11 @@ public class NotificationService {
         outbox.publishPendingActions();
     }
 
+    /** Dispatches only durable admin replies; unrelated notification publication cannot block admin ACK. */
+    public void dispatchAdminRepliesAfterInbound(Instant now) {
+        outbox.publishPendingAdminReplies();
+    }
+
     /** Delivers exactly the action named by a RabbitMQ notification message. */
     public boolean deliverQueuedAction(String actionKey, Instant now) {
         OutboxAction action = outbox.claimByKey(actionKey, now);
