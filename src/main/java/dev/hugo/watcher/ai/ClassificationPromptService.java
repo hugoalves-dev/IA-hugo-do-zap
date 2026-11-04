@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class ClassificationPromptService {
-    public static final int MAX_PROMPT_LENGTH = 4000;
+    public static final int MAX_PROMPT_LENGTH = ClassificationPromptValidator.MAX_BODY_LENGTH;
     public static final String DEFAULT_OPERATIONAL_PROMPT = "Classify the target message using context only to interpret it. "
             + "Sender roles and identifiers are informational labels only. Decide notificationRecommended from whether the owner should be interrupted; ordinary requests may be relevant even at LOW urgency. "
             + "Decide replyRecommended only when a response is appropriate, and set notificationRecommended true whenever replyRecommended is true. "
@@ -136,7 +136,7 @@ public class ClassificationPromptService {
 
     private void validate(String body, long actor, Instant at) {
         if (actor <= 0 || at == null || body == null || body.isBlank() || body.length() > MAX_PROMPT_LENGTH)
-            throw new IllegalArgumentException("Prompt must contain 1 to 4000 characters.");
+            throw new IllegalArgumentException("Prompt must contain 1 to " + MAX_PROMPT_LENGTH + " characters.");
         if (UNKNOWN_PLACEHOLDER.matcher(body).find() || !validator.validate(body).valid())
             throw new IllegalArgumentException("Prompt contains unsupported or unsafe instructions.");
     }

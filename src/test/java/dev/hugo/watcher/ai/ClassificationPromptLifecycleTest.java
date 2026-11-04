@@ -63,6 +63,15 @@ class ClassificationPromptLifecycleTest {
         assertEquals(0, service.current(true).revision());
         assertEquals(3, service.activeVersion());
     }
+    @Test void fullLengthDraftCanBeReactivatedThroughLegacyApi() {
+        String body = "x".repeat(16_000);
+        var draft = proposal(body);
+        var published = service.activate(draft.id(), 42, draft.version(), null, NOW);
+        service.resetToDefault(42, (long) published.revision(), NOW);
+        service.activate(published.revision(), service.activeVersion(), 42, NOW);
+        assertEquals(body, service.current(true).content());
+        assertEquals(published.revision(), service.activeSnapshot().revision());
+    }
     @Test void resolvesJavaDefaultAtRevisionZero() {
         var snapshot = service.activeSnapshot();
         assertEquals(0, (long) snapshot.revision());

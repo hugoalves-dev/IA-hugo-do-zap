@@ -16,3 +16,11 @@ Verification using JDK 25, Maven 3.9.11 and host Testcontainers:
 Remaining integration context for Task 3: main already resolves the same snapshot for both providers and persists prompt revision/hash. Review its existing stored-evaluation ordering and failure behavior against the Task 3 brief before treating that task as complete. Full `mvn verify` remains the final integration gate.
 
 A database that previously applied this unmerged feature branch's original V55 will have a conflicting Flyway V55 history against main. The merged migration sequence targets databases following main; such an experimental database needs a separately reviewed repair or rebuild rather than silently changing Flyway history.
+
+## Fix round 1: consistent operational length
+
+The legacy creation/activation validator now uses the same 16,000-character limit as the lifecycle validator, and its error message is generated from that limit. This allows a draft revision of 16,000 characters to be restored through the existing activation API. The existing Telegram text prompt describes a conservative 4,000-character bound for its single-message input; the multi-part issue #45 workflow is a later task.
+
+`/tmp/issue45-limit-red.log` reproduces the 4,000-character failure for both legacy creation and reactivation of a lifecycle draft. `/tmp/issue45-limit-green.log` reports 50 tests passed with no failures, errors or skips across `ClassificationPromptLifecycleTest`, `ClassificationPromptServiceTest`, `OpenRouterProviderTest`, and `GeminiProviderTest`; coverage includes acceptance of 16,000, rejection of 16,001, both provider system-prompt limits, and reactivation after reset.
+
+`/tmp/issue45-limit-message.log` verifies the exact 16,000-character error message (6 tests passed).
