@@ -129,7 +129,8 @@ public class IdentityService {
             List<ContactRow> rows = identityStorage.contactsForCanonical(target, false);
             if (rows.isEmpty()) return fallbackName(target);
             ContactRow contact = rows.getFirst();
-            String resolved = resolveName(null, contact.displayName(), contact.username(), contact.phoneJid(), target);
+            String resolved = resolveName(null, validName(contact.displayName()), contact.nameSource(),
+                    contact.username(), contact.phoneJid(), target);
             identityStorage.updateSnapshotDisplayName(target, resolved.equals(target) ? null : resolved);
             return resolved;
         }), "Manual-name transaction returned no result");
