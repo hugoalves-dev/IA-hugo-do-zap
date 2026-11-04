@@ -27,9 +27,12 @@ public record Classification(Set<Situation> situations, boolean requestDetected,
     }
     public Classification(Set<Situation> situations, boolean requestDetected, boolean explicitPersonalReference,
                           boolean groupTriggerMatched, boolean available) {
-        this(situations, requestDetected, explicitPersonalReference, groupTriggerMatched, available,
+        this(situations, requestDetected, requestDetected, requestDetected, java.util.List.of(),
+                explicitPersonalReference, groupTriggerMatched, available,
                 dev.hugo.watcher.ai.ClassificationResult.Urgency.UNCERTAIN, 0,
-                dev.hugo.watcher.ai.ClassificationResult.Status.UNCERTAIN, null);
+                available ? dev.hugo.watcher.ai.ClassificationResult.Status.CLASSIFIED
+                        : dev.hugo.watcher.ai.ClassificationResult.Status.UNAVAILABLE,
+                null, available ? null : "provider_unavailable");
     }
     public Classification {
         situations = situations == null ? Set.of() : Set.copyOf(situations);

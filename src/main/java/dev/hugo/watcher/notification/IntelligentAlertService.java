@@ -105,12 +105,15 @@ public class IntelligentAlertService {
         if (contexts.isEmpty()) return null;
         AlertContext c = contexts.getFirst();
         if (!"WOULD_ACT".equals(c.decisionState()) || !c.realActionAllowed() || !c.wouldAlert()
+                || !c.notificationRecommended() || !c.authorizedSituation()
                 || !"CLASSIFIED".equals(c.classificationStatus())
-                || !("HIGH".equals(c.urgency()) || "CRITICAL".equals(c.urgency()))
-                || c.confidence() < 0.65 || c.referenceHash() == null || c.referenceHash().isBlank()
+                || !List.of("LOW", "NORMAL", "HIGH", "CRITICAL").contains(c.urgency())
+                || c.confidence() < 0.65
+                || (List.of("HIGH", "CRITICAL").contains(c.urgency()) && !c.criticalTemplateEligible())
                 || c.enqueued() && !isOutboxAlreadyProcessing(decisionId)
-                || !c.templateEnabled() || !c.identifiesAutomation()
-                || !c.templateBody().stripLeading().toLowerCase(java.util.Locale.ROOT).startsWith("resposta automática:")) return null;
+                ) return null;
+        boolean referenceRequired = List.of("HIGH", "CRITICAL").contains(c.urgency()) || c.chatJid().endsWith("@g.us");
+        if (c.referenceHash() == null || c.referenceHash().isBlank()) return referenceRequired ? null : c;
         if (!c.referenceHash().matches("[0-9a-fA-F]{64}")) return null;
         List<SourceMessage> sources = persistence.sourceMessages(decisionId);
         for (SourceMessage source : sources) {

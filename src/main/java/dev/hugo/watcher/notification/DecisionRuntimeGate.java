@@ -49,10 +49,13 @@ public final class DecisionRuntimeGate {
         var c=rows.getFirst();
         try {
             var result=JSON.readTree(c.metadata());
-            if(!result.path("available").asBoolean(false) || !result.path("requestDetected").asBoolean(false)
+            if(!result.path("available").asBoolean(false)
                     || !c.status().equals(result.path("status").asString(""))
                     || !c.urgency().equals(result.path("urgency").asString(""))
                     || c.confidence()!=result.path("confidence").asDouble(-1)) return false;
+            if (alert ? !result.path("notificationRecommended").asBoolean(false)
+                    : (!result.path("requestDetected").asBoolean(false)
+                        || !result.path("replyRecommended").asBoolean(false))) return false;
             String provider=result.path("provider").asString("");
             if(!provider.equals("gemini") && !provider.equals("openrouter")) return false;
             var purposes=result.path("purposes");
@@ -67,7 +70,7 @@ public final class DecisionRuntimeGate {
             }
             boolean critical="CRITICAL".equals(c.urgency());
             if(!chatPurpose || critical && !criticalPurpose) return false;
-            if(critical || c.chat().endsWith("@g.us") || alert) {
+            if(critical || "HIGH".equals(c.urgency()) || c.chat().endsWith("@g.us")) {
                 String proof=queries.findPersonalReferenceHash(id,ownerJid,now);
                 if(proof==null || !proof.equals(c.reference())) return false;
             }

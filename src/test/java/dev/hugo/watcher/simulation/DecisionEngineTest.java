@@ -22,6 +22,8 @@ class DecisionEngineTest {
         assertFalse(decision.wouldReply());
         assertEquals("no_request_detected", decision.reason());
         assertEquals(DecisionStatus.NO_ACTION, decision.status());
+        assertEquals(TriageOutcome.IGNORE, decision.triageOutcome());
+        assertEquals("no_notification_recommended", decision.triageReason());
     }
 
     @Test void unavailableClassifierFailsClosedWithAuditableReason() {
@@ -30,6 +32,7 @@ class DecisionEngineTest {
         assertFalse(decision.wouldReply());
         assertEquals("classification_unavailable", decision.blockedReason());
         assertEquals(DecisionStatus.BLOCKED, decision.status());
+        assertEquals(TriageOutcome.UNDECIDED, decision.triageOutcome());
     }
 
     @Test void inconclusiveProviderResponseHasDistinctFailClosedReason() {
@@ -43,7 +46,9 @@ class DecisionEngineTest {
 
     @Test void contactRequestNeedsExplicitAuthorizationAndTemplate() {
         var classification = Classification.contactRequest();
-        assertFalse(engine.decide(batch(false), classification, policy(true, Set.of(), true, true), NOW).wouldReply());
+        Decision unauthorized = engine.decide(batch(false), classification, policy(true, Set.of(), true, true), NOW);
+        assertFalse(unauthorized.wouldReply());
+        assertEquals(TriageOutcome.NOTIFY_AND_REPLY, unauthorized.triageOutcome());
         assertFalse(engine.decide(batch(false), classification, policy(true, Set.of(Situation.CONTACT_REQUEST), false, true), NOW).wouldReply());
         assertTrue(engine.decide(batch(false), classification,
                 policy(true, Set.of(Situation.CONTACT_REQUEST), true, true), NOW).wouldReply());
@@ -175,6 +180,63 @@ class DecisionEngineTest {
                 policy(true,Set.of(Situation.CRITICAL_URGENCY),true,true).decisionPolicy(), unavailable);
         assertFalse(engine.decide(batch(false), Classification.criticalUrgency(false), critical, NOW).wouldAlert());
         assertTrue(engine.decide(batch(false), Classification.criticalUrgency(true), critical, NOW).wouldAlert());
+    }
+
+    @Test void lowUrgencyRelevantRequestRemainsNotifyOnlyWhenAlertActionsAreDisabled() {
+        var classification = Classification.classified(Set.of(Situation.CONTACT_REQUEST), true, true, false,
+                java.util.List.of(dev.hugo.watcher.ai.ClassificationResult.Evidence.EXPLICIT_REQUEST), false, false,
+                dev.hugo.watcher.ai.ClassificationResult.Urgency.LOW, 0.91, null);
+        var settings = new DecisionPolicy(true, false, false, true, Set.of(), Map.of(),
+                Duration.ZERO, Duration.ZERO, null, null);
+
+        Decision decision = engine.decide(batch(false), classification,
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+
+        assertEquals(TriageOutcome.NOTIFY_ONLY, decision.triageOutcome());
+        assertTrue(decision.notificationRecommended());
+        assertFalse(decision.replyRecommended());
+        assertFalse(decision.wouldAlert());
+        assertFalse(decision.wouldReply());
+        assertFalse(decision.realActionAllowed());
+    }
+
+    @Test void notifyAndReplyRecommendationIsPreservedWhenAutomationAndTemplateAreBlocked() {
+        var classification = Classification.classified(Set.of(Situation.CONTACT_REQUEST), true, true, true,
+                java.util.List.of(dev.hugo.watcher.ai.ClassificationResult.Evidence.EXPLICIT_REQUEST), false, false,
+                dev.hugo.watcher.ai.ClassificationResult.Urgency.NORMAL, 0.91, null);
+        var settings = new DecisionPolicy(true, false, false, true, Set.of(), Map.of(),
+                Duration.ZERO, Duration.ZERO, null, null);
+
+        Decision decision = engine.decide(batch(false), classification,
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+
+        assertEquals(TriageOutcome.NOTIFY_AND_REPLY, decision.triageOutcome());
+        assertEquals("notification_and_reply_recommended", decision.triageReason());
+        assertTrue(decision.notificationRecommended());
+        assertTrue(decision.replyRecommended());
+        assertFalse(decision.wouldAlert());
+        assertFalse(decision.wouldReply());
+        assertTrue(decision.triageBlockers().contains("auto_reply_disabled"));
+        assertTrue(decision.triageBlockers().contains("conversation_authorization_required"));
+        assertTrue(decision.triageBlockers().contains("response_template_missing"));
+        assertFalse(decision.realActionAllowed());
+    }
+
+    @Test void groupReplyRecommendationWithoutVerifiedTriggerNeverBecomesReply() {
+        var classification = Classification.classified(Set.of(Situation.GROUP_TRIGGER), true, true, true,
+                java.util.List.of(dev.hugo.watcher.ai.ClassificationResult.Evidence.EXPLICIT_REQUEST), false, false,
+                dev.hugo.watcher.ai.ClassificationResult.Urgency.NORMAL, 0.91, null);
+        var settings = new DecisionPolicy(true, true, true, true, Set.of(Situation.GROUP_TRIGGER),
+                Map.of(Situation.GROUP_TRIGGER, new ResponseTemplate("group_v1", 1, Situation.GROUP_TRIGGER,
+                        "Resposta automática: Grupo autorizado.", true)),
+                Duration.ZERO, Duration.ZERO, null, null);
+
+        Decision decision = engine.decide(batch(true), classification,
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+
+        assertEquals(TriageOutcome.NOTIFY_AND_REPLY, decision.triageOutcome());
+        assertFalse(decision.wouldReply());
+        assertTrue(decision.triageBlockers().contains("group_trigger_missing"));
     }
 
     private static Batch batch(boolean group) {

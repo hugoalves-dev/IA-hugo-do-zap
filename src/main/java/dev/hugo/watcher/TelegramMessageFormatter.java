@@ -144,7 +144,7 @@ public class TelegramMessageFormatter {
     private String intelligentAlert(JsonNode payload) {
         String urgency = clean(payload.path("urgency").asString(""));
         String reference = clean(payload.path("reference").asString(""));
-        if (!List.of("HIGH", "CRITICAL").contains(urgency) || !reference.matches("[0-9a-fA-F-]{36}"))
+        if (!List.of("LOW", "NORMAL", "HIGH", "CRITICAL").contains(urgency) || !reference.matches("[0-9a-fA-F-]{36}"))
             return "⚠️ O watcher bloqueou um alerta sem classificação ou referência válida.";
         return "<b>⚠️ Alerta inteligente</b> — urgência " + escape(urgency) + "\nReferência da decisão: " + escape(reference)
                 + ". Sem conteúdo de conversa.";

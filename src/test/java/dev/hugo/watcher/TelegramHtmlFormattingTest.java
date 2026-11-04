@@ -61,6 +61,12 @@ class TelegramHtmlFormattingTest {
                 """));
         assertTrue(alert.startsWith("<b>⚠️ Alerta inteligente</b> — urgência CRITICAL"));
         assertValidHtml(alert);
+        String lowAlert = formatter.format(action("intelligent_alert", """
+                {"eventType":"intelligent_alert","urgency":"LOW",
+                 "reference":"54a5e6ad-7910-4dd6-a35b-8f14e5aee217"}
+                """));
+        assertTrue(lowAlert.startsWith("<b>⚠️ Alerta inteligente</b> — urgência LOW"));
+        assertValidHtml(lowAlert);
     }
 
     @Test void simulatedReplyRendersOnlyProvidedTemplateAndNeverClaimsWhatsAppWasSent() throws Exception {
