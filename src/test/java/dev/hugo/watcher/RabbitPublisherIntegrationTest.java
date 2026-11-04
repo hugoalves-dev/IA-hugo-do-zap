@@ -34,6 +34,8 @@ class RabbitPublisherIntegrationTest {
     @Test
     void confirmsPersistentRoutedEventsAndRejectsUnroutableEvents() throws Exception {
         try {
+            var startup = rabbit.execInContainer("rabbitmqctl", "await_startup", "--timeout", "300");
+            assertEquals(0, startup.getExitCode(), startup.getStdout() + startup.getStderr());
             var clearTags = rabbit.execInContainer("rabbitmqctl", "set_user_tags", USER);
             assertEquals(0, clearTags.getExitCode(), clearTags.getStdout() + clearTags.getStderr());
             var setPermissions = rabbit.execInContainer("rabbitmqctl", "set_permissions", "-p", "watcher", USER,

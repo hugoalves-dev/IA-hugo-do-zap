@@ -96,7 +96,7 @@ public class TelegramRabbitConsumer {
         } catch (RuntimeException failure) {
             int retries = retryCount(message);
             log.error("Telegram admin update failed: messageId={}, retryCount={}, stage={}, cause={}",
-                    safeMessageId(messageId), retries, stage, failure.getClass().getSimpleName(), failure);
+                    safeMessageId(messageId), retries, stage, failure.getClass().getSimpleName(), safeFailure(failure));
             retryOrDeadLetter(message, channel, messageId == null ? "telegram-unknown" : messageId);
         }
     }
@@ -140,7 +140,7 @@ public class TelegramRabbitConsumer {
                     Map.of("x-retry-count", nextRetry), RETRY_DELAY_MILLIS[nextRetry - 1]);
         } catch (RuntimeException publishFailure) {
             log.error("Telegram admin retry publication failed: messageId={}, retryCount={}, stage=retry_publish, cause={}",
-                    safeMessageId(id), retries, publishFailure.getClass().getSimpleName(), publishFailure);
+                    safeMessageId(id), retries, publishFailure.getClass().getSimpleName(), safeFailure(publishFailure));
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, true);
             return;
         }
@@ -149,6 +149,17 @@ public class TelegramRabbitConsumer {
 
     private static String safeMessageId(String id) {
         return id != null && id.matches("[A-Za-z0-9_.:-]{1,80}") ? id : "redacted";
+    }
+
+    /** Keeps stack frames and cause types while dropping exception messages that may contain payloads or secrets. */
+    private static RuntimeException safeFailure(Throwable failure) {
+        Throwable root = failure;
+        for (int depth = 0; depth < 16 && root.getCause() != null && root.getCause() != root; depth++)
+            root = root.getCause();
+        RuntimeException sanitized = new RuntimeException("failureType=" + failure.getClass().getName()
+                + ", rootCauseType=" + root.getClass().getName());
+        sanitized.setStackTrace(failure.getStackTrace());
+        return sanitized;
     }
 
     private static int retryCount(Message message) {

@@ -43,6 +43,16 @@ class TelegramWebhookWorkerTest {
         verifyNoInteractions(callbacks);
     }
 
+    @Test void marksCommandWithoutCallbackDoneWhenCallbackIdIsNull() {
+        jdbc.update("insert into telegram_webhook_inbox(update_id,payload) values(?,?::jsonb)",
+                104L, "{\"update_id\":104,\"message\":{}}");
+
+        new TelegramWebhookInboxRepository(jdbc).markDone(104L, null, "Command completed.");
+
+        assertEquals("DONE", jdbc.queryForObject("select status from telegram_webhook_inbox where update_id=104", String.class));
+        assertNotNull(jdbc.queryForObject("select callback_answered_at from telegram_webhook_inbox where update_id=104", java.time.OffsetDateTime.class));
+    }
+
     @Test void callbackIsAcknowledgedOnlyAfterCommittedHandling() {
         when(handler.handle(any())).thenReturn(AdminResult.accepted("ok"));
         jdbc.update("insert into telegram_webhook_inbox(update_id,payload) values(?,?::jsonb)",

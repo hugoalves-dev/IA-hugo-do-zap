@@ -67,7 +67,7 @@ public class TelegramWebhookInboxRepository {
         jdbc.update("""
                 UPDATE telegram_webhook_inbox SET status='DONE',completed_at=now(),
                     payload='{}'::jsonb,last_error=NULL,callback_id=?,callback_feedback=?,
-                    callback_answered_at=CASE WHEN ? IS NULL THEN now() ELSE NULL END
+                    callback_answered_at=CASE WHEN CAST(? AS text) IS NULL THEN now() ELSE NULL END
                 WHERE update_id=?
                 """, callbackId, callbackFeedback, callbackId, updateId);
     }
