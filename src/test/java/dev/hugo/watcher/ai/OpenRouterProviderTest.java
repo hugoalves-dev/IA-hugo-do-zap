@@ -75,7 +75,7 @@ class OpenRouterProviderTest {
 
     @Test void sendsTypedSenderEnvelopeWithoutRawParticipantOrGroupJids() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
-                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
         var first = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("one"), "team@g.us",
                 java.util.Optional.of("1111@lid"), java.util.Optional.empty(), java.util.Optional.empty(),
                 false, "notify", false, java.util.Map.of("conversation", "primeira"), java.time.Instant.parse("2026-10-30T00:00:01Z"));

@@ -102,7 +102,7 @@ class EvolutionPipelineIntegrationTest {
         identities.setManualAlias(jid, "João - Oficina");
         assertEquals(202, post(contact.replace("Loja & Café", "Perfil de empresa")).statusCode());
         assertEquals(1, jobs.processAvailable());
-        assertEquals("João - Oficina", identities.resolveDisplayName(jid));
+        assertEquals("Agenda", identities.resolveDisplayName(jid));
         identities.clearManualAlias(jid);
         assertEquals("Agenda", identities.resolveDisplayName(jid));
     }

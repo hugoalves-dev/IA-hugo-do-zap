@@ -127,6 +127,7 @@ class NotificationServiceTest {
                 "updated_at", NOW.minusSeconds(3600).toString())));
         outbox.enqueue("queued-legacy-triage", NotificationService.ARCHIVED_MESSAGES, payload, snapshot, NOW, expires);
         persistIgnoreDecision(chat, messageAt, true);
+        assertTrue(new NotificationQueueQueryRepository(jdbc).hasUniqueTriageIgnore(chat, messageAt, NOW));
 
         boolean delivered = triageFilteringNotifications(true).deliverQueuedAction("queued-legacy-triage", NOW);
 
@@ -142,7 +143,6 @@ class NotificationServiceTest {
         Instant originalLast = fixture(messageTime);
         seed(chat, "Cliente", false, 1, messageTime, messageTime, "primeira", NOW);
         var original = jdbc.queryForMap("select generation::text,updated_at,payload->>'lastMessageAt' as last_message_at from pending_notification where chat_jid=?", chat);
-        Instant originalUpdated = ((java.sql.Timestamp) original.get("updated_at")).toInstant();
         Instant concurrentLast = originalLast.plusSeconds(1);
         jdbc.update("""
                 update pending_notification
@@ -151,7 +151,7 @@ class NotificationServiceTest {
                 """, concurrentLast.toString(), java.sql.Timestamp.from(NOW), chat);
 
         int deleted = new NotificationQueueQueryRepository(jdbc).discardPendingIfCurrent(chat,
-                (String) original.get("generation"), originalUpdated, originalLast, 1);
+                (String) original.get("generation"), originalLast, 1);
 
         assertEquals(0, deleted);
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));

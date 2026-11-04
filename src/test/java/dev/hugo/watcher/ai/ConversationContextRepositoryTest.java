@@ -79,7 +79,7 @@ class ConversationContextRepositoryTest {
         var input = new ConversationContextRepository(jdbc, Duration.ofHours(24)).input(batch, now.plusSeconds(2));
 
         assertEquals("Pode fazer isso?", input.target());
-        assertEquals(List.of(new ClassificationInput.ContextEntry("contact", "Você consegue revisar?"),
+        assertEquals(List.of(new ClassificationInput.ContextEntry("group_participant", "Você consegue revisar?"),
                 new ClassificationInput.ContextEntry("owner", "Vou revisar")), input.contextEntries());
     }
 
