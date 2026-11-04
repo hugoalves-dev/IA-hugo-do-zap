@@ -24,6 +24,10 @@ class OpenRouterPromptGeneratorTest {
         assertTrue(body.contains("Goal: clarify urgency."));
         assertTrue(body.contains("2048"));
         assertTrue(body.contains("additionalProperties"));
+        assertTrue(body.contains("\"zdr\":true"));
+        assertTrue(body.contains("\"data_collection\":\"deny\""));
+        assertTrue(body.contains("\"allow_fallbacks\":false"));
+        assertTrue(body.contains("\"require_parameters\":true"));
         assertEquals("openrouter.ai", fake.requests().getFirst().uri().getHost());
         assertFalse(body.contains("fake-key"));
         verify(budget).reserve(any(), any());

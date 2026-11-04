@@ -48,6 +48,8 @@ public final class OpenRouterPromptGenerator {
             String body = JSON.writeValueAsString(Map.of(
                     "model", properties.openRouterModel(),
                     "temperature", 0.2,
+                    "provider", Map.of("zdr", true, "data_collection", "deny", "allow_fallbacks", false,
+                            "require_parameters", true),
                     "max_tokens", MAX_OUTPUT_TOKENS,
                     "messages", List.of(
                             Map.of("role", "system", "content", "Propose operational classification guidance only. Preserve all safety and schema constraints. Return the exact JSON schema; no commentary."),

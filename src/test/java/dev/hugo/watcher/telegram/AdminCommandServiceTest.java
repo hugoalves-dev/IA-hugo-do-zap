@@ -52,6 +52,7 @@ class AdminCommandServiceTest {
         commands.configurePromptSettings(promptService);
         calibrationQueue = new dev.hugo.watcher.ai.PromptCalibrationQueueRepository(jdbc, new DataSourceTransactionManager(source));
         commands.configurePromptCalibration(calibrationQueue);
+        commands.configurePromptGenerationQueue(new dev.hugo.watcher.ai.PromptGenerationQueueRepository(jdbc, new DataSourceTransactionManager(source)));
     }
 
 
@@ -234,23 +235,19 @@ class AdminCommandServiceTest {
         assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='contexto' and outcome='APPLIED'", Integer.class));
     }
 
-    @Test void aiAuthoringCanStartFromJavaDefaultAndInvokesProviderOutsideTransaction() {
+    @Test void aiAuthoringQueuesBoundedInstructionsWithoutCallingProviderInInboxTransaction() {
         var generation = mock(dev.hugo.watcher.ai.PromptGenerationService.class);
         commands.configurePromptGeneration(generation);
         commands.execute(command("prompt_ai_default", List.of(), false));
         var draft = promptService.pendingManualInput(1001, 2002, clock.instant()).orElseThrow();
         assertEquals(dev.hugo.watcher.ai.ClassificationPromptService.DEFAULT_OPERATIONAL_PROMPT, draft.body());
-        var proposal = new dev.hugo.watcher.ai.PromptGenerationService.Proposal(draft, "Clarified urgency.");
-        when(generation.propose(eq(draft.id()), eq(1001L), eq("Clarify urgency"), any())).thenAnswer(invocation -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            return proposal;
-        });
-
         var result = commands.execute(command("prompt_generate", List.of("Clarify", "urgency"), false));
 
         assertTrue(result.accepted());
-        assertTrue(result.message().contains("Clarified urgency."));
-        verify(generation).propose(eq(draft.id()), eq(1001L), eq("Clarify urgency"), any());
+        assertTrue(result.message().contains("Solicitação"));
+        verifyNoInteractions(generation);
+        assertEquals(1, jdbc.queryForObject("select count(*) from prompt_generation_jobs where status='PENDING'", Integer.class));
+        assertEquals("Clarify urgency", jdbc.queryForObject("select instructions from prompt_generation_jobs", String.class));
     }
 
     @Test void promptRevisionFlowCollectsPartsAndConfirmsThePreviewedVersion() {
@@ -359,6 +356,46 @@ class AdminCommandServiceTest {
         assertFalse(commands.execute(new AdminCommand(oldReset.command(), oldReset.arguments(), 1001, 2002, true)).accepted());
         assertEquals(revision.revision(), promptService.current(true).revision());
         assertEquals(3, jdbc.queryForObject("select count(*) from classification_prompt_state_history", Integer.class));
+    }
+
+    @Test void staleActivateResetAndRestoreCallbacksRejectInsideOuterWorkerTransaction() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource()));
+
+        var first = promptService.createDraft("First safe prompt.", 1001, clock.instant());
+        promptService.activate(first.revision(), 0, 1001, clock.instant());
+        var resetPending = commands.execute(command("prompt_reset", List.of(), false));
+        String resetToken = tokenFrom(resetPending.message());
+        promptService.resetToDefault(1001, (long) first.revision(), clock.instant());
+        promptService.restore(first.revision(), 1001, null, clock.instant());
+        assertStaleCallbackCommits(tx, resetToken, first.revision());
+
+        var second = promptService.createDraft("Second safe prompt.", 1001, clock.instant());
+        var restorePending = commands.execute(command("prompt_restore", List.of(Integer.toString(first.revision())), false));
+        String restoreToken = tokenFrom(restorePending.message());
+        promptService.activate(second.revision(), promptService.activeVersion(), 1001, clock.instant());
+        assertStaleCallbackCommits(tx, restoreToken, second.revision());
+
+        long expectedVersion = promptService.activeVersion();
+        var activatePending = commands.execute(command("prompt_activate", List.of(Integer.toString(first.revision()), Long.toString(expectedVersion)), false));
+        String activateToken = tokenFrom(activatePending.message());
+        promptService.resetToDefault(1001, (long) second.revision(), clock.instant());
+        assertStaleCallbackCommits(tx, activateToken, 0);
+    }
+
+    private void assertStaleCallbackCommits(org.springframework.transaction.support.TransactionTemplate tx,
+                                            String token, int expectedRevision) {
+        int repliesBefore = jdbc.queryForObject("select count(*) from outbox_actions where action_type='telegram_admin_reply'", Integer.class);
+        int rejectionsBefore = jdbc.queryForObject("select count(*) from telegram_admin_audit where outcome='REJECTED'", Integer.class);
+        var result = tx.execute(status -> {
+            CallbackAction action = tokens.consume(token, 1001, 2002);
+            return commands.execute(new AdminCommand(action.command(), action.arguments(), 1001, 2002, true));
+        });
+        assertNotNull(result);
+        assertFalse(result.accepted());
+        assertThrows(CallbackTokenRejectedException.class, () -> tokens.consume(token, 1001, 2002));
+        assertEquals(expectedRevision, promptService.current(true).revision());
+        assertEquals(repliesBefore + 1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='telegram_admin_reply'", Integer.class));
+        assertEquals(rejectionsBefore + 1, jdbc.queryForObject("select count(*) from telegram_admin_audit where outcome='REJECTED'", Integer.class));
     }
 
     @Test void oldPreviewCannotPublishAfterActiveStateChangesAwayAndBack() {

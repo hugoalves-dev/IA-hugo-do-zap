@@ -4,8 +4,6 @@ import dev.hugo.watcher.OperationalState;
 import dev.hugo.watcher.ai.ClassificationPromptRepository.Draft;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
@@ -20,7 +18,6 @@ public final class PromptGenerationService {
     private final OpenRouterPromptGenerator generator;
     private final AiClassificationProperties properties;
     private final OperationalState operational;
-    private final TransactionTemplate providerTransaction;
 
     @Autowired
     public PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
@@ -33,8 +30,6 @@ public final class PromptGenerationService {
         this.generator = generator;
         this.properties = properties;
         this.operational = operational;
-        this.providerTransaction = new TransactionTemplate(transactionManager);
-        this.providerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
     }
 
     PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
@@ -46,26 +41,36 @@ public final class PromptGenerationService {
         this.generator = generator;
         this.properties = properties;
         this.operational = operational;
-        this.providerTransaction = null;
     }
 
     public Proposal propose(UUID draftId, long adminId, String explicitInstructions, Instant now) {
         return run(draftId, adminId, explicitInstructions, now, false);
     }
 
+    public Proposal propose(UUID draftId, long adminId, long expectedVersion, String explicitInstructions, Instant now) {
+        return run(draftId, adminId, expectedVersion, explicitInstructions, now, false);
+    }
+
     public Proposal refine(UUID draftId, long adminId, String explicitInstructions, Instant now) {
         return run(draftId, adminId, explicitInstructions, now, true);
     }
 
+    public Proposal refine(UUID draftId, long adminId, long expectedVersion, String explicitInstructions, Instant now) {
+        return run(draftId, adminId, expectedVersion, explicitInstructions, now, true);
+    }
+
     private Proposal run(UUID draftId, long adminId, String instructions, Instant now, boolean refinement) {
+        return run(draftId, adminId, -1, instructions, now, refinement);
+    }
+
+    private Proposal run(UUID draftId, long adminId, long expectedVersion, String instructions, Instant now, boolean refinement) {
         Draft draft = repository.draft(draftId, adminId, now).orElseThrow(() -> new IllegalStateException("prompt_draft_unavailable"));
-        if (refinement && draft.refinementCount() >= ClassificationPromptService.MAX_REFINEMENTS)
+        if (expectedVersion >= 0 && draft.version() != expectedVersion) throw new IllegalStateException("prompt_draft_conflict");
+        if (draft.origin().equals("ai_assisted") && draft.refinementCount() >= ClassificationPromptService.MAX_REFINEMENTS)
             throw new IllegalStateException("prompt_refinement_limit");
         if (!ListGate.allowed(operational, properties)) throw new IllegalStateException("prompt_generation_unavailable");
-        OpenRouterPromptGenerator.Proposal output = providerTransaction == null
-                ? generator.generate(draft.body(), instructions, () -> ListGate.allowed(operational, properties))
-                : providerTransaction.execute(status -> generator.generate(
-                        draft.body(), instructions, () -> ListGate.allowed(operational, properties)));
+        OpenRouterPromptGenerator.Proposal output = generator.generate(draft.body(), instructions,
+                () -> ListGate.allowed(operational, properties));
         String body = normalize(output.prompt());
         String summary = output.summary().strip();
         if (summary.length() > 500) summary = summary.substring(0, 500);

@@ -38,6 +38,14 @@ class PromptGenerationServiceTest {
         assertThrows(IllegalStateException.class, () -> limited.service.refine(limited.draft.id(), 44, "Clarify.", Instant.now()));
         verifyNoInteractions(limited.budgets);
 
+        var repeatedGenerate = fixture("Safe prompt.");
+        when(repeatedGenerate.repository.draft(any(), anyLong(), any())).thenReturn(Optional.of(new Draft(
+                repeatedGenerate.draft.id(), 44, null, "Safe prompt.", "ai_assisted", "", "editing", 3, 3, Instant.now().plusSeconds(300))));
+        assertThrows(IllegalStateException.class, () -> repeatedGenerate.service.propose(
+                repeatedGenerate.draft.id(), 44, "Try again.", Instant.now()));
+        verifyNoInteractions(repeatedGenerate.budgets);
+        assertEquals(0, repeatedGenerate.calls.get());
+
         var disabled = fixture("Safe prompt.");
         when(disabled.operational.simulation()).thenReturn(false);
         assertThrows(IllegalStateException.class, () -> disabled.service.propose(disabled.draft.id(), 44, "Clarify.", Instant.now()));

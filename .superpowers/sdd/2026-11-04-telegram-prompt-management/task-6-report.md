@@ -20,3 +20,20 @@ JDK 25.0.5/Maven 3.9.11, host Testcontainers with Docker socket, `/tmp/issue45-s
 - `git diff --check` passed.
 
 The first full run had 665 tests and exposed the two polling rollback regressions; those tests passed after the fix and the final full verification is green.
+
+## Final review fix wave
+
+- Restored OpenRouter's privacy and routing requirements on prompt-authoring requests: `zdr=true`, `data_collection=deny`, `allow_fallbacks=false`, and `require_parameters=true`; the request test asserts each field.
+- Replaced synchronous Telegram authoring with V60 durable jobs. The command transaction writes bounded instructions, draft/version, actor/chat, and operation alongside the normal reply; a worker commits its claim before calling OpenRouter. A job is attempted once, ambiguous dispatched jobs become `UNKNOWN`, and terminal/unknown transitions erase instructions. User replies and audit entries contain no instructions or provider output.
+- Moved the provider call to the post-claim worker path. The integration test verifies the fake transport sees no active transaction, a proposal saves without changing the active pointer, and terminal completion clears the queued instructions.
+- Stale version-bound activate/reset/restore confirmations are checked before lifecycle methods can raise a conflict in the joined Telegram transaction. Outer-transaction PostgreSQL tests verify the callbacks are consumed, rejection replies and audit commit, and prompt state remains unchanged.
+- Applied the three-refinement cap to both generation and refinement, before provider or budget calls; a repeated `/prompt_generate` test asserts zero requests and reservations at the cap.
+- Updated the README to explain that AI authoring is queued and the single-attempt result arrives in the private chat.
+
+Verification for this review fix wave:
+
+- Focused prompt/Telegram/integration command: `/tmp/issue45-tools/apache-maven-3.9.11/bin/mvn -s /tmp/issue45-settings.xml -Dmaven.repo.local=/tmp/issue45-m2 -B -ntp -Dtest=OpenRouterPromptGeneratorTest,PromptGenerationServiceTest,AdminCommandServiceTest,AiSimulationAcceptanceTest,TelegramPromptUpdateHandlerTest,TelegramUpdatePollingServiceTest,TelegramPromptCommandServiceTest test` with JDK 25.0.5. **112 tests passed, 0 failures/errors/skips; BUILD SUCCESS.** Log: `/tmp/issue45-fix-focused-final5.log`.
+- Migration focus: `/tmp/issue45-tools/apache-maven-3.9.11/bin/mvn -s /tmp/issue45-settings.xml -Dmaven.repo.local=/tmp/issue45-m2 -B -ntp -Dtest=SpringFlywayStartupTest,DatabaseMigrationTest test`. **13 tests passed, 0 failures/errors/skips; BUILD SUCCESS.** Log: `/tmp/issue45-fix-migration-focus.log`.
+- Final full command: `/tmp/issue45-tools/apache-maven-3.9.11/bin/mvn -s /tmp/issue45-settings.xml -Dmaven.repo.local=/tmp/issue45-m2 -B -ntp verify` with JDK 25.0.5 and host Testcontainers. **667 tests passed, 0 failures/errors/skips; BUILD SUCCESS in 5:08.** Log: `/tmp/issue45-fix-verify-final.log`.
+- One preceding full run found only the startup test's stale V59 assertion after adding V60. Updated `SpringFlywayStartupTest` to expect V60, confirmed the focused migration command above, and reran the full verifier successfully.
+- `git diff --check` passed.

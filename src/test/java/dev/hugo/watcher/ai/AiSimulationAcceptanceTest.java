@@ -177,7 +177,7 @@ class AiSimulationAcceptanceTest {
         assertFalse(jdbc.queryForObject("select auto_reply_enabled from automation_settings where singleton_id=1", Boolean.class));
     }
 
-    @Test void promptGenerationSuspendsOuterAdminTransactionForProviderAndResumesForDraftSave() {
+    @Test void durablePromptGenerationCommitsClaimBeforeProviderAndClearsInstructions() {
         var repository = new JdbcClassificationPromptRepository(jdbc, manager);
         var prompts = new ClassificationPromptService(repository, new ClassificationPromptValidator(), manager);
         var draft = prompts.createManualDraft(1001, null, clock.instant());
@@ -185,7 +185,7 @@ class AiSimulationAcceptanceTest {
                 Duration.ofSeconds(1), "owner@s.whatsapp.net", true, false, true, false);
         ProviderTransport transport = (request, timeout, max) -> {
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive(),
-                    "provider call must suspend any polling/webhook transaction");
+                    "provider call starts only after the durable job claim commits");
             calls.incrementAndGet();
             String content = "{\"prompt\":\"Use explicit deadlines.\",\"summary\":\"Clarify deadlines.\"}";
             return new ProviderTransport.Response(200, "{\"choices\":[{\"message\":{\"content\":" + quote(content) + "}}]}");
@@ -193,15 +193,21 @@ class AiSimulationAcceptanceTest {
         var generator = new OpenRouterPromptGenerator(properties, transport, budgets, clock);
         var service = new PromptGenerationService(prompts, repository, new ClassificationPromptValidator(), generator,
                 properties, state(), manager);
-        var proposal = new org.springframework.transaction.support.TransactionTemplate(manager)
-                .execute(status -> service.propose(draft.id(), 1001, "Clarify deadline interpretation.", clock.instant()));
+        var queue = new PromptGenerationQueueRepository(jdbc, manager);
+        queue.enqueue(draft.id(), draft.version(), 1001, 2002, "GENERATE", "Clarify deadline interpretation.", clock.instant());
+        var worker = new PromptGenerationWorker(queue, service, new dev.hugo.watcher.NotificationOutboxRepository(jdbc, manager),
+                new dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository(jdbc), manager, clock);
+        worker.process();
 
-        assertNotNull(proposal);
-        assertEquals("Use explicit deadlines.", proposal.draft().body());
-        assertEquals("ai_assisted", proposal.draft().origin());
+        var saved = repository.draft(draft.id(), 1001, clock.instant()).orElseThrow();
+        assertEquals("Use explicit deadlines.", saved.body());
+        assertEquals("ai_assisted", saved.origin());
         assertEquals(1, calls.get());
         assertNull(repository.activeState().revisionId());
         assertEquals(0, repository.activeVersion());
+        assertEquals("COMPLETE", jdbc.queryForObject("select status from prompt_generation_jobs", String.class));
+        assertEquals("", jdbc.queryForObject("select instructions from prompt_generation_jobs", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='telegram_admin_reply'", Integer.class));
     }
     @Test void technicalOpenRouterFailureWithoutGeminiConsentCannotFallback() {
         jdbc.update("delete from ai_data_consents where provider='gemini'");

@@ -31,6 +31,7 @@ public class AdminCommandService {
     private final TelegramAdminPersistenceRepository persistence;
     private final ShadowDecisionQuery decisions;
     private final TransactionTemplate transactions;
+    private final TransactionTemplate promptLifecycleSavepoint;
     private final CallbackTokenService tokens;
     private final NotificationOutboxRepository outbox;
     private final Clock clock;
@@ -41,6 +42,7 @@ public class AdminCommandService {
     private dev.hugo.watcher.ai.ClassificationPromptService promptSettings;
     private dev.hugo.watcher.ai.PromptGenerationService promptGeneration;
     private dev.hugo.watcher.ai.PromptCalibrationQueueRepository promptCalibrationQueue;
+    private dev.hugo.watcher.ai.PromptGenerationQueueRepository promptGenerationQueue;
     private ContactPolicyOverviewService contactOverview;
     private dev.hugo.watcher.OperationalState operational;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
@@ -53,6 +55,8 @@ public class AdminCommandService {
         this.persistence = persistence;
         this.decisions = decisions;
         this.transactions = new TransactionTemplate(manager);
+        this.promptLifecycleSavepoint = new TransactionTemplate(manager);
+        this.promptLifecycleSavepoint.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_NESTED);
         this.tokens = tokens;
         this.outbox = outbox;
         this.clock = clock;
@@ -81,7 +85,7 @@ public class AdminCommandService {
                 : command;
         try {
             if (effective.name().equals("prompt_preview")) return previewPrompt(effective);
-            if (List.of("prompt_generate", "prompt_refine").contains(effective.name())) return generatePrompt(effective);
+            if (List.of("prompt_generate", "prompt_refine").contains(effective.name())) return transactions.execute(status -> generatePrompt(effective));
             if (!effective.confirmed() && (effective.name().equals("prompt_reset")
                     || (effective.name().equals("prompt_restore") && effective.arguments().size() == 1)))
                 return requestPromptTransition(effective);
@@ -94,10 +98,14 @@ public class AdminCommandService {
                 return requestConfirmation(effective);
             return transactions.execute(status -> {
                 try {
-                    String message = apply(effective);
+                    rejectStalePromptTransition(effective);
+                    String message = isPromptLifecycleMutation(effective.name())
+                            ? promptLifecycleSavepoint.execute(nested -> apply(effective)) : apply(effective);
                     enqueueReply(message, effective);
                     return AdminResult.accepted(message);
-                } catch (IllegalArgumentException | java.time.format.DateTimeParseException ex) {
+                } catch (RuntimeException ex) {
+                    if (!(ex instanceof IllegalArgumentException) && !(ex instanceof java.time.format.DateTimeParseException)
+                            && !(effective.name().startsWith("prompt") && ex instanceof IllegalStateException)) throw ex;
                     String message = safeError(effective.name(), ex);
                     if (isMutation(effective.name(), effective.arguments())) audit(effective, "REJECTED");
                     enqueueReply(message, effective);
@@ -342,21 +350,19 @@ public class AdminCommandService {
     }
 
     private AdminResult generatePrompt(AdminCommand command) {
-        if (promptGeneration == null || promptSettings == null)
+        if (promptGenerationQueue == null || promptSettings == null)
             return AdminResult.rejected("Geração de prompt indisponível no momento.");
         if (command.arguments().isEmpty()) return AdminResult.rejected("Informe instruções explícitas de objetivo, tom ou regras.");
         try {
             var draft = pendingPrompt(command, clock.instant());
             String instructions = String.join(" ", command.arguments());
-            var proposal = command.name().equals("prompt_refine")
-                    ? promptGeneration.refine(draft.id(), command.userId(), instructions, clock.instant())
-                    : promptGeneration.propose(draft.id(), command.userId(), instructions, clock.instant());
-            String message = "Proposta criada como rascunho. Alterações: " + proposal.changeSummary()
-                    + "\nUse /prompt_preview para revisar, envie texto para editar manualmente, ou /prompt_cancel para descartar.";
-            return transactions.execute(status -> {
-                enqueueReply(message, command);
-                return AdminResult.accepted(message);
-            });
+            if (instructions.length() > 4096) throw new IllegalArgumentException("instructions_too_long");
+            var jobId = promptGenerationQueue.enqueue(draft.id(), draft.version(), command.userId(), command.chatId(),
+                    command.name().equals("prompt_refine") ? "REFINE" : "GENERATE", instructions, clock.instant());
+            String message = "Solicitação de proposta recebida (" + jobId.toString().substring(0, 8)
+                    + "). O resultado será enviado nesta conversa privada quando estiver pronto.";
+            enqueueReply(message, command);
+            return AdminResult.accepted(message);
         } catch (RuntimeException exception) {
             String message = "Não foi possível gerar a proposta; o rascunho atual foi preservado.";
             return transactions.execute(status -> {
@@ -917,9 +923,44 @@ public class AdminCommandService {
         this.promptCalibrationQueue = queue;
     }
 
+    @Autowired(required = false)
+    public void configurePromptGenerationQueue(dev.hugo.watcher.ai.PromptGenerationQueueRepository queue) {
+        this.promptGenerationQueue = queue;
+    }
+
     private static boolean isMutation(String name, List<String> args) {
         return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem", "apelido", "contexto", "contexto_default", "prompt_activate", "prompt_restore", "prompt_publish", "prompt_restore_apply", "prompt_reset_apply", "prompt_test").contains(name)
                 || (name.equals("orcamento") && !args.isEmpty());
+    }
+
+    private static boolean isPromptLifecycleMutation(String name) {
+        return List.of("prompt_publish", "prompt_restore_apply", "prompt_reset_apply", "prompt_activate", "prompt_restore").contains(name);
+    }
+
+    /** Reject stale version-bound actions before lifecycle services can throw inside a joined transaction. */
+    private void rejectStalePromptTransition(AdminCommand command) {
+        if (promptSettings == null) return;
+        List<String> args = command.arguments();
+        var state = promptSettings.activeState();
+        long currentRevision = state.revisionId() == null ? 0 : state.revisionId();
+        switch (command.name()) {
+            case "prompt_activate" -> {
+                if (args.size() == 2 && Long.parseLong(args.get(1)) != state.version()) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            case "prompt_reset_apply" -> {
+                if (args.size() == 2 && (Long.parseLong(args.get(0)) != currentRevision
+                        || Long.parseLong(args.get(1)) != state.version())) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            case "prompt_restore_apply" -> {
+                if (args.size() == 3 && (Long.parseLong(args.get(1)) != currentRevision
+                        || Long.parseLong(args.get(2)) != state.version())) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            case "prompt_publish" -> {
+                if (args.size() == 4 && (Long.parseLong(args.get(2)) != currentRevision
+                        || Long.parseLong(args.get(3)) != state.version())) throw new IllegalStateException("stale_prompt_confirmation");
+            }
+            default -> { }
+        }
     }
 
     private static int minutes(List<String> args) {
