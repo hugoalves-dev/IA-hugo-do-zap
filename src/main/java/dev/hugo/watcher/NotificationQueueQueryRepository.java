@@ -51,5 +51,36 @@ public class NotificationQueueQueryRepository {
         jdbc.update("delete from pending_notification where chat_jid=?", chatJid);
     }
 
+    /** Only an exact, unique retained private-message decision can suppress legacy delivery. */
+    public boolean hasUniqueTriageIgnore(String chatJid, Instant messageAt, Instant now) {
+        if (chatJid == null || messageAt == null || now == null) return false;
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                select count(*)=1
+                  from triage_legacy_filter_opt_ins opt
+                  join simulation_batch_messages m on m.chat_jid=opt.chat_jid
+                  join simulation_batches b on b.batch_id=m.batch_id and b.chat_jid=m.chat_jid
+                  join simulation_decisions d on d.batch_id=b.batch_id
+                 where opt.chat_jid=? and opt.enabled
+                   and opt.chat_jid not like '%@g.us' and opt.chat_jid not like '%@broadcast'
+                   and b.participant_jid='' and b.status='COMPLETED'
+                   and m.received_at=? and d.decided_at>=m.received_at
+                   and b.expires_at>? and d.metadata_expires_at>?
+                   and not d.production_mode and d.classification_status='CLASSIFIED'
+                   and d.triage_outcome='IGNORE' and d.decision_state='NO_ACTION' and d.blocked_reason is null
+                   and not d.notification_recommended and not d.reply_recommended
+                """, Boolean.class, chatJid, Timestamp.from(messageAt), Timestamp.from(now), Timestamp.from(now)));
+    }
+
+    /** Deletes only the pending generation that was evaluated; a concurrent message keeps its new row. */
+    public int discardPendingIfCurrent(String chatJid, String generation, Instant updatedAt,
+                                       Instant lastMessageAt, int messageCount) {
+        if (chatJid == null || generation == null || updatedAt == null || lastMessageAt == null || messageCount != 1) return 0;
+        return jdbc.update("""
+                delete from pending_notification
+                 where chat_jid=? and generation=?::uuid and updated_at=?
+                   and payload->>'lastMessageAt'=? and coalesce((payload->>'messageCount')::integer,0)=?
+                """, chatJid, generation, Timestamp.from(updatedAt), lastMessageAt.toString(), messageCount);
+    }
+
     private record ConnectionState(String connectionState, long generation) { }
 }

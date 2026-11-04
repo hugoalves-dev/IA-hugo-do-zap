@@ -44,6 +44,7 @@ public class NotificationService {
     private final ArchiveModeService archiveModes;
     private final IntelligentAlertService intelligentAlerts;
     private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
+    private final boolean triageLegacyFilterEnabled;
     private final AtomicBoolean flushing = new AtomicBoolean();
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -52,7 +53,7 @@ public class NotificationService {
                                Clock clock, ArchiveModeService archiveModes, IntelligentAlertService intelligentAlerts) {
         this(new NotificationQueueQueryRepository(jdbc), manager, outbox, telegram,
                 telegramFormatter, properties, clock, archiveModes, intelligentAlerts,
-                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager));
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager), false);
     }
 
     public NotificationService(NotificationQueueQueryRepository queries, PlatformTransactionManager manager,
@@ -60,6 +61,16 @@ public class NotificationService {
                                TelegramMessageFormatter telegramFormatter, WatcherProperties properties,
                                Clock clock, ArchiveModeService archiveModes, IntelligentAlertService intelligentAlerts,
                                dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
+        this(queries, manager, outbox, telegram, telegramFormatter, properties, clock, archiveModes,
+                intelligentAlerts, deliveries, false);
+    }
+
+    public NotificationService(NotificationQueueQueryRepository queries, PlatformTransactionManager manager,
+                               NotificationOutboxRepository outbox, TelegramTransport telegram,
+                               TelegramMessageFormatter telegramFormatter, WatcherProperties properties,
+                               Clock clock, ArchiveModeService archiveModes, IntelligentAlertService intelligentAlerts,
+                               dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries,
+                               boolean triageLegacyFilterEnabled) {
         this.queries = queries;
         this.transactions = new TransactionTemplate(manager);
         this.outbox = outbox;
@@ -70,6 +81,7 @@ public class NotificationService {
         this.archiveModes = archiveModes;
         this.intelligentAlerts = intelligentAlerts;
         this.deliveries = deliveries;
+        this.triageLegacyFilterEnabled = triageLegacyFilterEnabled;
     }
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -275,6 +287,11 @@ public class NotificationService {
                 String chatJid = snapshot.get("chat_jid") instanceof String value ? value : null;
                 PendingRow row = chatJid == null ? null : current.get(chatJid);
                 if (row == null || !row.generation().equals(snapshot.get("pending_generation"))) continue;
+                if (shouldFilterLegacy(row, now)) {
+                    queries.discardPendingIfCurrent(row.chatJid(), row.generation(), row.updatedAt(),
+                            row.lastMessageAt(), row.messageCount());
+                    continue;
+                }
                 if (row.group() && !properties.isIncludeGroups()) continue;
                 String displayName = resolveDisplayName(row);
                 if (row.group() && isBlockedGroup(displayName)) continue;
@@ -348,6 +365,11 @@ public class NotificationService {
         for (PendingRow row : pending) {
             if (row == null) continue;
             if (row.group() && !properties.isIncludeGroups()) continue;
+            if (shouldFilterLegacy(row, now)) {
+                queries.discardPendingIfCurrent(row.chatJid(), row.generation(), row.updatedAt(),
+                        row.lastMessageAt(), row.messageCount());
+                continue;
+            }
             String displayName = resolveDisplayName(row);
             if (row.group() && isBlockedGroup(displayName)) {
                 queries.discardBlockedGroup(row.chatJid());
@@ -395,6 +417,11 @@ public class NotificationService {
                 payloadJson, snapshotJson, now, sensitiveExpiry);
         LOG.log(System.Logger.Level.INFO, "Archived notification queued: chats={0}, messages={1}",
                 chats.size(), chats.stream().mapToInt(LegacyChat::messageCount).sum());
+    }
+
+    private boolean shouldFilterLegacy(PendingRow row, Instant now) {
+        return triageLegacyFilterEnabled && row != null && !row.group() && row.messageCount() == 1
+                && queries.hasUniqueTriageIgnore(row.chatJid(), row.lastMessageAt(), now);
     }
 
     private boolean enqueueDeferredChat(PendingRow row, String displayName, ArchiveMode mode, ZoneId zone, Instant now) {

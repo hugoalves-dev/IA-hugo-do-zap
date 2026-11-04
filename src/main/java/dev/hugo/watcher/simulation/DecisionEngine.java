@@ -48,15 +48,18 @@ public final class DecisionEngine {
         }
 
         boolean authorized = classification.situations().stream().anyMatch(settings.authorizedSituations()::contains);
+        boolean group = batch.chatJid().endsWith("@g.us");
+        boolean groupTrigger = !group || classification.groupTriggerMatched();
         boolean ownerAvailable = policy.availability() == null
                 || policy.availability().state() == dev.hugo.watcher.policy.AvailabilityState.AVAILABLE;
         boolean alert = notificationRecommended
                 && (ownerAvailable || critical && classification.explicitPersonalReference())
-                && settings.intelligentAlertsEnabled() && authorized;
+                && settings.intelligentAlertsEnabled() && authorized && groupTrigger;
         if (notificationRecommended && !alert) {
             if (!settings.intelligentAlertsEnabled()) blockers.add("intelligent_alerts_disabled");
             if (!ownerAvailable && !(critical && classification.explicitPersonalReference())) blockers.add("owner_unavailable");
             if (!authorized) blockers.add("conversation_authorization_required");
+            if (!groupTrigger) blockers.add("group_trigger_missing");
         }
 
         ResponseTemplate selected = null;

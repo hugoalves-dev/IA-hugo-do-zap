@@ -127,6 +127,15 @@ public class TelegramMessageFormatter {
                 + " · alertas previstos: " + payload.path("predictedAlerts").asLong(0)
                 + " · respostas previstas: " + payload.path("predictedReplies").asLong(0)
                 + " · bloqueadas: " + payload.path("blockedDecisions").asLong(0)
+                + "\nTriagem IGNORE/NOTIFY_ONLY/NOTIFY_AND_REPLY/UNDECIDED: "
+                + payload.path("semanticTriage").path("IGNORE").asLong(0) + "/"
+                + payload.path("semanticTriage").path("NOTIFY_ONLY").asLong(0) + "/"
+                + payload.path("semanticTriage").path("NOTIFY_AND_REPLY").asLong(0) + "/"
+                + payload.path("semanticTriage").path("UNDECIDED").asLong(0)
+                + " · recomendações alerta/resposta: "
+                + payload.path("recommendations").path("notifications").asLong(0) + "/"
+                + payload.path("recommendations").path("replies").asLong(0)
+                + " · autorizadas em modo real: " + payload.path("realAuthorizedActions").asLong(0)
                 + "\nUrgência LOW/NORMAL/HIGH/CRITICAL/UNCERTAIN: "
                 + payload.path("urgencyDistribution").path("LOW").asLong(0) + "/"
                 + payload.path("urgencyDistribution").path("NORMAL").asLong(0) + "/"

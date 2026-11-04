@@ -66,6 +66,39 @@ class ReportServiceTest {
         assertTrue(action.payload().contains("urgencyDistribution"));
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='simulation_daily_summary'", Integer.class));
     }
+
+    @Test void dailyReportSeparatesSemanticTriageFromSimulatedAndRealActions() throws Exception {
+        Instant at = Instant.parse("2026-10-27T12:00:00Z");
+        Timestamp timestamp = Timestamp.from(at);
+        Timestamp expires = Timestamp.from(at.plusSeconds(86_400));
+        var cases = java.util.List.of(
+                new TriageCase("IGNORE", false, false, "no_notification_recommended"),
+                new TriageCase("NOTIFY_ONLY", true, false, "notification_relevant_reply_not_recommended"),
+                new TriageCase("NOTIFY_AND_REPLY", true, true, "notification_and_reply_recommended"));
+        for (TriageCase item : cases) {
+            var id = java.util.UUID.randomUUID();
+            jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)",
+                    id, "triage@s.whatsapp.net", timestamp, timestamp, timestamp, timestamp, expires, expires);
+            jdbc.update("""
+                    insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,
+                        triage_outcome,notification_recommended,reply_recommended,triage_reason,real_action_allowed,production_mode)
+                    values (?,false,false,'action_gates_off',?,?,?,?,?,?,false,false)
+                    """, id, timestamp, expires, item.outcome(), item.notificationRecommended(), item.replyRecommended(), item.reason());
+        }
+
+        OutboxAction action = reports.scheduleOnDemand(day);
+        var payload = tools.jackson.databind.json.JsonMapper.builder().build().readTree(action.payload());
+
+        assertEquals(1, payload.path("semanticTriage").path("IGNORE").asInt());
+        assertEquals(1, payload.path("semanticTriage").path("NOTIFY_ONLY").asInt());
+        assertEquals(1, payload.path("semanticTriage").path("NOTIFY_AND_REPLY").asInt());
+        assertEquals(0, payload.path("semanticTriage").path("UNDECIDED").asInt());
+        assertEquals(2, payload.path("recommendations").path("notifications").asInt());
+        assertEquals(1, payload.path("recommendations").path("replies").asInt());
+        assertEquals(0, payload.path("simulatedActions").path("alerts").asInt());
+        assertEquals(0, payload.path("simulatedActions").path("replies").asInt());
+        assertEquals(0, payload.path("realAuthorizedActions").asInt());
+    }
     @Test void manualReportRefreshesCountsWithoutReplayingScheduledDailyReport() {
         OutboxAction scheduled = reports.schedule(day);
         assertEquals(0, tools.jackson.databind.json.JsonMapper.builder().build()
@@ -94,5 +127,8 @@ class ReportServiceTest {
                 "select count(*) from outbox_actions where action_type='simulation_daily_summary'", Integer.class));
         assertFalse(first.payload().contains("test-business"));
     }
+
+    private record TriageCase(String outcome, boolean notificationRecommended,
+                              boolean replyRecommended, String reason) { }
 
 }

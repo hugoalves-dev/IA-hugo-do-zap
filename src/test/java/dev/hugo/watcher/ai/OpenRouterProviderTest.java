@@ -24,6 +24,18 @@ class OpenRouterProviderTest {
         assertEquals(List.of(ClassificationResult.Evidence.EXPLICIT_REQUEST), result.evidence());
     }
 
+    @Test void rejectsReplyRecommendationWithoutNotificationAndFreeTextEvidence() {
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
+                {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":false,\\"replyRecommended\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[\\"A pessoa pediu o telefone 555-0100\\"],\\"confidence\\":0.95}"}}]}
+                """));
+
+        var error = assertThrows(ClassificationProviderException.class,
+                () -> provider(transport, (name, input) -> true)
+                        .classify(new ClassificationInput(List.of("Preciso de ajuda."))));
+
+        assertEquals(ClassificationProviderException.Kind.INVALID_RESPONSE, error.kind());
+    }
+
     @Test void traceMetadataCarriesOnlyOpaqueBatchReference() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
                 "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));

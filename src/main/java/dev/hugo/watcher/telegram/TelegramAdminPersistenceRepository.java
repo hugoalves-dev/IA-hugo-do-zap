@@ -85,6 +85,27 @@ public class TelegramAdminPersistenceRepository {
                 """, chat, profile, Timestamp.from(now));
     }
 
+    public void setTriageLegacyFilter(String decisionPrefix, boolean enabled, Instant now) {
+        if (decisionPrefix == null || !decisionPrefix.matches("(?i)[0-9a-f]{8}(?:[0-9a-f-]{0,28})?"))
+            throw new IllegalArgumentException("Use /triagem <id> on|off.");
+        List<String> chats = jdbc.query("""
+                select b.chat_jid
+                  from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
+                 where lower(d.batch_id::text) like ? and not d.production_mode and d.metadata_expires_at>?
+                 order by d.batch_id limit 2
+                """, (rs, row) -> rs.getString("chat_jid"), decisionPrefix.toLowerCase(java.util.Locale.ROOT) + "%",
+                Timestamp.from(now));
+        if (chats.isEmpty()) throw new IllegalArgumentException("Decisão não encontrada ou expirada.");
+        if (chats.size() > 1) throw new IllegalArgumentException("ID ambíguo; informe mais caracteres.");
+        String chat = chats.getFirst();
+        if (chat == null || !chat.contains("@") || chat.endsWith("@g.us") || chat.endsWith("@broadcast"))
+            throw new IllegalArgumentException("O filtro legado por triagem só aceita conversas privadas.");
+        jdbc.update("""
+                insert into triage_legacy_filter_opt_ins(chat_jid,enabled,updated_at) values (?,?,?)
+                on conflict(chat_jid) do update set enabled=excluded.enabled,updated_at=excluded.updated_at
+                """, chat, enabled, Timestamp.from(now));
+    }
+
     public List<String> templateNames() {
         return jdbc.query("select template_id || ' v' || version || case when enabled then ' (ativo)' else ' (inativo)' end from response_templates order by template_id,version",
                 (rs, row) -> rs.getString(1));

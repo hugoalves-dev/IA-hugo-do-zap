@@ -60,7 +60,7 @@ public class IntelligentAlertPersistenceRepository {
                   from simulation_decisions d
                   join simulation_batches b on b.batch_id=d.batch_id
                   join simulation_ai_evaluations e on e.batch_id=d.batch_id and e.result is not null
-                 where d.batch_id=?
+                 where d.batch_id=? and d.triage_outcome in ('NOTIFY_ONLY','NOTIFY_AND_REPLY')
                    and exists(select 1 from chat_automation_authorizations a
                                where a.chat_jid=b.chat_jid
                                  and ((d.classification_urgency='CRITICAL' and a.situation='CRITICAL_URGENCY')

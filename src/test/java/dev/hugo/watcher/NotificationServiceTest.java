@@ -74,6 +74,90 @@ class NotificationServiceTest {
                 java.sql.Timestamp.class));
     }
 
+    @Test void legacyNotificationFilterNeedsGlobalFlagAndConversationOptIn() {
+        String messageTime = "2026-10-26T10:59:00Z";
+        String disabledChat = "legacy-disabled@s.whatsapp.net";
+        seedIgnoreDecision(disabledChat, messageTime, true);
+
+        notifications.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "conversation opt-in alone must leave legacy delivery unchanged");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, disabledChat));
+
+        requestCount.set(0);
+        String filteredChat = "legacy-filtered@s.whatsapp.net";
+        seedIgnoreDecision(filteredChat, messageTime, true);
+        var filtering = triageFilteringNotifications(true);
+
+        filtering.flush(NOW);
+
+        assertEquals(0, requestCount.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, filteredChat));
+
+        String optedOutChat = "legacy-opted-out@s.whatsapp.net";
+        seedIgnoreDecision(optedOutChat, messageTime, false);
+        filtering.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "global flag alone must not filter a conversation");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, optedOutChat));
+    }
+
+    @Test void legacyFilterDoesNotSuppressAggregatedMessages() {
+        String chat = "legacy-aggregate@s.whatsapp.net";
+        seedIgnoreDecision(chat, "2026-10-26T10:59:00Z", true, 2);
+
+        triageFilteringNotifications(true).flush(NOW);
+
+        assertEquals(1, requestCount.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+    }
+
+    @Test void revalidatesQueuedLegacyActionBeforeSuppressingAnIgnore() {
+        String chat = "legacy-queued-filter@s.whatsapp.net";
+        String messageTime = "2026-10-26T10:59:00Z";
+        Instant messageAt = fixture(messageTime);
+        seed(chat, "Cliente", false, 1, messageTime, messageTime, "mensagem sintética", NOW);
+        String generation = jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, chat);
+        Instant expires = NOW.plusSeconds(86_400);
+        String payload = JSON.writeValueAsString(Map.of("eventType", NotificationService.ARCHIVED_MESSAGES,
+                "archiveMode", "ALL", "totalChats", 1, "totalMessages", 1,
+                "chats", List.of(Map.of("displayName", "Cliente", "messageCount", 1, "isGroup", false, "policy", "ANYTIME"))));
+        String snapshot = JSON.writeValueAsString(List.of(Map.of("chat_jid", chat, "pending_generation", generation,
+                "message_count", 1, "first_message_at", messageAt.toString(), "last_message_at", messageAt.toString(),
+                "updated_at", NOW.minusSeconds(3600).toString())));
+        outbox.enqueue("queued-legacy-triage", NotificationService.ARCHIVED_MESSAGES, payload, snapshot, NOW, expires);
+        persistIgnoreDecision(chat, messageAt, true);
+
+        boolean delivered = triageFilteringNotifications(true).deliverQueuedAction("queued-legacy-triage", NOW);
+
+        assertFalse(delivered);
+        assertEquals(0, requestCount.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key='queued-legacy-triage'", String.class));
+    }
+
+    @Test void triageFilterCompareAndSwapKeepsAConcurrentlyAggregatedMessage() {
+        String chat = "legacy-cas@s.whatsapp.net";
+        String messageTime = "2026-10-26T10:59:00Z";
+        Instant originalLast = fixture(messageTime);
+        seed(chat, "Cliente", false, 1, messageTime, messageTime, "primeira", NOW);
+        var original = jdbc.queryForMap("select generation::text,updated_at,payload->>'lastMessageAt' as last_message_at from pending_notification where chat_jid=?", chat);
+        Instant originalUpdated = ((java.sql.Timestamp) original.get("updated_at")).toInstant();
+        Instant concurrentLast = originalLast.plusSeconds(1);
+        jdbc.update("""
+                update pending_notification
+                   set payload=payload || jsonb_build_object('messageCount',2,'lastMessageAt',?),updated_at=?
+                 where chat_jid=?
+                """, concurrentLast.toString(), java.sql.Timestamp.from(NOW), chat);
+
+        int deleted = new NotificationQueueQueryRepository(jdbc).discardPendingIfCurrent(chat,
+                (String) original.get("generation"), originalUpdated, originalLast, 1);
+
+        assertEquals(0, deleted);
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+        assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, chat));
+    }
+
     @Test void rabbitDefersWorkOnlyNotificationsUntilTheNextAllowedWindow() {
         var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
         var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
@@ -141,6 +225,7 @@ class NotificationServiceTest {
         jdbc.update("delete from decision_delivery_attempts");
         jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
+        jdbc.update("delete from triage_legacy_filter_opt_ins");
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from processed_message");
         jdbc.update("delete from quarantined_events");
@@ -953,6 +1038,47 @@ class NotificationServiceTest {
 
     private void makePendingOutboxDue() {
         jdbc.update("update outbox_actions set available_at=clock_timestamp()-interval '1 second' where status='PENDING'");
+    }
+
+    private NotificationService triageFilteringNotifications(boolean enabled) {
+        return new NotificationService(new NotificationQueueQueryRepository(jdbc), manager, outbox, fakeTransport(),
+                new TelegramMessageFormatter(), properties, clock, archiveModes, configuredAlerts(),
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager), enabled);
+    }
+
+    private void seedIgnoreDecision(String chat, String messageTime, boolean optIn) {
+        seedIgnoreDecision(chat, messageTime, optIn, 1);
+    }
+
+    private void seedIgnoreDecision(String chat, String messageTime, boolean optIn, int pendingCount) {
+        Instant messageAt = fixture(messageTime);
+        seed(chat, "Cliente", false, pendingCount, messageTime, messageTime, "mensagem sintética", NOW);
+        persistIgnoreDecision(chat, messageAt, optIn);
+    }
+
+    private void persistIgnoreDecision(String chat, Instant messageAt, boolean optIn) {
+        var id = UUID.randomUUID();
+        Instant expires = NOW.plusSeconds(86_400);
+        jdbc.update("""
+                insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,
+                    due_at,created_at,expires_at,metadata_expires_at)
+                values (?,?,'','COMPLETED',?,?,?,?,?,?)
+                """, id, chat, java.sql.Timestamp.from(messageAt), java.sql.Timestamp.from(messageAt),
+                java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(expires),
+                java.sql.Timestamp.from(expires));
+        jdbc.update("""
+                insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload)
+                values (?,?,'',?,?,?::jsonb)
+                """, id, chat, "synthetic-" + id, java.sql.Timestamp.from(messageAt),
+                "{\"fromMe\":false,\"content\":{\"conversation\":\"synthetic\"}}");
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,
+                    metadata_expires_at,classification_status,triage_outcome,notification_recommended,
+                    reply_recommended,real_action_allowed,production_mode)
+                values (?,false,false,'no_notification_recommended',?,?,'CLASSIFIED','IGNORE',false,false,false,false)
+                """, id, java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(expires));
+        if (optIn) jdbc.update("insert into triage_legacy_filter_opt_ins(chat_jid,enabled,updated_at) values (?,true,?)",
+                chat, java.sql.Timestamp.from(NOW));
     }
 
     private void seed(String jid, String name, boolean group, int count, String first, String last, String preview, Instant now) {

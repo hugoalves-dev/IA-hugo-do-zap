@@ -56,6 +56,7 @@ public class ReportService {
             Instant start = date.atStartOfDay(REPORT_ZONE).toInstant();
             Instant end = date.plusDays(1).atStartOfDay(REPORT_ZONE).toInstant();
             var counts = queries.decisionCounts(start, end);
+            var triage = queries.triageCounts(start, end);
             var distribution = queries.urgencyCounts(start, end);
             var costs = queries.budgetCosts(start, end);
             Instant created = clock.instant();
@@ -63,6 +64,12 @@ public class ReportService {
                     Map.entry("eventType", "simulation_daily_summary"), Map.entry("date", date.toString()),
                     Map.entry("decisionCount", counts.decisions()), Map.entry("predictedAlerts", counts.alerts()),
                     Map.entry("predictedReplies", counts.replies()), Map.entry("blockedDecisions", counts.blocked()),
+                    Map.entry("semanticTriage", Map.of("IGNORE", triage.ignore(), "NOTIFY_ONLY", triage.notifyOnly(),
+                            "NOTIFY_AND_REPLY", triage.notifyAndReply(), "UNDECIDED", triage.undecided())),
+                    Map.entry("recommendations", Map.of("notifications", triage.notificationRecommendations(),
+                            "replies", triage.replyRecommendations())),
+                    Map.entry("simulatedActions", Map.of("alerts", counts.alerts(), "replies", counts.replies())),
+                    Map.entry("realAuthorizedActions", counts.realAuthorized()),
                     Map.entry("reservedCostMicros", costs.reserved()), Map.entry("reportedActualCostMicros", costs.actual()),
                     Map.entry("urgencyDistribution", Map.of("LOW", distribution.get("low"), "NORMAL", distribution.get("normal"),
                             "HIGH", distribution.get("high"), "CRITICAL", distribution.get("critical"), "UNCERTAIN", distribution.get("uncertain"))),

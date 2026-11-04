@@ -235,6 +235,7 @@ class DecisionEngineTest {
                 new EffectivePolicy(Map.of(), null, settings), NOW);
 
         assertEquals(TriageOutcome.NOTIFY_AND_REPLY, decision.triageOutcome());
+        assertFalse(decision.wouldAlert());
         assertFalse(decision.wouldReply());
         assertTrue(decision.triageBlockers().contains("group_trigger_missing"));
     }
