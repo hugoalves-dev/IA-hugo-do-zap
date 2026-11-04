@@ -16,6 +16,9 @@ class ShadowMetricsTest {
 
             metrics.eligibleBatch();
             metrics.classification(ClassificationResult.Status.UNAVAILABLE);
+            metrics.context(java.util.List.of(new ClassificationInput.ContextEntry("owner", "private text"),
+                    new ClassificationInput.ContextEntry("contact", "also private")));
+            metrics.contextDiagnostic("context_insufficient");
             metrics.fallback();
             metrics.providerCall("openrouter", "timeout", Duration.ofMillis(25));
             metrics.decision("classification_unavailable", "consent_missing");
@@ -23,6 +26,9 @@ class ShadowMetricsTest {
             assertEquals(1, registry.get("watcher.shadow.batches.eligible").counter().count());
             assertEquals(1, registry.get("watcher.shadow.classifications")
                     .tag("status", "UNAVAILABLE").counter().count());
+            assertEquals(1, registry.get("watcher.shadow.context.messages").tag("role", "owner").counter().count());
+            assertEquals(1, registry.get("watcher.shadow.context.messages").tag("role", "contact").counter().count());
+            assertEquals(1, registry.get("watcher.shadow.context.diagnostics").tag("reason", "context_insufficient").counter().count());
             assertEquals(1, registry.get("watcher.shadow.fallbacks").counter().count());
             assertEquals(1, registry.get("watcher.shadow.provider.calls")
                     .tags("provider", "openrouter", "status", "timeout").counter().count());

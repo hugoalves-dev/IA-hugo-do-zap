@@ -35,6 +35,24 @@ class ClassificationInputMinimizerTest {
         assertEquals("Posso apagar?", input.contextEntries().getFirst().text());
     }
 
+    @Test void verifiedGroupOwnerMessageCanBeRepresentedAsContextWithoutBecomingTarget() {
+        var owner = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("owner-reply"), "fixture@g.us",
+                java.util.Optional.of("owner@s.whatsapp.net"), java.util.Optional.empty(), java.util.Optional.empty(),
+                true, "notify", false, java.util.Map.of("conversation", "Vou verificar"), java.time.Instant.parse("2026-10-30T00:00:01Z"));
+        var target = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("target"), "fixture@g.us",
+                java.util.Optional.of("contact@s.whatsapp.net"), java.util.Optional.empty(), java.util.Optional.empty(),
+                false, "notify", false, java.util.Map.of("conversation", "Pode fazer isso?"), java.time.Instant.parse("2026-10-30T00:00:02Z"));
+        var batch = new dev.hugo.watcher.simulation.Batch(
+                java.util.UUID.randomUUID(), "fixture@g.us", "contact@s.whatsapp.net", List.of(owner, target));
+        var input = ClassificationInput.fromBatch(batch);
+
+        assertTrue(input.contextEntries().isEmpty(), "unverified group owner messages must be omitted");
+        input = ClassificationInput.fromContext(batch);
+
+        assertEquals("Pode fazer isso?", input.target());
+        assertEquals(List.of(new ClassificationInput.ContextEntry("owner", "Vou verificar")), input.contextEntries());
+    }
+
     @Test void masksCommonContactAndIdentityTokensBeforeProviderInput() {
         String text = "Call +55 (11) 98765-4321 or 11987654321; email person.test@example.com; "
                 + "WhatsApp 5511987654321@s.whatsapp.net; CPF 123.456.789-09; "

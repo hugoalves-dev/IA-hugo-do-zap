@@ -74,15 +74,18 @@ public final class AiSimulationClassifier {
         if (scopeDiagnostic != null) return unavailable(scopeDiagnostic);
         Set<Situation> purposes = permittedPurposes(batch, "openrouter");
         if (purposes.isEmpty()) return unavailable("consent_missing");
-        Set<Situation> consentedPurposes = purposes;
         purposes = contextualPurposes(batch, purposes);
-        if (purposes.isEmpty())
-            return unavailable(batch.chatJid().endsWith("@g.us") && consentedPurposes.contains(Situation.GROUP_TRIGGER)
-                    ? "group_trigger_missing" : "consent_missing");
+        if (purposes.isEmpty()) return unavailable("consent_missing");
         final Set<Situation> approvedPurposes = Set.copyOf(purposes);
         ClassificationInput input = context.input(batch, clock.instant(), java.time.Duration.ofHours(contextWindowHours));
-        if (input.messages().isEmpty()) return unavailable("no_eligible_text");
-        if (input.contextEntries().isEmpty() && needsContext(input.target())) return unavailable("context_insufficient");
+        if (input.messages().isEmpty()) {
+            if (metrics != null) metrics.contextDiagnostic("no_eligible_text");
+            return unavailable("no_eligible_text");
+        }
+        if (input.contextEntries().isEmpty() && needsContext(input.target())) {
+            if (metrics != null) metrics.contextDiagnostic("context_insufficient");
+            return unavailable("context_insufficient");
+        }
         UUID token = UUID.randomUUID();
         Instant deadline = clock.instant().plus(properties.timeout().multipliedBy(3)).plusSeconds(30);
         int claimed = persistence.claim(batch.id(), token, deadline);
@@ -103,10 +106,11 @@ public final class AiSimulationClassifier {
         if (properties.fallbackConfigured()) fallback = new GeminiProvider(URI.create("https://generativelanguage.googleapis.com/v1beta/models"),
                 properties.geminiModel(), properties.geminiApiKey(), guarded(http, batch, "gemini", approvedPurposes, usedProvider),
                 (provider, minimized) -> authorized(batch, provider, approvedPurposes), properties.timeout());
+        if (metrics != null) metrics.context(input.contextEntries());
         ClassificationResult result = new ClassificationService(primary, fallback, metrics).classify(input);
         Classification classification = authorized(batch, usedProvider.get(), purposes) ? convert(batch, result, purposes) : Classification.unavailable();
         int saved = persistence.saveIfCurrent(batch.id(), token,
-                encode(classification, usedProvider.get(), purposes, input.contextEntries().size(), contextWindowHours),
+                encode(classification, usedProvider.get(), purposes, input.contextEntries(), contextWindowHours),
                 clock.instant());
         Classification finalResult = saved == 1 ? classification : Classification.unavailable();
         if (metrics != null) metrics.classification(finalResult.status());
@@ -123,7 +127,7 @@ public final class AiSimulationClassifier {
     }
     private static boolean needsContext(String text) {
         String normalized = text.strip().toLowerCase(Locale.ROOT).replaceAll("[\\p{Punct}\\s]+$", "");
-        return Set.of("ok", "pode", "apaga", "faz isso").contains(normalized);
+        return Set.of("ok", "pode", "apaga", "faz isso", "te respondo depois").contains(normalized);
     }
 
     /** Recheck data consent and kill switch in the short decision-persistence transaction. Never performs HTTP. */
@@ -187,7 +191,7 @@ public final class AiSimulationClassifier {
         boolean group = batch.chatJid().endsWith("@g.us");
         Situation purpose = group ? Situation.GROUP_TRIGGER : Situation.CONTACT_REQUEST;
         boolean mention = structuredMention(batch);
-        if (!consented.contains(purpose) || group && !mention) return Set.of();
+        if (!consented.contains(purpose)) return Set.of();
         Set<Situation> applicable = EnumSet.of(purpose);
         if (mention && consented.contains(Situation.CRITICAL_URGENCY)) applicable.add(Situation.CRITICAL_URGENCY);
         return applicable;
@@ -240,7 +244,8 @@ public final class AiSimulationClassifier {
         return dev.hugo.watcher.simulation.PersonalReferenceEvidence.findHash(referenceEvidence, batch.id(), properties.ownJid(), clock.instant());
     }
     private boolean structuredMention(Batch batch) { return referenceHash(batch) != null; }
-    private static String encode(Classification result, String provider, Set<Situation> purposes, int contextCount, long contextWindowHours) {
+    private static String encode(Classification result, String provider, Set<Situation> purposes,
+                                 List<ClassificationInput.ContextEntry> contextEntries, long contextWindowHours) {
         Map<String,Object> metadata = new LinkedHashMap<>();
         metadata.put("provider",provider); metadata.put("purposes",purposes.stream().map(Enum::name).toList());
         metadata.put("situations",result.situations().stream().map(Enum::name).toList());
@@ -249,7 +254,10 @@ public final class AiSimulationClassifier {
         metadata.put("urgency",result.urgency().name()); metadata.put("confidence",result.confidence()); metadata.put("status",result.status().name());
         metadata.put("personalReferenceHash",result.personalReferenceHash());
         metadata.put("diagnostic", result.diagnostic());
-        metadata.put("contextCount", contextCount); metadata.put("contextWindowHours", contextWindowHours);
+        metadata.put("contextCount", contextEntries.size());
+        metadata.put("contextOwnerCount", contextEntries.stream().filter(e -> "owner".equals(e.role())).count());
+        metadata.put("contextContactCount", contextEntries.stream().filter(e -> "contact".equals(e.role())).count());
+        metadata.put("contextWindowHours", contextWindowHours);
         return JSON.writeValueAsString(metadata);
     }
     private static Classification decode(String value) {

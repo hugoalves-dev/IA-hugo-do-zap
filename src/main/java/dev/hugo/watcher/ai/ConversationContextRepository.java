@@ -64,8 +64,24 @@ public class ConversationContextRepository {
                     java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), true, "notify", false,
                     java.util.Map.of("conversation", rs.getString(3)), rs.getTimestamp(2).toInstant()), batch.chatJid(),
                     Timestamp.from(latest), Timestamp.from(latest.minus(window)), Timestamp.from(now)));
+        } else {
+            combined.addAll(jdbc.query("""
+                    select o.external_id,o.received_at,o.text from simulation_owner_context o
+                      join simulation_batch_messages replied
+                        on replied.chat_jid=o.chat_jid and replied.external_id=o.reply_to_external_id
+                      join simulation_batches source_batch on source_batch.batch_id=replied.batch_id
+                     where o.chat_jid=? and replied.participant_jid=? and o.received_at<?
+                       and o.received_at>=? and o.expires_at>? and source_batch.expires_at>?
+                     order by o.received_at desc,o.external_id desc limit 5
+                    """, (rs, row) -> new IncomingMessage(java.util.Optional.of(rs.getString(1)), batch.chatJid(),
+                    java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), true, "notify", false,
+                    java.util.Map.of("conversation", rs.getString(3)), rs.getTimestamp(2).toInstant()), batch.chatJid(),
+                    batch.participantJid(), Timestamp.from(latest), Timestamp.from(latest.minus(window)),
+                    Timestamp.from(now), Timestamp.from(now)));
         }
         combined.addAll(batch.messages());
-        return ClassificationInput.fromBatch(new Batch(batch.id(), batch.chatJid(), batch.participantJid(), combined));
+        combined.sort(Comparator.comparing(IncomingMessage::receivedAt,
+                Comparator.nullsFirst(Comparator.naturalOrder())).thenComparing(m -> m.externalId().orElse("")));
+        return ClassificationInput.fromContext(new Batch(batch.id(), batch.chatJid(), batch.participantJid(), combined));
     }
 }

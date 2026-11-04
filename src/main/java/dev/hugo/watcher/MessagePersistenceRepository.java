@@ -36,12 +36,12 @@ public class MessagePersistenceRepository {
     }
 
     public void captureOwnerContext(String chat, String externalId, Instant receivedAt, Instant capturedAt,
-                                    Instant expiresAt, String text) {
+                                    Instant expiresAt, String text, String replyToExternalId) {
         jdbc.update("""
-                insert into simulation_owner_context(chat_jid,external_id,received_at,captured_at,expires_at,text)
-                values (?,?,?,?,?,?) on conflict do nothing
+                insert into simulation_owner_context(chat_jid,external_id,received_at,captured_at,expires_at,text,reply_to_external_id)
+                values (?,?,?,?,?,?,?) on conflict do nothing
                 """, chat, externalId, Timestamp.from(receivedAt), Timestamp.from(capturedAt),
-                Timestamp.from(expiresAt), text);
+                Timestamp.from(expiresAt), text, replyToExternalId);
     }
 
     public void recordOutgoingReference(String chatJid, String externalId, Instant observedAt, Instant expiresAt) {

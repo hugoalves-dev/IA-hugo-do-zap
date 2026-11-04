@@ -36,6 +36,14 @@ public final class ClassificationInput {
     public java.util.UUID batchId() { return batchId; }
 
     public static ClassificationInput fromBatch(Batch batch) {
+        return fromBatch(batch, false);
+    }
+
+    static ClassificationInput fromContext(Batch batch) {
+        return fromBatch(batch, true);
+    }
+
+    private static ClassificationInput fromBatch(Batch batch, boolean verifiedGroupOwnerContext) {
         if (batch == null || batch.messages() == null) return new ClassificationInput(List.of());
         var ordered = batch.messages().stream().filter(java.util.Objects::nonNull)
                 .filter(message -> !message.history())
@@ -52,7 +60,7 @@ public final class ClassificationInput {
         List<ContextEntry> text = new ArrayList<>();
         for (int i = 0; i <= targetIndex; i++) {
             IncomingMessage message = ordered.get(i);
-            if (message.fromMe() && batch.chatJid().endsWith("@g.us")) continue;
+            if (message.fromMe() && batch.chatJid().endsWith("@g.us") && !verifiedGroupOwnerContext) continue;
             String extracted = extractText(message.content());
             if (!extracted.isBlank()) text.add(new ContextEntry(message.fromMe() ? "owner" : "contact", extracted));
         }

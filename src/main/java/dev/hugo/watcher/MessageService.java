@@ -93,7 +93,11 @@ public class MessageService {
     private void captureOwnerContext(IncomingMessage message) {
         if (debounce == null || !(simulationProperties.isEnabled() || realModeEnabled) || message.history()
                 || !"notify".equals(message.upsertType()) || !validChatJid(message.chatJid())
-                || isGroup(message.chatJid()) || isStatusJid(message.chatJid()) || message.receivedAt() == null) return;
+                || isStatusJid(message.chatJid()) || message.receivedAt() == null) return;
+        boolean group = isGroup(message.chatJid());
+        if (group && !properties.isIncludeGroups()) return;
+        String replyToExternalId = group ? quotedMessageId(message.content()) : null;
+        if (group && replyToExternalId == null) return;
         String id = message.externalId().orElse("");
         if (id.isBlank() || id.length() > 255) return;
         String text = new dev.hugo.watcher.ai.ClassificationInput(List.of(
@@ -105,7 +109,7 @@ public class MessageService {
         if (mode != ArchiveMode.ALL && (snapshots.isEmpty() || !mode.accepts(snapshots.getFirst().archived(), snapshots.getFirst().synchronizedSnapshot()))) return;
         Instant now = Instant.now();
         persistence.captureOwnerContext(chat, id, message.receivedAt(), now,
-                now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L), text);
+                now.plusSeconds(simulationProperties.getSensitiveRetentionDays() * 86_400L), text, replyToExternalId);
     }
 
     /** Stores minimal, short-lived provenance for an authenticated own outbound message. */
@@ -238,6 +242,29 @@ public class MessageService {
     }
 
     private static boolean isGroup(String jid) { return jid.endsWith("@g.us"); }
+
+    private static String quotedMessageId(Map<String, Object> content) {
+        Map<?, ?> current = content;
+        for (int depth = 0; depth < 5 && current != null; depth++) {
+            for (Object value : current.values()) {
+                if (value instanceof Map<?, ?> message && message.get("contextInfo") instanceof Map<?, ?> info) {
+                    Object id = info.get("stanzaId");
+                    if (id instanceof String text && !text.isBlank() && text.length() <= 255) return text;
+                }
+            }
+            Object nested = null;
+            for (String wrapper : List.of("ephemeralMessage", "viewOnceMessage", "viewOnceMessageV2",
+                    "viewOnceMessageV2Extension", "documentWithCaptionMessage")) {
+                if (current.get(wrapper) instanceof Map<?, ?> map) {
+                    nested = map.get("message");
+                    break;
+                }
+            }
+            current = nested instanceof Map<?, ?> map ? map : null;
+        }
+        return null;
+    }
+
 
     private static String extractPreview(Map<String, Object> content) {
         Map<String, Object> current = content == null ? Map.of() : content;
