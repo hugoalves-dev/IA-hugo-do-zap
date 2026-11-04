@@ -50,6 +50,11 @@ public class ClassificationPromptService {
         repository.beginInput(user, chat, expires, now);
     }
 
+    public boolean hasPendingInput(long user, long chat, Instant now) {
+        if (user <= 0 || chat <= 0 || now == null) return false;
+        return repository.hasPendingInput(user, chat, now);
+    }
+
     public PromptRevision acceptInput(long user, long chat, String body, Instant at) {
         validate(body, user, at);
         String normalized = body.strip();
