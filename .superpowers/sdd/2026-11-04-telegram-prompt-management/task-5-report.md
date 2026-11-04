@@ -20,3 +20,11 @@ Used JDK 25.0.5, Maven 3.9.11, `/tmp/issue45-settings.xml`, `/tmp/issue45-m2`, a
 
 - Telegram instructions are supplied as arguments to `/prompt_generate` and `/prompt_refine`, rather than accumulated as multiple plain-text instruction messages. They are sent only to the configured OpenRouter model over the bounded generation request.
 - Full `mvn verify` remains the Task 6 gate.
+
+## Review fix round 1: failure preservation coverage
+
+Added service-level regression coverage for unsafe generated output, provider timeout, HTTP 429, HTTP 503, local budget rejection, missing OpenRouter credentials, and disabled Shadow. Each case asserts the pre-existing draft and active revision/state version are unchanged, no revision save or state transition is attempted, and provider calls are skipped for local gate failures.
+
+Exact final command: `mvn -s /tmp/issue45-settings.xml -Dmaven.repo.local=/tmp/issue45-m2 -B -ntp -Dtest=OpenRouterPromptGeneratorTest,PromptGenerationServiceTest,TelegramPromptCommandServiceTest,AdminCommandServiceTest,ClassificationPromptLifecycleTest test`.
+
+Result: **55 tests passed, 0 failures, 0 errors, 0 skipped**. Log: `/tmp/issue45-task5-review-fix.log`.
