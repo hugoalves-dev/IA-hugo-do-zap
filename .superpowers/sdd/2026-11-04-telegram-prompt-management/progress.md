@@ -36,3 +36,5 @@ Task 2: in_progress
 Task 2: Ruling: no placeholders are accepted initially because the current classifier sends conversation payload separately from the system prompt — this avoids interpolation of untrusted message text — cost if wrong: future prompt variables require a follow-up design instead of immediate templates.
 Task 2: review round 1/5 (1 Important addressed: activation bound to the preview-confirmed draft version; 1 Minor addressed: null proposal origin rejected as invalid metadata; 1 Minor deferred: reordered lines may render as +0/-0 in the diff summary).
 Task 2: complete (commits b729550..6003c04, 22 focused tests passed, independent review clean).
+Branch update: complete (origin/main 2a22fb7 merged at 7b31eda; review fix f93fd88; PR #46 prompt state reused; V58 additive upgrade; 253 focused test executions across merge verification, review clean).
+Branch update: Important finding addressed (legacy 4,000 character validation raised to 16,000; scoped re-review approved; commits 7b31eda..f93fd88).
