@@ -888,7 +888,7 @@ class AiSimulationAcceptanceTest {
         debounce.enqueue(new IncomingMessage(Optional.of(UUID.randomUUID().toString()),jid,Optional.empty(),Optional.empty(),Optional.empty(),false,"notify",false,content,now), now);
         return debounce.claimReady(now.plusSeconds(60)).getFirst();
     }
-    private static String valid() { return "{\"intent\":\"CONTACT_REQUEST\",\"requestDetected\":true,\"urgency\":\"NORMAL\",\"evidence\":[],\"confidence\":0.9}"; }
+    private static String valid() { return "{\"intent\":\"CONTACT_REQUEST\",\"requestDetected\":true,\"notificationRecommended\":true,\"replyRecommended\":true,\"urgency\":\"NORMAL\",\"evidence\":[],\"confidence\":0.9}"; }
     private static String quote(String value) { return tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(value); }
     private static ProviderTransport.Response geminiResponse(String value) {
         return new ProviderTransport.Response(200,"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":"+quote(value)+"}]}}]}");

@@ -140,14 +140,20 @@ public final class AiSimulationClassifier {
     }
     private Classification authorizedStored(Batch batch, String stored) {
         Map<?, ?> metadata = JSON.readValue(stored, Map.class);
+        if (!(metadata.get("notificationRecommended") instanceof Boolean)
+                || !(metadata.get("replyRecommended") instanceof Boolean)
+                || !(metadata.get("evidence") instanceof List<?>))
+            return Classification.unavailable("triage_semantics_missing");
         Set<Situation> purposes = new HashSet<>();
         for (Object purpose : (List<?>)metadata.get("purposes")) purposes.add(Situation.valueOf(purpose.toString()));
         if (!authorized(batch, metadata.get("provider").toString(), purposes)) return Classification.unavailable();
         Classification decoded = decode(stored);
         String reference = referenceHash(batch);
         if ((decoded.explicitPersonalReference() || decoded.groupTriggerMatched()) && reference == null) return Classification.unavailable();
-        return new Classification(decoded.situations(),decoded.requestDetected(),reference != null,
-                reference != null && batch.chatJid().endsWith("@g.us"),decoded.available(),decoded.urgency(),decoded.confidence(),decoded.status(),reference,decoded.diagnostic());
+        return new Classification(decoded.situations(), decoded.requestDetected(), decoded.notificationRecommended(),
+                decoded.replyRecommended(), decoded.evidence(), reference != null,
+                reference != null && batch.chatJid().endsWith("@g.us"), decoded.available(), decoded.urgency(),
+                decoded.confidence(), decoded.status(), reference, decoded.diagnostic());
     }
     private ProviderTransport guarded(ProviderTransport http, Batch batch, String provider, Set<Situation> purposes,
                                       java.util.concurrent.atomic.AtomicReference<String> usedProvider) {
@@ -230,15 +236,17 @@ public final class AiSimulationClassifier {
 
     private Classification convert(Batch batch, ClassificationResult result, Set<Situation> purposes) {
         if (result.status() != ClassificationResult.Status.CLASSIFIED)
-            return new Classification(Set.of(),false,false,false,false,result.urgency(),result.confidence(),result.status(),null,result.diagnostic());
+            return new Classification(Set.of(), false, false, false, List.of(), false, false, false,
+                    result.urgency(), result.confidence(), result.status(), null, result.diagnostic());
         Set<Situation> situations = EnumSet.noneOf(Situation.class);
         if (result.intent() == ClassificationResult.Intent.CONTACT_REQUEST) situations.add(Situation.CONTACT_REQUEST);
         if (result.intent() == ClassificationResult.Intent.GROUP_TRIGGER) situations.add(Situation.GROUP_TRIGGER);
         if (result.urgency() == ClassificationResult.Urgency.CRITICAL) situations.add(Situation.CRITICAL_URGENCY);
         if (!purposes.containsAll(situations)) return Classification.unavailable();
         boolean mention = structuredMention(batch);
-        return new Classification(situations, result.requestDetected(), mention, mention && batch.chatJid().endsWith("@g.us"), true,
-                result.urgency(), result.confidence(), result.status(), referenceHash(batch));
+        return Classification.classified(situations, result.requestDetected(), result.notificationRecommended(),
+                result.replyRecommended(), result.evidence(), mention, mention && batch.chatJid().endsWith("@g.us"),
+                result.urgency(), result.confidence(), referenceHash(batch));
     }
     private String referenceHash(Batch batch) {
         return dev.hugo.watcher.simulation.PersonalReferenceEvidence.findHash(referenceEvidence, batch.id(), properties.ownJid(), clock.instant());
@@ -249,7 +257,11 @@ public final class AiSimulationClassifier {
         Map<String,Object> metadata = new LinkedHashMap<>();
         metadata.put("provider",provider); metadata.put("purposes",purposes.stream().map(Enum::name).toList());
         metadata.put("situations",result.situations().stream().map(Enum::name).toList());
-        metadata.put("requestDetected",result.requestDetected()); metadata.put("explicitPersonalReference",result.explicitPersonalReference());
+        metadata.put("requestDetected",result.requestDetected());
+        metadata.put("notificationRecommended", result.notificationRecommended());
+        metadata.put("replyRecommended", result.replyRecommended());
+        metadata.put("evidence", result.evidence().stream().map(Enum::name).toList());
+        metadata.put("explicitPersonalReference",result.explicitPersonalReference());
         metadata.put("groupTriggerMatched",result.groupTriggerMatched()); metadata.put("available",result.available());
         metadata.put("urgency",result.urgency().name()); metadata.put("confidence",result.confidence()); metadata.put("status",result.status().name());
         metadata.put("personalReferenceHash",result.personalReferenceHash());
@@ -264,8 +276,15 @@ public final class AiSimulationClassifier {
         Map<?, ?> result = JSON.readValue(value, Map.class);
         Set<Situation> situations = new HashSet<>();
         for (Object situation : (List<?>)result.get("situations")) situations.add(Situation.valueOf(situation.toString()));
-        return new Classification(situations, Boolean.TRUE.equals(result.get("requestDetected")),
-                Boolean.TRUE.equals(result.get("explicitPersonalReference")), Boolean.TRUE.equals(result.get("groupTriggerMatched")), Boolean.TRUE.equals(result.get("available")),
+        if (!(result.get("notificationRecommended") instanceof Boolean notification)
+                || !(result.get("replyRecommended") instanceof Boolean reply)
+                || !(result.get("evidence") instanceof List<?> evidence))
+            return Classification.unavailable("triage_semantics_missing");
+        List<ClassificationResult.Evidence> parsedEvidence = evidence.stream()
+                .map(item -> ClassificationResult.Evidence.valueOf(item.toString())).toList();
+        return new Classification(situations, Boolean.TRUE.equals(result.get("requestDetected")), notification,
+                reply, parsedEvidence, Boolean.TRUE.equals(result.get("explicitPersonalReference")),
+                Boolean.TRUE.equals(result.get("groupTriggerMatched")), Boolean.TRUE.equals(result.get("available")),
                 ClassificationResult.Urgency.valueOf(Objects.toString(result.get("urgency"),"UNCERTAIN")),
                 result.get("confidence") instanceof Number n ? n.doubleValue() : 0,
                 ClassificationResult.Status.valueOf(Objects.toString(result.get("status"),"UNCERTAIN")),

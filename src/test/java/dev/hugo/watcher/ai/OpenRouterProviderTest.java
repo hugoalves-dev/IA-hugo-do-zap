@@ -10,9 +10,23 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 class OpenRouterProviderTest {
+    @Test void acceptsNotificationAndReplyRecommendationsSeparatelyFromUrgency() {
+        var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
+                {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":true,\\"replyRecommended\\":false,\\"urgency\\":\\"LOW\\",\\"evidence\\":[\\"EXPLICIT_REQUEST\\"],\\"confidence\\":0.91}"}}]}
+                """));
+
+        var result = provider(transport, (name, input) -> true)
+                .classify(new ClassificationInput(List.of("Quando puder, me retorne.")));
+
+        assertEquals(ClassificationResult.Status.CLASSIFIED, result.status());
+        assertTrue(result.notificationRecommended());
+        assertFalse(result.replyRecommended());
+        assertEquals(List.of(ClassificationResult.Evidence.EXPLICIT_REQUEST), result.evidence());
+    }
+
     @Test void traceMetadataCarriesOnlyOpaqueBatchReference() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
-                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
         var id = java.util.UUID.randomUUID();
         var message = new dev.hugo.watcher.IncomingMessage(java.util.Optional.of("private-message"), "private@s.whatsapp.net", java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(), false, "notify", false, java.util.Map.of("conversation", "Olá"), java.time.Instant.EPOCH);
         var input = ClassificationInput.fromBatch(new dev.hugo.watcher.simulation.Batch(id, "private@s.whatsapp.net", "", List.of(message)));
@@ -24,7 +38,7 @@ class OpenRouterProviderTest {
     }
     @Test void enforcesPrivateRoutingAndMinimizedPrompt() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
-                {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91}"}}]}
+                {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":true,\\"replyRecommended\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91}"}}]}
                 """));
 
         var result = provider(transport, (name, input) -> true)
@@ -49,7 +63,7 @@ class OpenRouterProviderTest {
         var transport = new FakeProviderTransport(request -> {
             if (FakeProviderTransport.requestBody(request).contains("\"temperature\""))
                 return FakeProviderTransport.response(404, "No endpoints found that can handle the requested parameters");
-            return FakeProviderTransport.response(200, "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"CONTACT_REQUEST\\\",\\\"requestDetected\\\":true,\\\"urgency\\\":\\\"NORMAL\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.91}\"}}]}");
+            return FakeProviderTransport.response(200, "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"CONTACT_REQUEST\\\",\\\"requestDetected\\\":true,\\\"notificationRecommended\\\":true,\\\"replyRecommended\\\":true,\\\"urgency\\\":\\\"NORMAL\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.91}\"}}]}");
         });
         var provider = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                 "anthropic/claude-haiku-5.5", "fake-key", transport, (name, input) -> true,
@@ -89,7 +103,7 @@ class OpenRouterProviderTest {
 
     @Test void modelCannotReturnPermissionOrPersonalReferenceFields() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
-                {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91,\\"authorized\\":true}"}}]}
+                {"choices":[{"message":{"content":"{\\"intent\\":\\"CONTACT_REQUEST\\",\\"requestDetected\\":true,\\"notificationRecommended\\":true,\\"replyRecommended\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91,\\"authorized\\":true}"}}]}
                 """));
 
         var error = assertThrows(ClassificationProviderException.class,
@@ -101,7 +115,7 @@ class OpenRouterProviderTest {
 
     @Test void inconsistentSchemaFieldsFailClosed() {
         var transport = new FakeProviderTransport(request -> FakeProviderTransport.response(200, """
-                {"choices":[{"message":{"content":"{\\"intent\\":\\"NONE\\",\\"requestDetected\\":true,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91}"}}]}
+                {"choices":[{"message":{"content":"{\\"intent\\":\\"NONE\\",\\"requestDetected\\":true,\\"notificationRecommended\\":false,\\"replyRecommended\\":false,\\"urgency\\":\\"NORMAL\\",\\"evidence\\":[],\\"confidence\\":0.91}"}}]}
                 """));
 
         var error = assertThrows(ClassificationProviderException.class,
@@ -151,7 +165,7 @@ class OpenRouterProviderTest {
 
     @Test void reasoningIsExplicitAndTokenBudgetIsConfigurable() {
         var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
-                "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+                "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
         for (boolean reasoning : new boolean[]{false,true}) {
             var current = new OpenRouterProvider(URI.create("https://openrouter.ai/api/v1/chat/completions"),
                     "anthropic/claude-haiku-5.5", "fake-key", http, (name, input) -> true,
@@ -194,7 +208,7 @@ class OpenRouterProviderTest {
 
     @Test void missingFinishReasonAndUsageWithValidJsonRemainsValidWithoutInventingTruncation() {
         var http = new FakeProviderTransport(request -> FakeProviderTransport.response(200,
-                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
+                "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"NONE\\\",\\\"requestDetected\\\":false,\\\"notificationRecommended\\\":false,\\\"replyRecommended\\\":false,\\\"urgency\\\":\\\"LOW\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}"));
         var result = provider(http, (name, input) -> true)
                 .classify(new ClassificationInput(List.of("Oi")));
         assertEquals(ClassificationResult.Status.CLASSIFIED, result.status());
