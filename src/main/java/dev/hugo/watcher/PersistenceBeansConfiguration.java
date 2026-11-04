@@ -242,9 +242,10 @@ class PersistenceBeansConfiguration {
                                             TelegramTransport telegram, TelegramMessageFormatter telegramFormatter,
                                             WatcherProperties properties, Clock clock, ArchiveModeService archiveModes,
                                             dev.hugo.watcher.notification.IntelligentAlertService intelligentAlerts,
-                                            dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries) {
+                                            dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries,
+                                            @Value("${watcher.ai.triage.legacy-filter-enabled:false}") boolean triageLegacyFilterEnabled) {
         return new NotificationService(queries, transactions, outbox, telegram, telegramFormatter, properties,
-                clock, archiveModes, intelligentAlerts, deliveries);
+                clock, archiveModes, intelligentAlerts, deliveries, triageLegacyFilterEnabled);
     }
 
 }

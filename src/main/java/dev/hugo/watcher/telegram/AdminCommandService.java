@@ -124,6 +124,7 @@ public class AdminCommandService {
             case "relatorio" -> report();
             case "ultimas" -> decisions.recent(args);
             case "decisao" -> decisions.detail(args);
+            case "triagem" -> setTriageLegacyFilter(args);
             case "emergencia" -> emergency();
             case "recuperar" -> recoverEmergency(args);
             case "perfis" -> profiles();
@@ -229,6 +230,19 @@ public class AdminCommandService {
         if (knownProfile == null || knownProfile == 0) throw new IllegalArgumentException("Perfil não encontrado.");
         persistence.setChatProfile(chat, args.get(1), clock.instant());
         return "Perfil da conversa atualizado.";
+    }
+
+    private String setTriageLegacyFilter(List<String> args) {
+        if (args.size() != 2) throw new IllegalArgumentException("Use /triagem <id da decisão> on|off.");
+        boolean enabled = switch (args.get(1).toLowerCase(java.util.Locale.ROOT)) {
+            case "on", "ligar" -> true;
+            case "off", "desligar" -> false;
+            default -> throw new IllegalArgumentException("Use /triagem <id da decisão> on|off.");
+        };
+        persistence.setTriageLegacyFilter(args.getFirst(), enabled, clock.instant());
+        return enabled
+                ? "Opt-in do filtro legado salvo para a conversa. O filtro global também precisa estar habilitado; somente IGNORE privado e isolado pode ser suprimido."
+                : "Opt-in do filtro legado removido para a conversa.";
     }
 
     private String templates() {
@@ -364,7 +378,7 @@ public class AdminCommandService {
     }
 
     private static boolean isMutation(String name, List<String> args) {
-        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado").contains(name)
+        return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem").contains(name)
                 || (name.equals("orcamento") && !args.isEmpty());
     }
 
@@ -384,7 +398,7 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/menu, /status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/menu, /status, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
 }

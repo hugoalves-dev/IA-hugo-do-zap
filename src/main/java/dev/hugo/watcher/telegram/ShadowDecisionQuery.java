@@ -24,6 +24,7 @@ public class ShadowDecisionQuery {
         List<String> rows = jdbc.query("""
                 select d.batch_id,d.decided_at,d.classification_status,d.classification_urgency,d.classification_confidence,
                        d.would_alert,d.would_reply,d.blocked_reason,d.decision_state,d.classification_diagnostic,c.display_name,c.display_name_source,
+                       d.triage_outcome,d.notification_recommended,d.reply_recommended,d.triage_reason,d.triage_blockers::text as triage_blockers,
                        s.display_name as snapshot_name,e.result->>'provider' as provider,
                        e.result->>'requestDetected' as request_detected
                   from simulation_decisions d join simulation_batches b on b.batch_id=d.batch_id
@@ -38,7 +39,7 @@ public class ShadowDecisionQuery {
                     || !safeName(name)) name = rs.getString("snapshot_name");
             if (!safeName(name)) name = "Contato indisponível";
             name = name.strip().replaceAll("[\\p{Cntrl}]", " ");
-            if (name.length() > 30) name = name.substring(0,30);
+            if (!"Contato indisponível".equals(name) && name.length() > 16) name = name.substring(0,16);
             name = escape(name);
             return rs.getString("batch_id").substring(0,8) + " · " + DATE.format(rs.getTimestamp("decided_at").toInstant())
                     + " · " + name + "\n" + rs.getString("classification_status") + " / " + rs.getString("classification_urgency")
@@ -47,6 +48,10 @@ public class ShadowDecisionQuery {
                     + " · pedido=" + (rs.getString("request_detected") == null ? "indisponível" : "true".equals(rs.getString("request_detected")) ? "sim" : "não")
                     + " · Shadow " + rs.getString("decision_state") + " · alerta=" + rs.getBoolean("would_alert")
                     + " resposta=" + rs.getBoolean("would_reply") + " · bloqueio=" + code(rs.getString("blocked_reason"))
+                    + "\ntriagem=" + triage(rs.getString("triage_outcome"))
+                    + " · motivo=" + code(rs.getString("triage_reason"))
+                    + ("nenhum".equals(blockers(rs.getString("triage_blockers"))) ? ""
+                        : " · bloqueadores=" + blockers(rs.getString("triage_blockers")))
                     + (rs.getString("classification_diagnostic") == null ? "" : " · diagnóstico=" + code(rs.getString("classification_diagnostic")));
         }, Timestamp.from(clock.instant()), limit);
         return rows.isEmpty() ? "Nenhuma decisão disponível dentro da retenção." : "Decisões recentes:\n" + String.join("\n\n",rows);
@@ -104,6 +109,9 @@ public class ShadowDecisionQuery {
                     context="contexto: " + count + " mensagens; janela até " + hours + " h";
             }
             boolean reply=rs.getBoolean("would_reply"), allowed=rs.getBoolean("real_action_allowed"), production=rs.getBoolean("production_mode");
+            String triageOutcome=triage(rs.getString("triage_outcome"));
+            boolean notificationRecommended=rs.getBoolean("notification_recommended");
+            boolean replyRecommended=rs.getBoolean("reply_recommended");
             String body=reply ? rs.getString("template_body") : rs.getString("hypothetical_body");
             String preview=body != null ? (reply ? "Prévia de ação prevista: " : "Prévia hipotética se habilitado: ")
                     + escape(body.length()>500 ? body.substring(0,500) : body)
@@ -113,6 +121,11 @@ public class ShadowDecisionQuery {
                     + "\nClassificação: " + rs.getString("classification_status") + " / " + urgency + " / "
                     + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
                     + "\nSolicitação detectada: " + requestDetected
+                    + "\nResultado semântico: " + triageOutcome
+                    + "; alerta recomendado: " + yesNo(notificationRecommended)
+                    + "; Resposta recomendada: " + yesNo(replyRecommended)
+                    + "\nMotivo da triagem: " + code(rs.getString("triage_reason"))
+                    + "; bloqueadores: " + blockers(rs.getString("triage_blockers"))
                     + "\n" + context
                     + "\nRubrica geral: " + explanation + "; " + (rs.getString("classification_diagnostic") == null
                         ? "motivo específico não armazenado." : "diagnóstico=" + code(rs.getString("classification_diagnostic")) + ".")
@@ -128,6 +141,20 @@ public class ShadowDecisionQuery {
         return rows.getFirst();
     }
     private static String code(String value) { return value == null ? "nenhum" : value.matches("[a-zA-Z0-9_-]{1,120}") ? (value.length() > 48 ? value.substring(0,48) : value) : "indisponível"; }
+    private static String triage(String value) {
+        return value != null && List.of("IGNORE", "NOTIFY_ONLY", "NOTIFY_AND_REPLY", "UNDECIDED").contains(value)
+                ? value : "UNDECIDED";
+    }
+    private static String yesNo(boolean value) { return value ? "sim" : "não"; }
+    private static String blockers(String json) {
+        if (json == null || json.isBlank()) return "nenhum";
+        try {
+            List<?> values = tools.jackson.databind.json.JsonMapper.builder().build().readValue(json, List.class);
+            List<String> safe = values.stream().filter(String.class::isInstance).map(String.class::cast)
+                    .map(ShadowDecisionQuery::code).filter(value -> !"nenhum".equals(value) && !"indisponível".equals(value)).toList();
+            return safe.isEmpty() ? "nenhum" : String.join(", ", safe);
+        } catch (RuntimeException invalid) { return "indisponível"; }
+    }
     private static String provider(String value) { return "openrouter".equals(value) || "gemini".equals(value) ? value : "indisponível"; }
     private static boolean safeName(String value) { return value != null && !value.isBlank() && !value.contains("@") && value.replaceAll("\\D", "").length() < 8; }
     private static String safe(String value) { return value==null || value.isBlank() ? "nenhum" : value; }

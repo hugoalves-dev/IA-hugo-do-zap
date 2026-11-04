@@ -205,20 +205,51 @@ class AdminCommandServiceTest {
         var now = java.sql.Timestamp.from(clock.instant());
         var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
         jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)", id, "fixture@s.whatsapp.net", now, now, now, now, expires, expires);
-        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,classification_status,classification_urgency,classification_confidence) values (?,false,false,'no_request_detected',?,?,'CLASSIFIED','LOW',0.95)", id, now, expires);
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,
+                    classification_status,classification_urgency,classification_confidence,triage_outcome,
+                    notification_recommended,reply_recommended,triage_reason,triage_blockers)
+                values (?,false,false,'no_request_detected',?,?,'CLASSIFIED','LOW',0.95,'NOTIFY_ONLY',true,false,
+                        'notification_relevant_reply_not_recommended','[\"intelligent_alerts_disabled\"]'::jsonb)
+                """, id, now, expires);
         String recent = commands.execute(command("ultimas", List.of("5"), false)).message();
         assertTrue(recent.contains(id.toString().substring(0, 8)));
         assertTrue(recent.contains("LOW"));
         assertTrue(recent.contains("Contato indisponível"));
         assertTrue(recent.contains("27/10/2026 - 09:00:00"));
+        assertTrue(recent.contains("triagem=NOTIFY_ONLY"));
+        assertTrue(recent.contains("intelligent_alerts_disabled"));
         String detail = commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message();
         assertTrue(detail.contains("would_reply: false"));
+        assertTrue(detail.contains("Resultado semântico: NOTIFY_ONLY"));
+        assertTrue(detail.contains("alerta recomendado: sim"));
+        assertTrue(detail.contains("Resposta recomendada: não"));
         assertTrue(detail.contains("motivo específico não armazenado"));
         assertTrue(detail.contains("Prévia indisponível"));
         assertFalse(detail.contains("fixture@s.whatsapp.net"));
         assertTrue(commands.execute(command("decisao", List.of("invalid"), false)).message().contains("ID inválido"));
         clock.now = clock.now.plusSeconds(3601);
         assertTrue(commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message().contains("expirada"));
+    }
+
+    @Test void triageLegacyFilterOptInRequiresConfirmationAndDoesNotExposeChatIdentity() {
+        var id = java.util.UUID.randomUUID();
+        String chat = "private-filter-opt-in@s.whatsapp.net";
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)", id, chat, now, now, now, now, expires, expires);
+        jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,triage_outcome) values (?,false,false,'no_notification_recommended',?,?,'IGNORE')", id, now, expires);
+        List<String> arguments = List.of(id.toString().substring(0, 8), "on");
+
+        AdminResult pending = commands.execute(command("triagem", arguments, false));
+        assertTrue(pending.confirmationRequired());
+        assertFalse(jdbc.queryForObject("select exists(select 1 from triage_legacy_filter_opt_ins where chat_jid=?)", Boolean.class, chat));
+
+        AdminResult applied = commands.execute(command("triagem", arguments, true));
+
+        assertTrue(applied.accepted());
+        assertFalse(applied.message().contains("@s.whatsapp.net"));
+        assertTrue(jdbc.queryForObject("select enabled from triage_legacy_filter_opt_ins where chat_jid=?", Boolean.class, chat));
     }
 
     @Test void archivedShadowDecisionShowsRequestAndInactiveTemplateAsHypotheticalOnly() {

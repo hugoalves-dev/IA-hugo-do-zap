@@ -60,8 +60,9 @@ class IntelligentAlertServiceTest {
         jdbc.update("delete from ai_data_consents");
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('15551234567@s.whatsapp.net','CONTACT_REQUEST','gemini',true,?)",Timestamp.from(expiry));
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('15551234567@s.whatsapp.net','CRITICAL_URGENCY','gemini',true,?)",Timestamp.from(expiry));
-        jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",decisionId,UUID.randomUUID(),Timestamp.from(expiry),"{\"provider\": \"gemini\", \"purposes\": [\"CONTACT_REQUEST\", \"CRITICAL_URGENCY\"], \"available\": true, \"requestDetected\": true, \"status\": \"CLASSIFIED\", \"urgency\": \"CRITICAL\", \"confidence\": 0.98}");
+        jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",decisionId,UUID.randomUUID(),Timestamp.from(expiry),"{\"provider\": \"gemini\", \"purposes\": [\"CONTACT_REQUEST\", \"CRITICAL_URGENCY\"], \"situations\": [\"CONTACT_REQUEST\", \"CRITICAL_URGENCY\"], \"available\": true, \"requestDetected\": true, \"notificationRecommended\": true, \"replyRecommended\": false, \"status\": \"CLASSIFIED\", \"urgency\": \"CRITICAL\", \"confidence\": 0.98}");
         jdbc.update("update simulation_decisions set alert_template_reference='alert_test@v1',production_mode=true,classification_status='CLASSIFIED',classification_urgency='CRITICAL',classification_confidence=0.98 where batch_id=?",decisionId);
+        jdbc.update("update simulation_decisions set notification_recommended=true,triage_outcome='NOTIFY_ONLY' where batch_id=?", decisionId);
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','alert_test',1)", "15551234567@s.whatsapp.net");
         alerts = new IntelligentAlertService(jdbc, tx, new NotificationOutboxRepository(jdbc, tx),
                 Clock.fixed(now, ZoneOffset.UTC), true, OWNER_JID);
@@ -101,6 +102,24 @@ class IntelligentAlertServiceTest {
                 Clock.fixed(now, ZoneOffset.UTC), false, OWNER_JID);
         assertFalse(disabled.enqueue(decisionId).accepted());
         assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'", Integer.class));
+    }
+
+    @Test void lowUrgencyRelevantPrivateNotificationDoesNotNeedReplyTemplateOrPersonalMention() {
+        String chat = "15551234567@s.whatsapp.net";
+        jdbc.update("update simulation_decisions set would_alert=true,real_action_allowed=true,decision_state='WOULD_ACT',classification_urgency='LOW',classification_confidence=0.9,intelligent_alert_reference_hash=null,alert_template_reference=null,notification_recommended=true,reply_recommended=false,triage_outcome='NOTIFY_ONLY' where batch_id=?", decisionId);
+        jdbc.update("update simulation_batch_messages set payload=?::jsonb where batch_id=?",
+                "{\"fromMe\":false,\"chatJid\":\"15551234567@s.whatsapp.net\",\"content\":{\"conversation\":\"RAW\"}}", decisionId);
+        jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('normal_alert_test',1,'CONTACT_REQUEST','Resposta automática: não usada no alerta.',true,false) on conflict(template_id,version) do update set enabled=false");
+        jdbc.update("delete from chat_automation_authorizations");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','normal_alert_test',1)", chat);
+        jdbc.update("update simulation_ai_evaluations set result=?::jsonb where batch_id=?",
+                "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\"],\"situations\":[\"CONTACT_REQUEST\"],\"available\":true,\"requestDetected\":true,\"notificationRecommended\":true,\"replyRecommended\":false,\"status\":\"CLASSIFIED\",\"urgency\":\"LOW\",\"confidence\":0.9}", decisionId);
+
+        assertTrue(alerts.enqueue(decisionId).accepted());
+        var action = jdbc.queryForObject("select payload::text from outbox_actions where action_type='intelligent_alert'", String.class);
+        assertFalse(action.contains("RAW"));
+        assertFalse(action.contains("15551234567"));
+        assertTrue(action.contains("LOW"));
     }
 
     @Test void dispatcherRevalidationBlocksRevokedSwitchOrOptIn() {

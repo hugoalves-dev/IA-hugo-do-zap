@@ -45,7 +45,7 @@ class EnvironmentAiIntegrationTest {
         classifier.configureOperationalState(state(config, kill)); return classifier;
     }
     private ProviderTransport.Response validResponse() {
-        return new ProviderTransport.Response(200, "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"CONTACT_REQUEST\\\",\\\"requestDetected\\\":true,\\\"urgency\\\":\\\"NORMAL\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}");
+        return new ProviderTransport.Response(200, "{\"choices\":[{\"message\":{\"content\":\"{\\\"intent\\\":\\\"CONTACT_REQUEST\\\",\\\"requestDetected\\\":true,\\\"notificationRecommended\\\":true,\\\"replyRecommended\\\":true,\\\"urgency\\\":\\\"NORMAL\\\",\\\"evidence\\\":[],\\\"confidence\\\":0.9}\"}}]}");
     }
     private Batch batch(Map<String,Object> content) {
         Instant now=clock.instant(); var debounce=new DebounceService(jdbc,new WatcherSimulationProperties());

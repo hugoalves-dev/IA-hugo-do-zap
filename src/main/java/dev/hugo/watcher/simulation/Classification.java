@@ -4,22 +4,48 @@ import dev.hugo.watcher.policy.Situation;
 import java.util.Set;
 
 public record Classification(Set<Situation> situations, boolean requestDetected,
+                             boolean notificationRecommended, boolean replyRecommended,
+                             java.util.List<dev.hugo.watcher.ai.ClassificationResult.Evidence> evidence,
                              boolean explicitPersonalReference, boolean groupTriggerMatched,
                              boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
                              double confidence, dev.hugo.watcher.ai.ClassificationResult.Status status,
                              String personalReferenceHash, String diagnostic) {
+    public Classification(Set<Situation> situations, boolean requestDetected,
+                          boolean explicitPersonalReference, boolean groupTriggerMatched,
+                          boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
+                          double confidence, dev.hugo.watcher.ai.ClassificationResult.Status status,
+                          String personalReferenceHash, String diagnostic) {
+        this(situations, requestDetected, requestDetected, requestDetected, java.util.List.of(),
+                explicitPersonalReference, groupTriggerMatched, available, urgency, confidence, status,
+                personalReferenceHash, diagnostic);
+    }
     public Classification(Set<Situation> situations, boolean requestDetected, boolean explicitPersonalReference,
                           boolean groupTriggerMatched, boolean available, dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
                           double confidence, dev.hugo.watcher.ai.ClassificationResult.Status status, String personalReferenceHash) {
-        this(situations, requestDetected, explicitPersonalReference, groupTriggerMatched, available, urgency, confidence, status, personalReferenceHash, null);
+        this(situations, requestDetected, explicitPersonalReference, groupTriggerMatched, available,
+                urgency, confidence, status, personalReferenceHash, null);
     }
     public Classification(Set<Situation> situations, boolean requestDetected, boolean explicitPersonalReference,
                           boolean groupTriggerMatched, boolean available) {
-        this(situations, requestDetected, explicitPersonalReference, groupTriggerMatched, available,
+        this(situations, requestDetected, requestDetected, requestDetected, java.util.List.of(),
+                explicitPersonalReference, groupTriggerMatched, available,
                 dev.hugo.watcher.ai.ClassificationResult.Urgency.UNCERTAIN, 0,
-                dev.hugo.watcher.ai.ClassificationResult.Status.UNCERTAIN, null);
+                available ? dev.hugo.watcher.ai.ClassificationResult.Status.CLASSIFIED
+                        : dev.hugo.watcher.ai.ClassificationResult.Status.UNAVAILABLE,
+                null, available ? null : "provider_unavailable");
     }
-    public Classification { situations = situations == null ? Set.of() : Set.copyOf(situations); }
+    public Classification {
+        situations = situations == null ? Set.of() : Set.copyOf(situations);
+        evidence = evidence == null ? java.util.List.of() : evidence.stream().distinct().limit(3).toList();
+        if (available && replyRecommended && (!notificationRecommended || !requestDetected))
+            throw new IllegalArgumentException("reply recommendation requires a detected request and notification recommendation");
+        if (!available) {
+            requestDetected = false;
+            notificationRecommended = false;
+            replyRecommended = false;
+            evidence = java.util.List.of();
+        }
+    }
     public static Classification unavailable() { return new Classification(Set.of(), false, false, false, false,
             dev.hugo.watcher.ai.ClassificationResult.Urgency.UNCERTAIN, 0,
             dev.hugo.watcher.ai.ClassificationResult.Status.UNAVAILABLE, null); }
@@ -28,6 +54,16 @@ public record Classification(Set<Situation> situations, boolean requestDetected,
             dev.hugo.watcher.ai.ClassificationResult.Status.UNAVAILABLE, null, diagnostic); }
     public static Classification greeting() { return new Classification(Set.of(), false, false, false, true); }
     public static Classification contactRequest() { return new Classification(Set.of(Situation.CONTACT_REQUEST), true, false, false, true); }
+    public static Classification classified(Set<Situation> situations, boolean requestDetected,
+                                              boolean notificationRecommended, boolean replyRecommended,
+                                              java.util.List<dev.hugo.watcher.ai.ClassificationResult.Evidence> evidence,
+                                              boolean explicitPersonalReference, boolean groupTriggerMatched,
+                                              dev.hugo.watcher.ai.ClassificationResult.Urgency urgency,
+                                              double confidence, String personalReferenceHash) {
+        return new Classification(situations, requestDetected, notificationRecommended, replyRecommended,
+                evidence, explicitPersonalReference, groupTriggerMatched, true, urgency, confidence,
+                dev.hugo.watcher.ai.ClassificationResult.Status.CLASSIFIED, personalReferenceHash, null);
+    }
     public static Classification groupTriggerCritical(boolean personalReference) {
         return new Classification(Set.of(Situation.GROUP_TRIGGER, Situation.CRITICAL_URGENCY), true, personalReference, true, true);
     }

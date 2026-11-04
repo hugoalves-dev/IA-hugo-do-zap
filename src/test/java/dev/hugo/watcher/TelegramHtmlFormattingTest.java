@@ -61,6 +61,26 @@ class TelegramHtmlFormattingTest {
                 """));
         assertTrue(alert.startsWith("<b>⚠️ Alerta inteligente</b> — urgência CRITICAL"));
         assertValidHtml(alert);
+        String lowAlert = formatter.format(action("intelligent_alert", """
+                {"eventType":"intelligent_alert","urgency":"LOW",
+                 "reference":"54a5e6ad-7910-4dd6-a35b-8f14e5aee217"}
+                """));
+        assertTrue(lowAlert.startsWith("<b>⚠️ Alerta inteligente</b> — urgência LOW"));
+        assertValidHtml(lowAlert);
+    }
+
+    @Test void dailySummaryShowsSemanticRecommendationsSeparatelyFromActions() throws Exception {
+        String html = formatter.format(action("simulation_daily_summary", """
+                {"eventType":"simulation_daily_summary","date":"2026-11-03",
+                 "semanticTriage":{"IGNORE":2,"NOTIFY_ONLY":3,"NOTIFY_AND_REPLY":4,"UNDECIDED":1},
+                 "recommendations":{"notifications":7,"replies":4},
+                 "simulatedActions":{"alerts":0,"replies":0},"realAuthorizedActions":0}
+                """));
+
+        assertTrue(html.contains("Triagem IGNORE/NOTIFY_ONLY/NOTIFY_AND_REPLY/UNDECIDED: 2/3/4/1"));
+        assertTrue(html.contains("recomendações alerta/resposta: 7/4"));
+        assertTrue(html.contains("autorizadas em modo real: 0"));
+        assertValidHtml(html);
     }
 
     @Test void simulatedReplyRendersOnlyProvidedTemplateAndNeverClaimsWhatsAppWasSent() throws Exception {

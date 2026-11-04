@@ -127,6 +127,15 @@ public class TelegramMessageFormatter {
                 + " · alertas previstos: " + payload.path("predictedAlerts").asLong(0)
                 + " · respostas previstas: " + payload.path("predictedReplies").asLong(0)
                 + " · bloqueadas: " + payload.path("blockedDecisions").asLong(0)
+                + "\nTriagem IGNORE/NOTIFY_ONLY/NOTIFY_AND_REPLY/UNDECIDED: "
+                + payload.path("semanticTriage").path("IGNORE").asLong(0) + "/"
+                + payload.path("semanticTriage").path("NOTIFY_ONLY").asLong(0) + "/"
+                + payload.path("semanticTriage").path("NOTIFY_AND_REPLY").asLong(0) + "/"
+                + payload.path("semanticTriage").path("UNDECIDED").asLong(0)
+                + " · recomendações alerta/resposta: "
+                + payload.path("recommendations").path("notifications").asLong(0) + "/"
+                + payload.path("recommendations").path("replies").asLong(0)
+                + " · autorizadas em modo real: " + payload.path("realAuthorizedActions").asLong(0)
                 + "\nUrgência LOW/NORMAL/HIGH/CRITICAL/UNCERTAIN: "
                 + payload.path("urgencyDistribution").path("LOW").asLong(0) + "/"
                 + payload.path("urgencyDistribution").path("NORMAL").asLong(0) + "/"
@@ -144,7 +153,7 @@ public class TelegramMessageFormatter {
     private String intelligentAlert(JsonNode payload) {
         String urgency = clean(payload.path("urgency").asString(""));
         String reference = clean(payload.path("reference").asString(""));
-        if (!List.of("HIGH", "CRITICAL").contains(urgency) || !reference.matches("[0-9a-fA-F-]{36}"))
+        if (!List.of("LOW", "NORMAL", "HIGH", "CRITICAL").contains(urgency) || !reference.matches("[0-9a-fA-F-]{36}"))
             return "⚠️ O watcher bloqueou um alerta sem classificação ou referência válida.";
         return "<b>⚠️ Alerta inteligente</b> — urgência " + escape(urgency) + "\nReferência da decisão: " + escape(reference)
                 + ". Sem conteúdo de conversa.";

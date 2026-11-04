@@ -156,10 +156,10 @@ class EvolutionWebhookControllerTest {
                 decision, chat, "", "reply-to-owner-1", Timestamp.from(now), replyPayload);
         jdbc.update("insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,real_action_allowed,decision_state,template_id,classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash) values (?,true,false,'synthetic_http_fixture',?,?,true,'WOULD_ACT','http_alert_test','CLASSIFIED','CRITICAL',0.99,?)",
                 decision, Timestamp.from(now), Timestamp.from(expiry), hash("reply-to-owner-1"));
-        jdbc.update("update simulation_decisions set alert_template_reference='http_alert_test@v1',production_mode=true where batch_id=?", decision);
+        jdbc.update("update simulation_decisions set alert_template_reference='http_alert_test@v1',production_mode=true,notification_recommended=true,triage_outcome='NOTIFY_ONLY' where batch_id=?", decision);
         jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",
                 decision, UUID.randomUUID(), Timestamp.from(expiry),
-                "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\",\"CRITICAL_URGENCY\"],\"available\":true,\"requestDetected\":true,\"status\":\"CLASSIFIED\",\"urgency\":\"CRITICAL\",\"confidence\":0.99}");
+                "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\",\"CRITICAL_URGENCY\"],\"situations\":[\"CONTACT_REQUEST\",\"CRITICAL_URGENCY\"],\"available\":true,\"requestDetected\":true,\"notificationRecommended\":true,\"replyRecommended\":false,\"status\":\"CLASSIFIED\",\"urgency\":\"CRITICAL\",\"confidence\":0.99}");
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,?,'gemini',true,?),(?,?,'gemini',true,?)",
                 chat, "CONTACT_REQUEST", Timestamp.from(expiry), chat, "CRITICAL_URGENCY", Timestamp.from(expiry));
         jdbc.update("update archive_monitor_settings set mode='ALL'");

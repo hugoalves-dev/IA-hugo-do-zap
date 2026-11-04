@@ -144,7 +144,9 @@ public class SimulationService {
                 : new Decision(false, false, null, "archive_scope_blocked", scopeBlocked, false, "archive_scope_blocked");
         SimulationDecision decision = new SimulationDecision(decided.wouldAlert(), decided.wouldReply(),
                 decided.templateReference(), decided.reason(), decided.blockedReason(),
-                decided.realActionAllowed(), decided.realBlockedReason(), decided.status());
+                decided.realActionAllowed(), decided.realBlockedReason(), decided.status(), decided.triageOutcome(),
+                decided.notificationRecommended(), decided.replyRecommended(), decided.triageReason(),
+                decided.triageBlockers());
         int inserted = persistence.insertDecision(batch.id(), decision, now,
                 now.plusSeconds(properties.getAuditRetentionDays() * 86_400L),
                 JSON.writeValueAsString(resolved.fields()), currentAvailability,
@@ -189,6 +191,9 @@ public class SimulationService {
         if (settings.isEmpty()) return DecisionPolicy.disabled();
         Settings current = settings.getFirst();
         EnumMap<Situation, ResponseTemplate> templates = new EnumMap<>(Situation.class);
+        java.util.EnumSet<Situation> authorized = java.util.EnumSet.noneOf(Situation.class);
+        for (String situation : persistence.authorizedSituations(batch.chatJid()))
+            authorized.add(Situation.valueOf(situation));
         for (var row : persistence.authorizedTemplates(batch.chatJid())) {
             Situation situation = Situation.valueOf(row.situation());
             if (situation != Situation.valueOf(row.templateSituation())) continue;
@@ -198,7 +203,7 @@ public class SimulationService {
         List<Cooldowns> cooldowns = persistence.cooldowns(batch.chatJid());
         Cooldowns last = cooldowns.isEmpty() ? new Cooldowns(null, null) : cooldowns.getFirst();
         return new DecisionPolicy(operational != null && operational.classification(), operational != null && operational.simulatedAlerts(),
-                operational != null && operational.simulatedReplies(), operational == null || operational.killSwitch(), templates.keySet(), templates, Duration.ofSeconds(current.simulationCooldownSeconds()),
+                operational != null && operational.simulatedReplies(), operational == null || operational.killSwitch(), authorized, templates, Duration.ofSeconds(current.simulationCooldownSeconds()),
                 Duration.ofSeconds(current.realCooldownSeconds()), last.simulationAt(), last.realAt());
     }
 

@@ -83,6 +83,50 @@ class AiSimulationAcceptanceTest {
         assertFalse(classifier(true, fake()).classify(batch).available());
         assertEquals(0, calls.get());
     }
+
+    @Test void persistsReplyRecommendationEvenWhenAutomationFlagsAreOff() {
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(),
+                new DecisionEngine(), new PersistedPolicyRepository(jdbc, new PolicyResolver()),
+                new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), classifier(true, fake())));
+        var batch = batch();
+
+        var decision = service.evaluate(batch);
+
+        assertEquals(TriageOutcome.NOTIFY_AND_REPLY, decision.triageOutcome());
+        assertTrue(decision.notificationRecommended());
+        assertTrue(decision.replyRecommended());
+        assertFalse(decision.wouldAlert());
+        assertFalse(decision.wouldReply());
+        assertFalse(decision.realActionAllowed());
+        assertTrue(decision.triageBlockers().contains("auto_reply_disabled"));
+        assertEquals("NOTIFY_AND_REPLY", jdbc.queryForObject(
+                "select triage_outcome from simulation_decisions where batch_id=?", String.class, batch.id()));
+    }
+
+    @Test void lowUrgencyNotificationCanBeEligibleWithoutReplyTemplate() {
+        flags.setIntelligentAlertsEnabled(true);
+        jdbc.update("update response_templates set enabled=false where template_id='contact_request'");
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CONTACT_REQUEST','contact_request',1)", chat);
+        ProviderTransport onlyNotification = (request, timeout, max) -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            calls.incrementAndGet();
+            return openrouter(valid().replace("\"replyRecommended\":true", "\"replyRecommended\":false"));
+        };
+        var service = prepared(new SimulationService(jdbc, manager, clock, new WatcherSimulationProperties(),
+                new DecisionEngine(), new PersistedPolicyRepository(jdbc, new PolicyResolver()),
+                new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), classifier(true, onlyNotification)));
+        var batch = batch();
+
+        var decision = service.evaluate(batch);
+
+        assertEquals(TriageOutcome.NOTIFY_ONLY, decision.triageOutcome());
+        assertTrue(decision.notificationRecommended());
+        assertFalse(decision.replyRecommended());
+        assertTrue(decision.wouldAlert());
+        assertFalse(decision.wouldReply());
+        assertFalse(jdbc.queryForObject("select production_mode from simulation_decisions where batch_id=?", Boolean.class, batch.id()));
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'", Integer.class));
+    }
     @Test void realKillSwitchPreservesConsentedShadowEvaluationWithoutSending() {
         flags.setKillSwitchEnabled(true);
         flags.setAutoReplyEnabled(true);
@@ -888,7 +932,7 @@ class AiSimulationAcceptanceTest {
         debounce.enqueue(new IncomingMessage(Optional.of(UUID.randomUUID().toString()),jid,Optional.empty(),Optional.empty(),Optional.empty(),false,"notify",false,content,now), now);
         return debounce.claimReady(now.plusSeconds(60)).getFirst();
     }
-    private static String valid() { return "{\"intent\":\"CONTACT_REQUEST\",\"requestDetected\":true,\"urgency\":\"NORMAL\",\"evidence\":[],\"confidence\":0.9}"; }
+    private static String valid() { return "{\"intent\":\"CONTACT_REQUEST\",\"requestDetected\":true,\"notificationRecommended\":true,\"replyRecommended\":true,\"urgency\":\"NORMAL\",\"evidence\":[],\"confidence\":0.9}"; }
     private static String quote(String value) { return tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(value); }
     private static ProviderTransport.Response geminiResponse(String value) {
         return new ProviderTransport.Response(200,"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":"+quote(value)+"}]}}]}");

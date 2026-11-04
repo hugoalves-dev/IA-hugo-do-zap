@@ -18,7 +18,12 @@ WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=false
 WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED=false
 WATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED=false
 WATCHER_AI_ALLOW_UNBUDGETED_GEMINI_FALLBACK=false
+WATCHER_AI_TRIAGE_LEGACY_FILTER_ENABLED=false
 ```
+
+O filtro de notificações legadas permanece desligado por padrão. Para comparar sem suprimir mensagens, use `/ultimas` e `/relatorio`. A supressão exige também opt-in privado confirmado com `/triagem <id-da-decisão> on`; somente uma mensagem privada única com `IGNORE` classificado e ainda retido pode ser filtrada. Grupos, mensagens agrupadas, decisões antigas, incertas ou indisponíveis continuam no fluxo legado.
+
+O teste `TriageCalibrationFixtureTest` usa exemplos inteiramente sintéticos para verificar precisão/recall do mapeamento determinístico entre sinais semânticos e os três resultados. Isso não mede a precisão do provedor de IA; a confiança mínima permanece em `0.65` e nenhum provedor pago é chamado pelos testes. Antes de ajustar thresholds ou habilitar o filtro global, avalie saídas reais anonimizadas e rotuladas fora da produção.
 
 3. Recrie apenas o watcher: `docker compose --env-file .env up -d --no-deps --force-recreate watcher`. Nenhum `INSERT` ou `UPDATE` de configuração é necessário. As colunas antigas de `automation_settings` e `telegram_admin_settings.simulation_enabled` permanecem no banco, mas não habilitam nem desabilitam essas opções.
 4. Envie uma nova mensagem textual elegível. Consulte `simulation_ai_evaluations` e `simulation_decisions` somente para leitura; verifique `classification_status`, `production_mode=false` e ausência de ações WhatsApp ou alertas individuais. Mensagens sem texto não iniciam HTTP pago; decisões antigas não são reclassificadas automaticamente.

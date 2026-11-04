@@ -40,26 +40,40 @@ public class IntelligentAlertPersistenceRepository {
 
     public List<AlertContext> eligibleContexts(UUID decisionId) {
         return jdbc.query("""
-                select b.chat_jid,d.decision_state,d.real_action_allowed,d.would_alert,
+                select b.chat_jid,d.decision_state,d.real_action_allowed,d.would_alert,d.notification_recommended,
                        d.classification_status,d.classification_urgency,d.classification_confidence,
                        d.intelligent_alert_reference_hash,d.intelligent_alert_enqueued,
-                       t.template_id,t.version,t.enabled,t.identifies_automation,t.body
+                       exists(select 1 from chat_automation_authorizations critical_auth
+                               join response_templates critical_template
+                                 on critical_template.template_id=critical_auth.template_id
+                                and critical_template.version=critical_auth.template_version
+                                and critical_template.situation=critical_auth.situation
+                              where critical_auth.chat_jid=b.chat_jid
+                                and critical_auth.situation='CRITICAL_URGENCY'
+                                and d.alert_template_reference=critical_template.template_id || '@v' || critical_template.version::text
+                                and critical_template.enabled and critical_template.identifies_automation
+                                and lower(ltrim(critical_template.body)) like 'resposta automática:%') as critical_template_eligible,
+                       exists(select 1 from chat_automation_authorizations a
+                               where a.chat_jid=b.chat_jid
+                                 and exists(select 1 from jsonb_array_elements_text(e.result->'situations') s(value)
+                                             where s.value=a.situation)) as authorized_situation
                   from simulation_decisions d
                   join simulation_batches b on b.batch_id=d.batch_id
-                  cross join automation_settings s
-                  join chat_automation_authorizations a on a.chat_jid=b.chat_jid
-                    and a.situation='CRITICAL_URGENCY'
-                  join response_templates t on t.template_id=a.template_id and t.version=a.template_version
-                    and t.situation=a.situation and d.alert_template_reference=t.template_id || '@v' || t.version::text
-                 where d.batch_id=? and s.singleton_id=1
-                 order by t.template_id,t.version desc limit 1
+                  join simulation_ai_evaluations e on e.batch_id=d.batch_id and e.result is not null
+                 where d.batch_id=? and d.triage_outcome in ('NOTIFY_ONLY','NOTIFY_AND_REPLY')
+                   and exists(select 1 from chat_automation_authorizations a
+                               where a.chat_jid=b.chat_jid
+                                 and ((d.classification_urgency in ('HIGH','CRITICAL') and a.situation='CRITICAL_URGENCY')
+                                   or (d.classification_urgency not in ('HIGH','CRITICAL')
+                                       and exists(select 1 from jsonb_array_elements_text(e.result->'situations') s(value)
+                                                   where s.value=a.situation))))
                 """, (rs, row) -> new AlertContext(rs.getString("chat_jid"), rs.getString("decision_state"),
                 rs.getBoolean("real_action_allowed"), rs.getBoolean("would_alert"),
+                rs.getBoolean("notification_recommended"),
                 rs.getString("classification_status"), rs.getString("classification_urgency"),
                 rs.getDouble("classification_confidence"), rs.getString("intelligent_alert_reference_hash"),
-                rs.getBoolean("intelligent_alert_enqueued"),
-                rs.getString("template_id"), rs.getInt("version"), rs.getBoolean("enabled"),
-                rs.getBoolean("identifies_automation"), rs.getString("body")), decisionId);
+                rs.getBoolean("intelligent_alert_enqueued"), rs.getBoolean("authorized_situation"),
+                rs.getBoolean("critical_template_eligible")), decisionId);
     }
 
     public List<SourceMessage> sourceMessages(UUID decisionId) {
@@ -91,9 +105,9 @@ public class IntelligentAlertPersistenceRepository {
     }
 
     public record AlertContext(String chatJid, String decisionState, boolean realActionAllowed, boolean wouldAlert,
-                               String classificationStatus, String urgency, double confidence, String referenceHash,
-                               boolean enqueued, String templateId, int templateVersion, boolean templateEnabled,
-                               boolean identifiesAutomation, String templateBody) { }
+                               boolean notificationRecommended, String classificationStatus, String urgency,
+                               double confidence, String referenceHash, boolean enqueued, boolean authorizedSituation,
+                               boolean criticalTemplateEligible) { }
 
     public record SourceMessage(String externalId, String chatJid, String payload) { }
 }

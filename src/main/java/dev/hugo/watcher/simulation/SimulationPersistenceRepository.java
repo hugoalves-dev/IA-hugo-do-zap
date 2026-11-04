@@ -5,6 +5,7 @@ import dev.hugo.watcher.policy.Availability;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -14,6 +15,7 @@ import java.util.UUID;
 /** Transactional SQL projections and writes for simulation decisions. */
 @Repository
 public class SimulationPersistenceRepository {
+    private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
     public SimulationPersistenceRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
@@ -57,24 +59,30 @@ public class SimulationPersistenceRepository {
         return jdbc.update("""
                 insert into simulation_decisions(batch_id,would_alert,would_reply,template_id,decision_reason,blocked_reason,
                     decided_at,metadata_expires_at,real_action_allowed,real_blocked_reason,decision_state,policy_snapshot,availability_state,availability_source,availability_reason,
-                    classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash,production_mode,alert_template_reference,classification_diagnostic)
-                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?) on conflict (batch_id) do nothing
+                    classification_status,classification_urgency,classification_confidence,intelligent_alert_reference_hash,production_mode,alert_template_reference,classification_diagnostic,
+                    triage_outcome,notification_recommended,reply_recommended,triage_reason,triage_blockers)
+                values (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb) on conflict (batch_id) do nothing
                 """, batchId, decision.wouldAlert(), decision.wouldReply(), decision.templateId(), decision.decisionReason(),
                 decision.blockedReason(), Timestamp.from(now), Timestamp.from(metadataExpiry),
                 decision.realActionAllowed(), decision.realBlockedReason(), decision.status().name(),
                 policyJson, availability.state().name(), availability.source().name(), availability.reason(),
                 classification.status().name(), classification.urgency().name(), classification.confidence(),
-                classification.personalReferenceHash(), productionMode, alertTemplate, classification.diagnostic());
+                classification.personalReferenceHash(), productionMode, alertTemplate, classification.diagnostic(),
+                decision.triageOutcome().name(), decision.notificationRecommended(), decision.replyRecommended(),
+                decision.triageReason(), JSON.writeValueAsString(decision.triageBlockers()));
     }
 
     public List<SimulationDecision> persistedDecision(UUID id) {
         return jdbc.query("""
-                select would_alert,would_reply,template_id,decision_reason,blocked_reason,real_action_allowed,real_blocked_reason,decision_state
+                select would_alert,would_reply,template_id,decision_reason,blocked_reason,real_action_allowed,real_blocked_reason,decision_state,
+                       triage_outcome,notification_recommended,reply_recommended,triage_reason,triage_blockers::text
                   from simulation_decisions where batch_id=?
                 """, (rs, row) -> new SimulationDecision(rs.getBoolean("would_alert"), rs.getBoolean("would_reply"),
                 rs.getString("template_id"), rs.getString("decision_reason"), rs.getString("blocked_reason"),
                 rs.getBoolean("real_action_allowed"), rs.getString("real_blocked_reason"),
-                DecisionStatus.valueOf(rs.getString("decision_state"))), id);
+                DecisionStatus.valueOf(rs.getString("decision_state")), TriageOutcome.valueOf(rs.getString("triage_outcome")),
+                rs.getBoolean("notification_recommended"), rs.getBoolean("reply_recommended"), rs.getString("triage_reason"),
+                JSON.readValue(rs.getString("triage_blockers"), List.class)), id);
     }
 
     public void updateSimulatedCooldown(String chat, Instant now) {
@@ -110,6 +118,11 @@ public class SimulationPersistenceRepository {
                 """, (rs,row) -> new TemplateRow(rs.getString("situation"),rs.getString("template_situation"),
                     rs.getString("template_id"),rs.getInt("version"),rs.getString("body"),
                     rs.getBoolean("identifies_automation")),chat);
+    }
+
+    public List<String> authorizedSituations(String chat) {
+        return jdbc.query("select distinct situation from chat_automation_authorizations where chat_jid=? order by situation",
+                (rs, row) -> rs.getString("situation"), chat);
     }
 
     public List<Cooldowns> cooldowns(String chat) {
