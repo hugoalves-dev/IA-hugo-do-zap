@@ -146,12 +146,13 @@ class NotificationServiceTest {
         Instant concurrentLast = originalLast.plusSeconds(1);
         jdbc.update("""
                 update pending_notification
-                   set payload=payload || jsonb_build_object('messageCount',2,'lastMessageAt',?),updated_at=?
+                   set payload=payload || jsonb_build_object('messageCount',2,'lastMessageAt',?),
+                       updated_at=?,generation=gen_random_uuid()
                  where chat_jid=?
                 """, concurrentLast.toString(), java.sql.Timestamp.from(NOW), chat);
 
         int deleted = new NotificationQueueQueryRepository(jdbc).discardPendingIfCurrent(chat,
-                (String) original.get("generation"), originalLast, 1);
+                (String) original.get("generation"));
 
         assertEquals(0, deleted);
         assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));

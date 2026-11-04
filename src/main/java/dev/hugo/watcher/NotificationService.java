@@ -288,8 +288,7 @@ public class NotificationService {
                 PendingRow row = chatJid == null ? null : current.get(chatJid);
                 if (row == null || !row.generation().equals(snapshot.get("pending_generation"))) continue;
                 if (shouldFilterLegacy(row, now)) {
-                    queries.discardPendingIfCurrent(row.chatJid(), row.generation(),
-                            row.lastMessageAt(), row.messageCount());
+                    queries.discardPendingIfCurrent(row.chatJid(), row.generation());
                     continue;
                 }
                 if (row.group() && !properties.isIncludeGroups()) continue;
@@ -366,8 +365,7 @@ public class NotificationService {
             if (row == null) continue;
             if (row.group() && !properties.isIncludeGroups()) continue;
             if (shouldFilterLegacy(row, now)) {
-                queries.discardPendingIfCurrent(row.chatJid(), row.generation(),
-                        row.lastMessageAt(), row.messageCount());
+                queries.discardPendingIfCurrent(row.chatJid(), row.generation());
                 continue;
             }
             String displayName = resolveDisplayName(row);

@@ -79,14 +79,12 @@ public class NotificationQueueQueryRepository {
     }
 
     /** Deletes only the pending generation that was evaluated; a concurrent message keeps its new row. */
-    public int discardPendingIfCurrent(String chatJid, String generation, Instant lastMessageAt, int messageCount) {
-        if (chatJid == null || generation == null || lastMessageAt == null || messageCount != 1) return 0;
+    public int discardPendingIfCurrent(String chatJid, String generation) {
+        if (chatJid == null || generation == null) return 0;
         return jdbc.update("""
                 delete from pending_notification
                  where chat_jid=? and generation=?::uuid
-                   and (payload->>'lastMessageAt')::timestamptz=?
-                   and coalesce((payload->>'messageCount')::integer,0)=?
-                """, chatJid, generation, Timestamp.from(lastMessageAt), messageCount);
+                """, chatJid, generation);
     }
 
     private record ConnectionState(String connectionState, long generation) { }

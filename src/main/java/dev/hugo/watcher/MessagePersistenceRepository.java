@@ -73,7 +73,8 @@ public class MessagePersistenceRepository {
                     payload=excluded.payload,
                     due_at=excluded.due_at,
                     updated_at=excluded.updated_at,
-                    expires_at=excluded.expires_at
+                    expires_at=excluded.expires_at,
+                    generation=gen_random_uuid()
                 """, chat, payloadJson, Timestamp.from(dueAt), Timestamp.from(updatedAt), Timestamp.from(expiresAt));
     }
 
