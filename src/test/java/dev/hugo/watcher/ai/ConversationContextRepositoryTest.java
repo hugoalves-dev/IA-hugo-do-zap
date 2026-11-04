@@ -68,7 +68,7 @@ class ConversationContextRepositoryTest {
         String chat = "team@g.us";
         add(debounce, "alice-prior", chat, "alice", "Você consegue revisar?", now.minusSeconds(120));
         add(debounce, "bob-prior", chat, "bob", "Preciso de ajuda", now.minusSeconds(115));
-        debounce.claimReady(now.minusSeconds(90));
+        debounce.claimReady(now.minusSeconds(40));
         insertOwner(jdbc, chat, "owner-alice", "alice-prior", "Vou revisar", now.minusSeconds(40), now);
         insertOwner(jdbc, chat, "owner-bob", "bob-prior", "Vou ajudar", now.minusSeconds(30), now);
         add(debounce, "alice-target", chat, "alice", "Pode fazer isso?", now.minusSeconds(10));
