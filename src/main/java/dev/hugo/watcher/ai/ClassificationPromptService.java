@@ -87,27 +87,29 @@ public class ClassificationPromptService {
         String rightBody = rightRevision == 0 ? DEFAULT_OPERATIONAL_PROMPT : revision(rightRevision).body();
         String[] leftLines = leftBody.split("\\R", -1), rightLines = rightBody.split("\\R", -1);
         StringBuilder diff = new StringBuilder("Diff v").append(leftRevision).append(" → v").append(rightRevision).append('\n');
+        boolean truncated = false;
         int max = Math.max(leftLines.length, rightLines.length);
         for (int i = 0; i < max; i++) {
             String a = i < leftLines.length ? leftLines[i] : null;
             String b = i < rightLines.length ? rightLines[i] : null;
             if (java.util.Objects.equals(a, b)) continue;
-            if (a != null) appendDiffLine(diff, "- ", a, maximumCharacters);
-            if (b != null) appendDiffLine(diff, "+ ", b, maximumCharacters);
+            if (a != null) truncated |= appendDiffLine(diff, "- ", a, maximumCharacters);
+            if (b != null) truncated |= appendDiffLine(diff, "+ ", b, maximumCharacters);
             if (diff.length() >= maximumCharacters - 16) break;
         }
-        if (diff.length() >= maximumCharacters - 16) {
-            diff.setLength(Math.max(0, maximumCharacters - 16));
+        if (truncated || diff.length() >= maximumCharacters - 16) {
+            diff.setLength(Math.min(diff.length(), Math.max(0, maximumCharacters - 16)));
             diff.append("… diff truncado");
         }
         return diff.toString();
     }
 
-    private static void appendDiffLine(StringBuilder output, String prefix, String line, int maximumCharacters) {
-        if (output.length() >= maximumCharacters) return;
+    private static boolean appendDiffLine(StringBuilder output, String prefix, String line, int maximumCharacters) {
+        if (output.length() >= maximumCharacters) return true;
         int available = maximumCharacters - output.length() - prefix.length() - 18;
-        if (available <= 0) return;
+        if (available <= 0) return true;
         output.append(prefix).append(line, 0, Math.min(line.length(), available)).append('\n');
+        return line.length() > available;
     }
 
     private static ClassificationPromptSnapshot snapshot(int revision, String hash, String operational) {

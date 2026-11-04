@@ -55,7 +55,7 @@ public class JdbcRuntimeSettingsRepository implements RuntimeSettingsRepository 
                     insert into telegram_runtime_settings_history(setting_key,version,previous_json,next_json,
                         previous_overridden,next_overridden,actor_user_id,changed_at)
                     values (?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)
-                    """, key, expectedVersion + 1, previous == null ? "null" : previous.valueJson(), valueJson,
+                    """, key, expectedVersion + 1, previous == null ? null : previous.valueJson(), valueJson,
                     previous != null && previous.overridden(), overridden, actorId, Timestamp.from(at));
             return new RuntimeSettingRow(key, type, valueJson, overridden, expectedVersion + 1, actorId, at);
         });

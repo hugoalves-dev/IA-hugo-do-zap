@@ -80,7 +80,12 @@ public class RuntimeSettingsService {
         if (!"INTEGER".equals(row.type())) throw new IllegalStateException("Stored runtime setting type is invalid.");
         String json = row.valueJson();
         if (json == null || !json.matches("[0-9]{1,3}")) throw new IllegalStateException("Stored runtime setting value is invalid.");
-        int value = parse(json, RuntimeSettingKey.AI_CONTEXT_WINDOW_HOURS);
+        int value;
+        try { value = Integer.parseInt(json); }
+        catch (NumberFormatException ex) { throw new IllegalStateException("Stored runtime setting value is invalid."); }
+        if (value < RuntimeSettingKey.AI_CONTEXT_WINDOW_HOURS.minimum()
+                || value > RuntimeSettingKey.AI_CONTEXT_WINDOW_HOURS.maximum())
+            throw new IllegalStateException("Stored runtime setting value is invalid.");
         return value;
     }
 
