@@ -100,6 +100,14 @@ Recrie somente o watcher: `docker compose --env-file .env up -d --no-deps --forc
 
 Verifique a entrega no banco consultando somente estados, sem payload: `SELECT status, count(*) FROM outbox_actions WHERE action_type = 'telegram_admin_reply' GROUP BY status;`. `ACKNOWLEDGED` confirma aceitação pelo transporte, não leitura pelo usuário. `/emergencia` e `/recuperar` conservam suas confirmações e travas persistentes. Esta configuração não ativa IA, alertas inteligentes nem envio real de WhatsApp.
 
+### Prompt de classificação no Shadow
+
+O gerenciamento de prompts exige o User ID autorizado, o Chat ID configurado e uma conversa privada. Ele altera somente a classificação Shadow; não habilita alertas, respostas ou ações reais. Use `/prompt_new` e envie partes de até 4.096 caracteres (16.000 no total) em até 10 minutos. `/prompt_clear` limpa o rascunho para reescrita, `/prompt_preview` valida e mostra o diff, e `/prompt_cancel` descarta. A ativação exige confirmação de uso único vinculada à versão exata do preview; edições concorrentes invalidam essa confirmação.
+
+`/prompt_history [página]` consulta o histórico. `/prompt_restore <revisão>` ativa novamente uma revisão existente após confirmação. `/prompt_reset` volta ao prompt Java padrão, sem criar revisão artificial e preservando revisões e histórico. A revisão ativa e seu hash SHA-256 são gravados em cada nova avaliação Shadow; avaliações já existentes são reutilizadas sem reprocessamento.
+
+Para rascunhos com IA, use o menu **Criar com IA · ativo** ou **Criar com IA · Java default**, depois `/prompt_generate <instruções explícitas>`; `/prompt_refine <instruções explícitas>` permite até três refinamentos. A geração usa somente OpenRouter, com saída limitada a 2.048 tokens, e requer configuração válida de classificação Shadow e orçamento local habilitado. Gemini não é fallback para autoria. O pedido contém apenas o prompt operacional selecionado e as instruções explícitas do administrador; não inclua mensagens de conversas, credenciais ou logs. A saída é validada e permanece como rascunho editável até preview e confirmação explícita.
+
 ## Modos de simulação e ações reais
 
 Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`. A captura e o agendador ficam desligados quando o produtor real também está desligado. Com `WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=true`, a avaliação real continua mesmo com shadow desligado. O administrador pode pausar avaliações shadow com `/simulacao off` e remover a pausa com `/simulacao on` (confirmado); o ambiente continua sendo a fonte de habilitação e a pausa não bloqueia o produtor real. Com shadow e produtor real desligados, não há captura, avaliação nem novas ações.

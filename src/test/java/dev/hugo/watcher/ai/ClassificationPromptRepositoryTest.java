@@ -55,7 +55,7 @@ class ClassificationPromptRepositoryTest {
         assertFalse(repository.saveProposal(id, 42, 1, "expired", "ai_assisted", "proposal", NOW.plusSeconds(60)));
         assertTrue(repository.saveProposal(id, 42, 1, "proposal", "ai_assisted", "description", NOW));
         stored = repository.draft(id, 42, NOW).orElseThrow();
-        assertEquals(1, stored.refinementCount());
+        assertEquals(0, stored.refinementCount());
         assertEquals("description", stored.description());
         assertEquals("ai_assisted", stored.origin());
         assertTrue(repository.setDraftStatus(id, 42, 2, "cancelled"));
@@ -114,10 +114,10 @@ class ClassificationPromptRepositoryTest {
         assertThrows(DataIntegrityViolationException.class,
                 () -> repository.transition(null, first.id(), "reset", 42, NOW));
         assertNull(repository.activeState().revisionId());
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             assertTrue(repository.saveProposal(id, 42, i, "proposal", "ai_assisted", "", NOW));
         }
-        assertFalse(repository.saveProposal(id, 42, 3, "extra", "ai_assisted", "", NOW));
+        assertFalse(repository.saveProposal(id, 42, 4, "extra", "ai_assisted", "", NOW));
         assertEquals(3, repository.draft(id, 42, NOW).orElseThrow().refinementCount());
         assertThrows(IllegalArgumentException.class, () -> repository.history(101));
     }

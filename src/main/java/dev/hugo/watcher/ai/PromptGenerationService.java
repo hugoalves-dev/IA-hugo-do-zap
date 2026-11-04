@@ -3,7 +3,10 @@ package dev.hugo.watcher.ai;
 import dev.hugo.watcher.OperationalState;
 import dev.hugo.watcher.ai.ClassificationPromptRepository.Draft;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -17,16 +20,33 @@ public final class PromptGenerationService {
     private final OpenRouterPromptGenerator generator;
     private final AiClassificationProperties properties;
     private final OperationalState operational;
+    private final TransactionTemplate providerTransaction;
 
+    @Autowired
     public PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
                                    ClassificationPromptValidator validator, OpenRouterPromptGenerator generator,
-                                   AiClassificationProperties properties, OperationalState operational) {
+                                   AiClassificationProperties properties, OperationalState operational,
+                                   PlatformTransactionManager transactionManager) {
         this.prompts = prompts;
         this.repository = repository;
         this.validator = validator;
         this.generator = generator;
         this.properties = properties;
         this.operational = operational;
+        this.providerTransaction = new TransactionTemplate(transactionManager);
+        this.providerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
+    }
+
+    PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
+                            ClassificationPromptValidator validator, OpenRouterPromptGenerator generator,
+                            AiClassificationProperties properties, OperationalState operational) {
+        this.prompts = prompts;
+        this.repository = repository;
+        this.validator = validator;
+        this.generator = generator;
+        this.properties = properties;
+        this.operational = operational;
+        this.providerTransaction = null;
     }
 
     public Proposal propose(UUID draftId, long adminId, String explicitInstructions, Instant now) {
@@ -38,14 +58,14 @@ public final class PromptGenerationService {
     }
 
     private Proposal run(UUID draftId, long adminId, String instructions, Instant now, boolean refinement) {
-        if (TransactionSynchronizationManager.isActualTransactionActive())
-            throw new IllegalStateException("prompt_generation_must_run_outside_transaction");
         Draft draft = repository.draft(draftId, adminId, now).orElseThrow(() -> new IllegalStateException("prompt_draft_unavailable"));
         if (refinement && draft.refinementCount() >= ClassificationPromptService.MAX_REFINEMENTS)
             throw new IllegalStateException("prompt_refinement_limit");
         if (!ListGate.allowed(operational, properties)) throw new IllegalStateException("prompt_generation_unavailable");
-        OpenRouterPromptGenerator.Proposal output = generator.generate(draft.body(), instructions,
-                () -> ListGate.allowed(operational, properties));
+        OpenRouterPromptGenerator.Proposal output = providerTransaction == null
+                ? generator.generate(draft.body(), instructions, () -> ListGate.allowed(operational, properties))
+                : providerTransaction.execute(status -> generator.generate(
+                        draft.body(), instructions, () -> ListGate.allowed(operational, properties)));
         String body = normalize(output.prompt());
         String summary = output.summary().strip();
         if (summary.length() > 500) summary = summary.substring(0, 500);

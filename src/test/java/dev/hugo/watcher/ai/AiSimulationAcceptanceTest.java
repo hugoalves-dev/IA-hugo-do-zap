@@ -138,6 +138,71 @@ class AiSimulationAcceptanceTest {
         assertEquals("classification_prompt_unavailable", result.diagnostic());
         assertEquals(0, calls.get());
     }
+
+    @Test void activationResetAndRestoreAffectOnlyNewShadowEvaluations() {
+        var prompts = new ClassificationPromptService(new JdbcClassificationPromptRepository(jdbc, manager),
+                new ClassificationPromptValidator(), manager);
+        int revisionCountBefore = jdbc.queryForObject("select count(*) from classification_prompt_revisions", Integer.class);
+        var firstPrompt = prompts.createDraft("First custom operational rule.", 1001, clock.instant());
+        prompts.activate(firstPrompt.revision(), prompts.activeVersion(), 1001, clock.instant());
+        var ai = classifier(true, fake());
+        ai.configurePromptSettings(prompts);
+
+        var first = ai.classify(batch());
+        assertEquals(firstPrompt.revision(), first.promptRevision());
+        assertEquals(firstPrompt.sha256(), first.promptHash());
+
+        var secondPrompt = prompts.createDraft("Second custom operational rule.", 1001, clock.instant());
+        prompts.activate(secondPrompt.revision(), prompts.activeVersion(), 1001, clock.instant());
+        var second = ai.classify(batch());
+        assertEquals(secondPrompt.revision(), second.promptRevision());
+        assertEquals(secondPrompt.sha256(), second.promptHash());
+
+        var reset = prompts.resetToDefault(1001, (long) secondPrompt.revision(), clock.instant());
+        assertEquals(0, reset.revision());
+        var afterReset = ai.classify(batch());
+        assertEquals(0, afterReset.promptRevision());
+        assertEquals(ClassificationPromptService.defaultSnapshot().sha256(), afterReset.promptHash());
+
+        var restored = prompts.restore(firstPrompt.revision(), 1001, null, clock.instant());
+        assertEquals(firstPrompt.revision(), restored.revision());
+        var afterRestore = ai.classify(batch());
+        assertEquals(firstPrompt.revision(), afterRestore.promptRevision());
+        assertEquals(firstPrompt.sha256(), afterRestore.promptHash());
+
+        assertEquals(revisionCountBefore + 2, jdbc.queryForObject("select count(*) from classification_prompt_revisions", Integer.class));
+        assertEquals(0, countActions());
+        assertEquals(0, countAlerts());
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_type in ('whatsapp_reply','whatsapp_send')", Integer.class));
+        assertFalse(jdbc.queryForObject("select auto_reply_enabled from automation_settings where singleton_id=1", Boolean.class));
+    }
+
+    @Test void promptGenerationSuspendsOuterAdminTransactionForProviderAndResumesForDraftSave() {
+        var repository = new JdbcClassificationPromptRepository(jdbc, manager);
+        var prompts = new ClassificationPromptService(repository, new ClassificationPromptValidator(), manager);
+        var draft = prompts.createManualDraft(1001, null, clock.instant());
+        var properties = new AiClassificationProperties(true, null, null, "fake-router", "fake-model", 10,
+                Duration.ofSeconds(1), "owner@s.whatsapp.net", true, false, true, false);
+        ProviderTransport transport = (request, timeout, max) -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive(),
+                    "provider call must suspend any polling/webhook transaction");
+            calls.incrementAndGet();
+            String content = "{\"prompt\":\"Use explicit deadlines.\",\"summary\":\"Clarify deadlines.\"}";
+            return new ProviderTransport.Response(200, "{\"choices\":[{\"message\":{\"content\":" + quote(content) + "}}]}");
+        };
+        var generator = new OpenRouterPromptGenerator(properties, transport, budgets, clock);
+        var service = new PromptGenerationService(prompts, repository, new ClassificationPromptValidator(), generator,
+                properties, state(), manager);
+        var proposal = new org.springframework.transaction.support.TransactionTemplate(manager)
+                .execute(status -> service.propose(draft.id(), 1001, "Clarify deadline interpretation.", clock.instant()));
+
+        assertNotNull(proposal);
+        assertEquals("Use explicit deadlines.", proposal.draft().body());
+        assertEquals("ai_assisted", proposal.draft().origin());
+        assertEquals(1, calls.get());
+        assertNull(repository.activeState().revisionId());
+        assertEquals(0, repository.activeVersion());
+    }
     @Test void technicalOpenRouterFailureWithoutGeminiConsentCannotFallback() {
         jdbc.update("delete from ai_data_consents where provider='gemini'");
         var ai = classifier(true,(request,timeout,max)->{

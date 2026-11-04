@@ -159,10 +159,10 @@
 - Consumes: the Task 1–5 public services and Telegram flows.
 - Produces: documented private Telegram prompt workflow, reset-to-Java semantics, AI data/budget limits, and verification results suitable for a PR description containing `Closes #45`.
 
-- [ ] **Step 1: Add integrated fake-based tests** for manual activation taking effect on the next eligible Shadow classification, reset resolving Java default without a fabricated revision, prior custom reactivation, and no effects on real notification/reply/WhatsApp paths.
-- [ ] **Step 2: Run focused integration tests** with Testcontainers and verify persistence, concurrency, callback replay, and provider failure cases.
-- [ ] **Step 3: Document** commands/menu steps, draft expiry/chunk limits, AI provider/budget requirements, history, restore, reset, and audit revision behavior without exposing secrets or deployment instructions.
-- [ ] **Step 4: Run `mvn verify`** and verify the full Maven verification gate passes; read the complete result and report any environment-blocked Testcontainers checks precisely.
+- [x] **Step 1: Add integrated fake-based tests** for manual activation taking effect on the next eligible Shadow classification, reset resolving Java default without a fabricated revision, prior custom reactivation, and no effects on real notification/reply/WhatsApp paths.
+- [x] **Step 2: Run focused integration tests** with Testcontainers and verify persistence, concurrency, callback replay, and provider failure cases.
+- [x] **Step 3: Document** commands/menu steps, draft expiry/chunk limits, AI provider/budget requirements, history, restore, reset, and audit revision behavior without exposing secrets or deployment instructions.
+- [x] **Step 4: Run `mvn verify`** and verify the full Maven verification gate passes; read the complete result and report any environment-blocked Testcontainers checks precisely.
 - [ ] **Step 5: Review the final diff against this plan and the design doc**, including `.env`, Compose, SQL boundaries, Telegram authorization, and immutable prompt/schema protections.
-- [ ] **Step 6: Commit** as `feat: complete safe telegram prompt management`.
+- [x] **Step 6: Commit** as `feat: complete safe telegram prompt management`.
 - [ ] **Step 7: Prepare a PR description referencing `Closes #45` and verify the implementation is merged before closing issue #45.** Do not close the upstream issue while the implementation is only present on a local branch.

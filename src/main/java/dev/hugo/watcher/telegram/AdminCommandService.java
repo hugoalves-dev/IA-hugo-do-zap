@@ -93,9 +93,16 @@ public class AdminCommandService {
             if (isMutation(effective.name(), effective.arguments()) && !effective.confirmed() && !effective.name().equals("emergencia"))
                 return requestConfirmation(effective);
             return transactions.execute(status -> {
-                String message = apply(effective);
-                enqueueReply(message, effective);
-                return AdminResult.accepted(message);
+                try {
+                    String message = apply(effective);
+                    enqueueReply(message, effective);
+                    return AdminResult.accepted(message);
+                } catch (IllegalArgumentException | java.time.format.DateTimeParseException ex) {
+                    String message = safeError(effective.name(), ex);
+                    if (isMutation(effective.name(), effective.arguments())) audit(effective, "REJECTED");
+                    enqueueReply(message, effective);
+                    return AdminResult.rejected(message);
+                }
             });
         } catch (RuntimeException ex) {
             boolean prompt = effective.name().startsWith("prompt");
