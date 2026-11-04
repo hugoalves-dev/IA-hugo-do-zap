@@ -220,7 +220,7 @@ class AiSimulationAcceptanceTest {
                 new AvailabilityService(new HolidayService(jdbc)), new WatcherProperties(), ai));
         var decision = service.evaluate(current);
         assertFalse(decision.wouldReply());
-        assertEquals("no_authorized_action", decision.reason());
+        assertEquals("no_authorized_action", decision.decisionReason());
         assertEquals("CLASSIFIED", jdbc.queryForObject(
                 "select classification_status from simulation_decisions where batch_id=?", String.class, current.id()));
         assertEquals(1, calls.get());
