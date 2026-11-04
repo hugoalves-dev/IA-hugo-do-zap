@@ -63,8 +63,8 @@ public class IntelligentAlertPersistenceRepository {
                  where d.batch_id=? and d.triage_outcome in ('NOTIFY_ONLY','NOTIFY_AND_REPLY')
                    and exists(select 1 from chat_automation_authorizations a
                                where a.chat_jid=b.chat_jid
-                                 and ((d.classification_urgency='CRITICAL' and a.situation='CRITICAL_URGENCY')
-                                   or (d.classification_urgency<>'CRITICAL'
+                                 and ((d.classification_urgency in ('HIGH','CRITICAL') and a.situation='CRITICAL_URGENCY')
+                                   or (d.classification_urgency not in ('HIGH','CRITICAL')
                                        and exists(select 1 from jsonb_array_elements_text(e.result->'situations') s(value)
                                                    where s.value=a.situation))))
                 """, (rs, row) -> new AlertContext(rs.getString("chat_jid"), rs.getString("decision_state"),

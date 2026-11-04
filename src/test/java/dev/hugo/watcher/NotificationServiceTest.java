@@ -348,14 +348,14 @@ class NotificationServiceTest {
         jdbc.update("""
                 insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,
                     real_action_allowed,decision_state,template_id,classification_status,classification_urgency,
-                    classification_confidence,intelligent_alert_reference_hash)
-                values (?,true,false,'synthetic_audit',?,?,true,'WOULD_ACT','notify_alert_test','CLASSIFIED','HIGH',0.9,?)
+                    classification_confidence,intelligent_alert_reference_hash,notification_recommended,triage_outcome)
+                values (?,true,false,'synthetic_audit',?,?,true,'WOULD_ACT','notify_alert_test','CLASSIFIED','HIGH',0.9,?,true,'NOTIFY_ONLY')
                 """, decisionId, Timestamp.from(now), Timestamp.from(expires), hash("notify-source"));
         jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','notify_alert_test',1)", "15551234567@s.whatsapp.net");
         jdbc.update("update simulation_decisions set production_mode=true,alert_template_reference='notify_alert_test@v1' where batch_id=?",decisionId);
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CONTACT_REQUEST','gemini',true,?)", "15551234567@s.whatsapp.net",Timestamp.from(expires));
         jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",decisionId,UUID.randomUUID(),Timestamp.from(expires),
-                "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\"],\"available\":true,\"requestDetected\":true,\"status\":\"CLASSIFIED\",\"urgency\":\"HIGH\",\"confidence\":0.9}");
+                "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\"],\"situations\":[\"CONTACT_REQUEST\",\"CRITICAL_URGENCY\"],\"available\":true,\"requestDetected\":true,\"notificationRecommended\":true,\"replyRecommended\":false,\"status\":\"CLASSIFIED\",\"urgency\":\"HIGH\",\"confidence\":0.9}");
         var alerts = new IntelligentAlertService(jdbc, manager, outbox, clock, true, "15550000000@s.whatsapp.net");
         alerts.configureRuntimeGate(TestOperational.gate(jdbc,clock,"15550000000@s.whatsapp.net"));
         var queued = alerts.enqueue(decisionId);

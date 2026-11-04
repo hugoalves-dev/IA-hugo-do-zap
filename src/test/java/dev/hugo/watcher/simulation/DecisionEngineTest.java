@@ -240,6 +240,25 @@ class DecisionEngineTest {
         assertTrue(decision.triageBlockers().contains("group_trigger_missing"));
     }
 
+    @Test void criticalAlertNeedsItsIndependentVersionedTemplate() {
+        var classification = Classification.classified(Set.of(Situation.CONTACT_REQUEST, Situation.CRITICAL_URGENCY),
+                true, true, false, java.util.List.of(dev.hugo.watcher.ai.ClassificationResult.Evidence.CRITICAL_RISK),
+                true, false, dev.hugo.watcher.ai.ClassificationResult.Urgency.CRITICAL, 0.99, "a".repeat(64));
+        var settings = new DecisionPolicy(true, true, false, false,
+                Set.of(Situation.CONTACT_REQUEST, Situation.CRITICAL_URGENCY),
+                Map.of(Situation.CONTACT_REQUEST, new ResponseTemplate("contact_v1", 1, Situation.CONTACT_REQUEST,
+                        "Resposta automática: retorno autorizado.", true)),
+                Duration.ZERO, Duration.ZERO, null, null);
+
+        Decision decision = engine.decide(batch(false), classification,
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+
+        assertEquals(TriageOutcome.NOTIFY_ONLY, decision.triageOutcome());
+        assertFalse(decision.wouldAlert());
+        assertTrue(decision.triageBlockers().contains("critical_alert_template_required"));
+        assertEquals("critical_alert_template_required", decision.realBlockedReason());
+    }
+
     private static Batch batch(boolean group) {
         return new Batch(java.util.UUID.randomUUID(), group ? "group@g.us" : "contact@s.whatsapp.net",
                 group ? "participant@s.whatsapp.net" : "", java.util.List.of());
@@ -250,9 +269,12 @@ class DecisionEngineTest {
     }
 
     private static EffectivePolicy policy(boolean enabled, Set<Situation> authorized, boolean hasTemplate, boolean killSwitch) {
+        var templates = new java.util.EnumMap<Situation, ResponseTemplate>(Situation.class);
+        if (hasTemplate) for (Situation situation : authorized)
+            templates.put(situation, new ResponseTemplate(situation.name().toLowerCase() + "_v1", 1,
+                    situation, "Resposta automática: Retorno autorizado.", true));
         return new EffectivePolicy(Map.of(), null, new DecisionPolicy(enabled, enabled, enabled, killSwitch, authorized,
-                hasTemplate ? Map.of(Situation.CONTACT_REQUEST, new ResponseTemplate("contact_request_v1", 1,
-                        Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)) : Map.of(),
+                templates,
                 Duration.ofMinutes(5), Duration.ofMinutes(60), null, null));
     }
 }

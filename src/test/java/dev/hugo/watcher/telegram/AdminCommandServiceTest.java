@@ -218,11 +218,11 @@ class AdminCommandServiceTest {
         assertTrue(recent.contains("Contato indisponível"));
         assertTrue(recent.contains("27/10/2026 - 09:00:00"));
         assertTrue(recent.contains("triagem=NOTIFY_ONLY"));
-        assertTrue(recent.contains("alerta recomendado: sim"));
         assertTrue(recent.contains("intelligent_alerts_disabled"));
         String detail = commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message();
         assertTrue(detail.contains("would_reply: false"));
         assertTrue(detail.contains("Resultado semântico: NOTIFY_ONLY"));
+        assertTrue(detail.contains("alerta recomendado: sim"));
         assertTrue(detail.contains("Resposta recomendada: não"));
         assertTrue(detail.contains("motivo específico não armazenado"));
         assertTrue(detail.contains("Prévia indisponível"));

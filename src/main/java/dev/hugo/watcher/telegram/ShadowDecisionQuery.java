@@ -39,7 +39,7 @@ public class ShadowDecisionQuery {
                     || !safeName(name)) name = rs.getString("snapshot_name");
             if (!safeName(name)) name = "Contato indisponível";
             name = name.strip().replaceAll("[\\p{Cntrl}]", " ");
-            if (name.length() > 30) name = name.substring(0,30);
+            if (!"Contato indisponível".equals(name) && name.length() > 16) name = name.substring(0,16);
             name = escape(name);
             return rs.getString("batch_id").substring(0,8) + " · " + DATE.format(rs.getTimestamp("decided_at").toInstant())
                     + " · " + name + "\n" + rs.getString("classification_status") + " / " + rs.getString("classification_urgency")
@@ -49,10 +49,9 @@ public class ShadowDecisionQuery {
                     + " · Shadow " + rs.getString("decision_state") + " · alerta=" + rs.getBoolean("would_alert")
                     + " resposta=" + rs.getBoolean("would_reply") + " · bloqueio=" + code(rs.getString("blocked_reason"))
                     + "\ntriagem=" + triage(rs.getString("triage_outcome"))
-                    + " · alerta recomendado: " + yesNo(rs.getBoolean("notification_recommended"))
-                    + " · resposta recomendada: " + yesNo(rs.getBoolean("reply_recommended"))
                     + " · motivo=" + code(rs.getString("triage_reason"))
-                    + " · bloqueadores=" + blockers(rs.getString("triage_blockers"))
+                    + ("nenhum".equals(blockers(rs.getString("triage_blockers"))) ? ""
+                        : " · bloqueadores=" + blockers(rs.getString("triage_blockers")))
                     + (rs.getString("classification_diagnostic") == null ? "" : " · diagnóstico=" + code(rs.getString("classification_diagnostic")));
         }, Timestamp.from(clock.instant()), limit);
         return rows.isEmpty() ? "Nenhuma decisão disponível dentro da retenção." : "Decisões recentes:\n" + String.join("\n\n",rows);

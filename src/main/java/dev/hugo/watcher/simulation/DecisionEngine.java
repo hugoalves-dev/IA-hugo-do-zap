@@ -48,17 +48,30 @@ public final class DecisionEngine {
         }
 
         boolean authorized = classification.situations().stream().anyMatch(settings.authorizedSituations()::contains);
+        boolean highOrCritical = classification.urgency() == ClassificationResult.Urgency.HIGH
+                || classification.urgency() == ClassificationResult.Urgency.CRITICAL;
+        ResponseTemplate criticalAlertTemplate = settings.templates().get(Situation.CRITICAL_URGENCY);
+        boolean criticalAlertTemplateReady = criticalAlertTemplate != null
+                && criticalAlertTemplate.situation() == Situation.CRITICAL_URGENCY
+                && criticalAlertTemplate.isPreapprovedAndDisclosed();
+        boolean alertAuthorized = highOrCritical
+                ? settings.authorizedSituations().contains(Situation.CRITICAL_URGENCY) && criticalAlertTemplateReady
+                    && (!batch.chatJid().endsWith("@g.us") || settings.authorizedSituations().contains(Situation.GROUP_TRIGGER))
+                : authorized;
         boolean group = batch.chatJid().endsWith("@g.us");
         boolean groupTrigger = !group || classification.groupTriggerMatched();
         boolean ownerAvailable = policy.availability() == null
                 || policy.availability().state() == dev.hugo.watcher.policy.AvailabilityState.AVAILABLE;
         boolean alert = notificationRecommended
                 && (ownerAvailable || critical && classification.explicitPersonalReference())
-                && settings.intelligentAlertsEnabled() && authorized && groupTrigger;
+                && settings.intelligentAlertsEnabled() && alertAuthorized && groupTrigger;
         if (notificationRecommended && !alert) {
             if (!settings.intelligentAlertsEnabled()) blockers.add("intelligent_alerts_disabled");
             if (!ownerAvailable && !(critical && classification.explicitPersonalReference())) blockers.add("owner_unavailable");
-            if (!authorized) blockers.add("conversation_authorization_required");
+            if (highOrCritical && !settings.authorizedSituations().contains(Situation.CRITICAL_URGENCY))
+                blockers.add("conversation_authorization_required");
+            else if (!highOrCritical && !authorized) blockers.add("conversation_authorization_required");
+            if (highOrCritical && !criticalAlertTemplateReady) blockers.add("critical_alert_template_required");
             if (!groupTrigger) blockers.add("group_trigger_missing");
         }
 
@@ -111,6 +124,8 @@ public final class DecisionEngine {
             realAllowed = false;
             realBlocked = "real_cooldown";
         }
+        if (!realAllowed && realBlocked == null)
+            realBlocked = blockers.isEmpty() ? "action_not_eligible" : blockers.getFirst();
         if ((alert || reply) && cooldownActive(settings.lastSimulationActionAt(), settings.simulationCooldown(), now)) {
             alert = false;
             reply = false;
