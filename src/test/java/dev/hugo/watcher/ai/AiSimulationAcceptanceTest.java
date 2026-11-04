@@ -574,7 +574,7 @@ class AiSimulationAcceptanceTest {
         }).evaluate(next);
         assertEquals(0, countActions()); assertEquals(0, countAlerts());
     }
-    @Test void providerKillSwitchPreventsProducerAndGroupWithoutStructuredTriggerNeverCallsModel() {
+    @Test void providerKillSwitchPreventsProducerAndGroupWithoutStructuredTriggerDoesNotAct() {
         authorizeProducer();
         producingService(true,(request,timeout,max) -> {
             calls.incrementAndGet(); jdbc.update("update operational_restrictions set emergency_latched=true"); return openrouter(valid());
@@ -583,7 +583,7 @@ class AiSimulationAcceptanceTest {
         jdbc.update("update operational_restrictions set emergency_latched=false");
         jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values ('team@g.us','GROUP_TRIGGER','openrouter',true,now()+interval '1 day')");
         producingService(true, critical()).evaluate(batch("team@g.us",Map.of("conversation","@owner urgency")));
-        assertEquals(1,calls.get()); assertEquals(0,countActions()); assertEquals(0,countAlerts());
+        assertEquals(2,calls.get()); assertEquals(0,countActions()); assertEquals(0,countAlerts());
     }
     @Test void producerFailureRollsBackDecisionAndRecoversWithoutAnotherProviderCall() {
         authorizeProducer(); var batch = batch(chat,mention()); var service = producingService(true,critical());

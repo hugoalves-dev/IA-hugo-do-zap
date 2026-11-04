@@ -73,7 +73,8 @@ class ConversationContextRepositoryTest {
         insertOwner(jdbc, chat, "owner-bob", "bob-prior", "Vou ajudar", now.minusSeconds(30), now);
         add(debounce, "alice-target", chat, "alice", "Pode fazer isso?", now.minusSeconds(10));
         Batch batch = debounce.claimReady(now.plusSeconds(1)).stream()
-                .filter(candidate -> candidate.participantJid().equals("alice")).findFirst().orElseThrow();
+                .filter(candidate -> candidate.chatJid().equals(chat) && candidate.participantJid().equals("alice"))
+                .findFirst().orElseThrow();
 
         var input = new ConversationContextRepository(jdbc, Duration.ofHours(24)).input(batch, now.plusSeconds(2));
 
