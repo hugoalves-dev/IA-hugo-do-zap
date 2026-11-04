@@ -115,14 +115,14 @@
 - Produces: a Telegram adapter with `handle(AdminCommand)`, `handlePrivateText(long userId, long chatId, String text)`, and button/menu rendering; callback data contains only opaque short-lived tokens, never prompt text or secrets.
 - Produces: message send/edit operations to the configured private admin chat, with escaped Telegram HTML and a fakeable transport interface.
 
-- [ ] **Step 1: Write handler tests** for unauthorized user, group, wrong private chat, valid command, text outside an edit state, chunked manual prompt input, cancel/expiry/re-entry, and invalid/duplicate callbacks.
-- [ ] **Step 2: Run `mvn -Dtest=TelegramPromptUpdateHandlerTest test`** and verify the manual flow cases fail.
-- [ ] **Step 3: Implement private message routing** after existing identity/chat authorization, before unknown-command handling. Accept prompt parts only for the owner’s active, unexpired draft; reject commands and unrelated text according to state.
-- [ ] **Step 4: Write command service tests** for active prompt metadata, preview/diff, history pagination, restore confirmation, reset confirmation displaying current and target prompts, and no prompt content in callback payloads.
-- [ ] **Step 5: Run `mvn -Dtest=TelegramPromptCommandServiceTest test`** and verify expected failures.
-- [ ] **Step 6: Add menu actions** `Edit manually`, `Create with AI`, `Preview`, `History`, `Restore`, and `Reset to Java default`. Bind all callbacks through the existing identity-bound expiring tokens. Require a second explicit confirmation for activation, restore, and reset. Render prompt content only to the authorized private chat and split Telegram responses within Bot API limits.
-- [ ] **Step 7: Run `mvn -Dtest=TelegramPromptUpdateHandlerTest,TelegramPromptCommandServiceTest,CallbackTokenServiceTest,TelegramWebhookControllerTest test`** and verify all tests pass.
-- [ ] **Step 8: Commit** as `feat: manage prompt drafts from private telegram chat`.
+- [x] **Step 1: Write handler tests** for unauthorized user, group, wrong private chat, valid command, text outside an edit state, chunked manual prompt input, cancel/expiry/re-entry, and invalid/duplicate callbacks.
+- [x] **Step 2: Run `mvn -Dtest=TelegramPromptUpdateHandlerTest test`** and verify the manual flow cases fail.
+- [x] **Step 3: Implement private message routing** after existing identity/chat authorization, before unknown-command handling. Accept prompt parts only for the owner’s active, unexpired draft; reject commands and unrelated text according to state.
+- [x] **Step 4: Write command service tests** for active prompt metadata, preview/diff, history pagination, restore confirmation, reset confirmation displaying current and target prompts, and no prompt content in callback payloads.
+- [x] **Step 5: Run `mvn -Dtest=TelegramPromptCommandServiceTest test`** and verify expected failures.
+- [x] **Step 6: Add menu actions** `Edit manually`, `Create with AI`, `Preview`, `History`, `Restore`, and `Reset to Java default`. Bind all callbacks through the existing identity-bound expiring tokens. Require a second explicit confirmation for activation, restore, and reset. Render prompt content only to the authorized private chat and split Telegram responses within Bot API limits. (The AI menu entry is connected to generation in Task 5.)
+- [x] **Step 7: Run `mvn -Dtest=TelegramPromptUpdateHandlerTest,TelegramPromptCommandServiceTest,CallbackTokenServiceTest,TelegramWebhookControllerTest test`** and verify all tests pass.
+- [x] **Step 8: Commit** as `feat: manage prompt drafts from private telegram chat`.
 
 ### Task 5: Bounded AI-assisted prompt proposal and refinement
 
