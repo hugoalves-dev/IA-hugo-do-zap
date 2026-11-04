@@ -39,6 +39,7 @@ public class AdminCommandService {
     private RuntimeSettingsService runtimeSettings;
     private dev.hugo.watcher.ai.AiClassificationProperties aiProperties;
     private dev.hugo.watcher.ai.ClassificationPromptService promptSettings;
+    private dev.hugo.watcher.ai.PromptGenerationService promptGeneration;
     private dev.hugo.watcher.ai.PromptCalibrationQueueRepository promptCalibrationQueue;
     private ContactPolicyOverviewService contactOverview;
     private dev.hugo.watcher.OperationalState operational;
@@ -80,6 +81,7 @@ public class AdminCommandService {
                 : command;
         try {
             if (effective.name().equals("prompt_preview")) return previewPrompt(effective);
+            if (List.of("prompt_generate", "prompt_refine").contains(effective.name())) return generatePrompt(effective);
             if (!effective.confirmed() && (effective.name().equals("prompt_reset")
                     || (effective.name().equals("prompt_restore") && effective.arguments().size() == 1)))
                 return requestPromptTransition(effective);
@@ -160,7 +162,8 @@ public class AdminCommandService {
             case "prompt_cancel" -> cancelPrompt(command);
             case "prompt_clear" -> clearPrompt(command);
             case "prompt_history" -> promptHistory(args);
-            case "prompt_ai" -> "Criação com IA estará disponível quando o gerador estiver configurado.";
+            case "prompt_ai" -> beginAiPromptInput(command);
+            case "prompt_ai_default" -> beginAiPromptInput(command, true);
             case "prompt_compare" -> comparePrompt(args);
             case "prompt_page" -> promptPage(args);
             case "prompt_test" -> queuePromptTest(command);
@@ -316,6 +319,44 @@ public class AdminCommandService {
         promptSettings.beginManualInput(command.userId(), command.chatId(), clock.instant());
         return "Rascunho criado a partir do prompt ativo. Envie partes de até 4096 caracteres nos próximos 10 minutos "
                 + "(limite total: 16000). Use /prompt_clear para reescrever, /prompt_preview para revisar ou /prompt_cancel para descartar.";
+    }
+
+    private String beginAiPromptInput(AdminCommand command) {
+        return beginAiPromptInput(command, false);
+    }
+
+    private String beginAiPromptInput(AdminCommand command, boolean useJavaDefault) {
+        if (promptSettings == null) return "Prompts: gerenciamento de versões indisponível.";
+        Instant now = clock.instant();
+        if (useJavaDefault) promptSettings.beginDefaultInput(command.userId(), command.chatId(), now);
+        else promptSettings.beginManualInput(command.userId(), command.chatId(), now);
+        return "Rascunho iniciado com o " + (useJavaDefault ? "Java default" : "prompt ativo")
+                + ". Use /prompt_generate <objetivo, tom e regras explícitas> para criar a proposta; /prompt_refine <instruções> refina até três vezes. Não inclua mensagens de conversas. A proposta continua em rascunho.";
+    }
+
+    private AdminResult generatePrompt(AdminCommand command) {
+        if (promptGeneration == null || promptSettings == null)
+            return AdminResult.rejected("Geração de prompt indisponível no momento.");
+        if (command.arguments().isEmpty()) return AdminResult.rejected("Informe instruções explícitas de objetivo, tom ou regras.");
+        try {
+            var draft = pendingPrompt(command, clock.instant());
+            String instructions = String.join(" ", command.arguments());
+            var proposal = command.name().equals("prompt_refine")
+                    ? promptGeneration.refine(draft.id(), command.userId(), instructions, clock.instant())
+                    : promptGeneration.propose(draft.id(), command.userId(), instructions, clock.instant());
+            String message = "Proposta criada como rascunho. Alterações: " + proposal.changeSummary()
+                    + "\nUse /prompt_preview para revisar, envie texto para editar manualmente, ou /prompt_cancel para descartar.";
+            return transactions.execute(status -> {
+                enqueueReply(message, command);
+                return AdminResult.accepted(message);
+            });
+        } catch (RuntimeException exception) {
+            String message = "Não foi possível gerar a proposta; o rascunho atual foi preservado.";
+            return transactions.execute(status -> {
+                enqueueReply(message, command);
+                return AdminResult.rejected(message);
+            });
+        }
     }
 
     private dev.hugo.watcher.ai.ClassificationPromptRepository.Draft pendingPrompt(AdminCommand command, Instant now) {
@@ -773,7 +814,8 @@ public class AdminCommandService {
                 rows.add(List.of(button("Prompt atual", "prompt_current", List.of(), user, chat, expiry),
                         button("Histórico", "prompt_history", List.of(), user, chat, expiry)));
                 rows.add(List.of(button("Editar manualmente", "prompt_new", List.of(), user, chat, expiry),
-                        button("Criar com IA", "prompt_ai", List.of(), user, chat, expiry)));
+                        button("Criar com IA · ativo", "prompt_ai", List.of(), user, chat, expiry)));
+                rows.add(List.of(button("Criar com IA · Java default", "prompt_ai_default", List.of(), user, chat, expiry)));
                 rows.add(List.of(button("Prévia", "prompt_preview", List.of(), user, chat, expiry),
                         button("Restaurar Java default", "prompt_reset", List.of(), user, chat, expiry)));
             }
@@ -857,6 +899,8 @@ public class AdminCommandService {
 
     @Autowired(required = false)
     public void configurePromptSettings(dev.hugo.watcher.ai.ClassificationPromptService settings) { this.promptSettings = settings; }
+    @Autowired(required = false)
+    public void configurePromptGeneration(dev.hugo.watcher.ai.PromptGenerationService generation) { this.promptGeneration = generation; }
 
     @Autowired(required = false)
     public void configureContactOverview(ContactPolicyOverviewService service) { this.contactOverview = service; }

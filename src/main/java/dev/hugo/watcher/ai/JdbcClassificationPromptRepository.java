@@ -167,10 +167,12 @@ public class JdbcClassificationPromptRepository implements ClassificationPromptR
                                 String description, Instant now) {
         return jdbc.update("""
                 update classification_prompt_drafts
-                set body=?,origin=?,description=?,status='preview',refinement_count=refinement_count+1,version=version+1
+                set body=?,origin=?,description=?,status='preview',
+                    refinement_count=refinement_count+case when origin='ai_assisted' and ?='ai_assisted' then 1 else 0 end,
+                    version=version+1
                 where id=? and owner_id=? and version=? and expires_at>? and status in ('editing','preview')
-                  and refinement_count<3
-                """, body, origin, description, id, ownerId, expectedVersion, Timestamp.from(now)) == 1;
+                  and (origin<>'ai_assisted' or ?<>'ai_assisted' or refinement_count<3)
+                """, body, origin, description, origin, id, ownerId, expectedVersion, Timestamp.from(now), origin) == 1;
     }
 
     public boolean setDraftStatus(UUID id, long ownerId, long expectedVersion, String status) {

@@ -12,6 +12,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -19,6 +20,7 @@ import java.time.ZoneId;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 @Testcontainers(disabledWithoutDocker = true)
 class AdminCommandServiceTest {
@@ -230,6 +232,25 @@ class AdminCommandServiceTest {
         assertTrue(commands.execute(command("contexto", List.of("12", "0"), true)).accepted());
         assertEquals(12, runtime.contextWindowHours());
         assertEquals(1, jdbc.queryForObject("select count(*) from telegram_admin_audit where action='contexto' and outcome='APPLIED'", Integer.class));
+    }
+
+    @Test void aiAuthoringCanStartFromJavaDefaultAndInvokesProviderOutsideTransaction() {
+        var generation = mock(dev.hugo.watcher.ai.PromptGenerationService.class);
+        commands.configurePromptGeneration(generation);
+        commands.execute(command("prompt_ai_default", List.of(), false));
+        var draft = promptService.pendingManualInput(1001, 2002, clock.instant()).orElseThrow();
+        assertEquals(dev.hugo.watcher.ai.ClassificationPromptService.DEFAULT_OPERATIONAL_PROMPT, draft.body());
+        var proposal = new dev.hugo.watcher.ai.PromptGenerationService.Proposal(draft, "Clarified urgency.");
+        when(generation.propose(eq(draft.id()), eq(1001L), eq("Clarify urgency"), any())).thenAnswer(invocation -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            return proposal;
+        });
+
+        var result = commands.execute(command("prompt_generate", List.of("Clarify", "urgency"), false));
+
+        assertTrue(result.accepted());
+        assertTrue(result.message().contains("Clarified urgency."));
+        verify(generation).propose(eq(draft.id()), eq(1001L), eq("Clarify urgency"), any());
     }
 
     @Test void promptRevisionFlowCollectsPartsAndConfirmsThePreviewedVersion() {

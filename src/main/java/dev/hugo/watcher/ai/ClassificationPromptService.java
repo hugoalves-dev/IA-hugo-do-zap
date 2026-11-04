@@ -83,6 +83,18 @@ public class ClassificationPromptService {
         });
     }
 
+    public Draft beginDefaultInput(long user, long chat, Instant now) {
+        if (user <= 0 || chat <= 0 || now == null) throw new IllegalArgumentException("invalid_prompt_session");
+        return transactions.execute(status -> {
+            repository.pendingDraftInput(user, chat, now).ifPresent(id -> cancel(id, user, now));
+            Draft draft = createManualDraft(user, (long) activeSnapshot().revision(), now);
+            draft = clearManualDraft(draft.id(), user, now);
+            appendManualPart(draft.id(), user, DEFAULT_OPERATIONAL_PROMPT, now);
+            repository.beginDraftInput(user, chat, draft.id(), draft.expiresAt(), now);
+            return editable(draft.id(), user, now);
+        });
+    }
+
     public java.util.Optional<Draft> pendingManualInput(long user, long chat, Instant now) {
         if (user <= 0 || chat <= 0 || now == null) return java.util.Optional.empty();
         return repository.pendingDraftInput(user, chat, now)
@@ -214,12 +226,20 @@ public class ClassificationPromptService {
 
     public Draft saveProposal(UUID draftId, long adminId, String body, String origin, String description, Instant now) {
         Draft draft = editable(draftId, adminId, now);
+        return saveProposal(draftId, adminId, draft.version(), body, origin, description, now);
+    }
+
+    public Draft saveProposal(UUID draftId, long adminId, long expectedVersion, String body, String origin,
+                              String description, Instant now) {
+        Draft draft = editable(draftId, adminId, now);
+        if (draft.version() != expectedVersion) throw conflict();
         String normalized = normalize(body);
         requireBody(normalized, ClassificationPromptValidator.MAX_BODY_LENGTH);
         if (origin == null || !List.of("manual", "ai_assisted").contains(origin) || description == null || description.length() > 500)
             throw new IllegalArgumentException("invalid_proposal_metadata");
-        if (draft.refinementCount() >= MAX_REFINEMENTS
-                || !repository.saveProposal(draftId, adminId, draft.version(), normalized, origin, description, now))
+        if ((origin.equals("ai_assisted") && draft.origin().equals("ai_assisted")
+                && draft.refinementCount() >= MAX_REFINEMENTS)
+                || !repository.saveProposal(draftId, adminId, expectedVersion, normalized, origin, description, now))
             throw conflict();
         return editable(draftId, adminId, now);
     }

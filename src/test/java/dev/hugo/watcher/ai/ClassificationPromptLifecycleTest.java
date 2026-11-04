@@ -215,7 +215,8 @@ class ClassificationPromptLifecycleTest {
         var draft = proposal("First.");
         service.saveProposal(draft.id(), 42, "Second.", "ai_assisted", "", NOW);
         service.saveProposal(draft.id(), 42, "Third.", "ai_assisted", "", NOW);
-        assertThrows(IllegalStateException.class, () -> service.saveProposal(draft.id(), 42, "Fourth.", "ai_assisted", "", NOW));
+        service.saveProposal(draft.id(), 42, "Fourth.", "ai_assisted", "", NOW);
+        assertThrows(IllegalStateException.class, () -> service.saveProposal(draft.id(), 42, "Fifth.", "ai_assisted", "", NOW));
         assertFalse(service.cancel(draft.id(), 43, NOW));
         assertTrue(service.cancel(draft.id(), 42, NOW));
         assertFalse(service.cancel(draft.id(), 42, NOW));
