@@ -28,7 +28,7 @@ CREATE TABLE classification_prompt_drafts (
     origin varchar(16) NOT NULL CHECK (origin IN ('manual', 'ai_assisted')),
     description varchar(500) NOT NULL DEFAULT '',
     status varchar(16) NOT NULL CHECK (status IN ('editing', 'preview', 'cancelled', 'activated')),
-    refinement_count integer NOT NULL DEFAULT 0 CHECK (refinement_count BETWEEN 0 AND 5),
+    refinement_count integer NOT NULL DEFAULT 0 CHECK (refinement_count BETWEEN 0 AND 3),
     version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
     expires_at timestamptz NOT NULL
 );

@@ -71,7 +71,7 @@ public class ClassificationPromptRepository {
                 update classification_prompt_drafts
                 set body=?,origin=?,description=?,status='preview',refinement_count=refinement_count+1,version=version+1
                 where id=? and owner_id=? and version=? and expires_at>? and status in ('editing','preview')
-                  and refinement_count<5
+                  and refinement_count<3
                 """, body, origin, description, id, ownerId, expectedVersion, Timestamp.from(now)) == 1;
     }
 
