@@ -28,9 +28,31 @@ class OpenRouterPromptGeneratorTest {
         assertTrue(body.contains("\"data_collection\":\"deny\""));
         assertTrue(body.contains("\"allow_fallbacks\":false"));
         assertTrue(body.contains("\"require_parameters\":true"));
+        assertFalse(body.contains("\"temperature\""), "unsupported temperature must not rule out Haiku endpoints");
         assertEquals("openrouter.ai", fake.requests().getFirst().uri().getHost());
         assertFalse(body.contains("fake-key"));
         verify(budget).reserve(any(), any());
+    }
+
+    @Test void generateAndRefineShareTheSafeRequestContractWithoutPaidRetries() {
+        String response = "{\\"choices\\":[{\\"message\\":{\\"content\\":\\"{\\\\\\"prompt\\\\\\":\\\\\\"Safe draft.\\\\\\",\\\\\\"summary\\\\\\":\\\\\\"Reviewed.\\\\\\"}\\"}}]}";
+        var fake = new FakeProviderTransport(request -> FakeProviderTransport.response(200, response));
+        var generator = new OpenRouterPromptGenerator(properties(), fake, budget(), Clock.systemUTC());
+        generator.generate("Existing rules.", "Create draft.", () -> true,
+                new PromptGenerationContext(UUID.randomUUID(), "GENERATE"));
+        generator.generate("Existing rules.", "Refine draft.", () -> true,
+                new PromptGenerationContext(UUID.randomUUID(), "REFINE"));
+
+        assertEquals(2, fake.requests().size());
+        for (var request : fake.requests()) {
+            String payload = FakeProviderTransport.requestBody(request);
+            assertFalse(payload.contains("\\"temperature\\""));
+            assertTrue(payload.contains("\\"require_parameters\\":true"));
+            assertTrue(payload.contains("\\"zdr\\":true"));
+            assertTrue(payload.contains("\\"data_collection\\":\\"deny\\""));
+            assertTrue(payload.contains("\\"allow_fallbacks\\":false"));
+            assertTrue(payload.contains("\\"response_format\\":"));
+        }
     }
 
     @Test void disabledGateAndMalformedOutputFailWithoutExposingProviderBody() {
