@@ -128,13 +128,22 @@ public class NotificationOutboxRepository {
         if (rabbitPublisher == null) return 0;
         List<String> keys = jdbc.query("""
                 select action_key from outbox_actions
-                where rabbit_confirmed_at is null
-                  and sensitive_expires_at>clock_timestamp()
-                  and (status='PENDING' or (status='PROCESSING' and lease_expires_at<=clock_timestamp()
-                    and (action_type<>'intelligent_alert' or not exists (
-                        select 1 from decision_delivery_attempts attempt where attempt.channel='TELEGRAM'
-                          and attempt.status in ('DISPATCHED','UNKNOWN')
-                          and attempt.decision_id::text=right(outbox_actions.action_key,36)))))
+                where sensitive_expires_at>clock_timestamp()
+                  and (
+                    (rabbit_confirmed_at is null
+                      and (status='PENDING' or (status='PROCESSING' and lease_expires_at<=clock_timestamp()
+                        and (action_type<>'intelligent_alert' or not exists (
+                            select 1 from decision_delivery_attempts attempt where attempt.channel='TELEGRAM'
+                              and attempt.status in ('DISPATCHED','UNKNOWN')
+                              and attempt.decision_id::text=right(outbox_actions.action_key,36)))))
+                    )
+                    or (action_type='telegram_admin_reply'
+                        and action_key like 'prompt-generation-result:%'
+                        and rabbit_confirmed_at is not null and status='PENDING' and attempts=0
+                        and available_at<=clock_timestamp()
+                        and updated_at<=clock_timestamp()-interval '60 seconds'
+                        and sensitive_expires_at>clock_timestamp()+interval '30 seconds')
+                  )
                 order by available_at,created_at,id limit 500
                 """, (rs, row) -> rs.getString(1));
         keys.forEach(key -> {
@@ -187,10 +196,14 @@ public class NotificationOutboxRepository {
         Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
         long delayMillis = availableAt == null ? 0
                 : java.time.Duration.between(databaseNow, availableAt.toInstant()).toMillis();
+        // Prompt results have their own durable consumer so an unrelated Telegram backlog cannot starve them.
+        // Confirmed-but-unclaimed results are replayed with the same idempotent action key.
+        String destination = "telegram_admin_reply".equals(actionType)
+                && actionKey.startsWith("prompt-generation-result:") ? "prompt-results" : "notifications";
         if (delayMillis > 0)
-            rabbitPublisher.publishDeferred("notifications", availableAt.toInstant(), actionKey, actionKey, headers);
+            rabbitPublisher.publishDeferred(destination, availableAt.toInstant(), actionKey, actionKey, headers);
         else
-            rabbitPublisher.publish("notifications", actionKey, actionKey, headers);
+            rabbitPublisher.publish(destination, actionKey, actionKey, headers);
         transactions.executeWithoutResult(status -> {
             int updated = jdbc.update("""
                     update outbox_actions set rabbit_confirmed_at=coalesce(rabbit_confirmed_at,clock_timestamp()),
