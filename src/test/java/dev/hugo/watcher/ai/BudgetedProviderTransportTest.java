@@ -12,6 +12,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import ch.qos.logback.classic.Level;
 import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.net.http.HttpRequest;
@@ -73,6 +74,8 @@ class BudgetedProviderTransportTest {
                 ProviderTransport.class, BudgetService.class, java.util.function.BooleanSupplier.class,
                 String.class, long.class, Clock.class, contextType));
         var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(BudgetedProviderTransport.class);
+        Level originalLevel = logger.getLevel();
+        logger.setLevel(Level.INFO);
         var appender = new ListAppender<ILoggingEvent>();
         appender.start();
         logger.addAppender(appender);
@@ -88,6 +91,7 @@ class BudgetedProviderTransportTest {
         } finally {
             logger.detachAppender(appender);
             appender.stop();
+            logger.setLevel(originalLevel);
         }
 
         var messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
