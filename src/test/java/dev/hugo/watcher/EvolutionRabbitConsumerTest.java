@@ -29,12 +29,12 @@ class EvolutionRabbitConsumerTest {
         Channel channel = mock(Channel.class);
         Message message = message("evt-7", 0);
         var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
-            consumer.configurePipelineMetrics(new EvolutionPipelineMetrics(registry));
-            consumer.receive(message, channel);
-            assertEquals(1, registry.get("watcher.evolution.pipeline.events")
-                    .tags("stage", "inbox", "outcome", "accepted").counter().count());
-            assertEquals(1, registry.get("watcher.evolution.pipeline.events")
-                    .tags("stage", "rabbit", "outcome", "consumed").counter().count());
+        consumer.configurePipelineMetrics(new EvolutionPipelineMetrics(registry));
+        consumer.receive(message, channel);
+        assertEquals(1, registry.get("watcher.evolution.pipeline.events")
+                .tags("stage", "inbox", "outcome", "accepted").counter().count());
+        assertEquals(1, registry.get("watcher.evolution.pipeline.events")
+                .tags("stage", "rabbit", "outcome", "consumed").counter().count());
         
 
         verify(jobs).processAvailable();
@@ -55,8 +55,12 @@ class EvolutionRabbitConsumerTest {
         Channel channel = mock(Channel.class);
         Message message = message("evt-7", 0);
 
+        var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        consumer.configurePipelineMetrics(new EvolutionPipelineMetrics(registry));
         consumer.receive(message, channel);
 
+        assertEquals(1, registry.get("watcher.evolution.pipeline.events")
+                .tags("stage", "rabbit", "outcome", "retry").counter().count());
         verify(publisher).publishDelayed("incoming.retry.1", "evt-7", BODY, Map.of("x-retry-count", 1), 1_000);
         verify(channel).basicAck(31L, false);
     }
@@ -72,8 +76,12 @@ class EvolutionRabbitConsumerTest {
         Channel channel = mock(Channel.class);
         Message message = message("evt-7", 3);
 
+        var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        consumer.configurePipelineMetrics(new EvolutionPipelineMetrics(registry));
         consumer.receive(message, channel);
 
+        assertEquals(1, registry.get("watcher.evolution.pipeline.events")
+                .tags("stage", "rabbit", "outcome", "dead_letter").counter().count());
         verify(channel).basicNack(31L, false, false);
         verifyNoInteractions(publisher);
     }

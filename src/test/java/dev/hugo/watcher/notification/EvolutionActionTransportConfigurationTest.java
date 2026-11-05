@@ -144,6 +144,19 @@ class EvolutionActionTransportConfigurationTest {
         assertFalse(error.getMessage().contains("secret"));
     }
 
+    @Test void startupFailureIdentifiesRejectedPropertyWithoutLeakingSecrets() {
+        realTransportContext("http://evolution-api:8080")
+                .withPropertyValues("watcher.whatsapp-actions.evolution.api-key=")
+                .run(c -> {
+                    Throwable error = c.getStartupFailure();
+                    assertNotNull(error);
+                    while (error.getCause() != null) error = error.getCause();
+                    assertEquals("Invalid Evolution action transport configuration: "
+                            + "watcher.whatsapp-actions.evolution.api-key", error.getMessage());
+                    assertFalse(error.getMessage().contains("synthetic-test-key"));
+                });
+    }
+
     private ApplicationContextRunner realTransportContext(String url) {
         return context.withPropertyValues(
                 "watcher.decision-producer.real-mode-enabled=true",
