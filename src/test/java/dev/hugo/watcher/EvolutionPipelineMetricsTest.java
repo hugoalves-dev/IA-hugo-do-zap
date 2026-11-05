@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class EvolutionPipelineMetricsTest {
     @Test
     void emitsFixedCardinalityStageCountersWithoutLeakingEventIds() {
-        try (var registry = new SimpleMeterRegistry()) {
+        var registry = new SimpleMeterRegistry();
             var metrics = new EvolutionPipelineMetrics(registry);
             metrics.record(EvolutionPipelineMetrics.Stage.WEBHOOK,
                     EvolutionPipelineMetrics.Outcome.RECEIVED, "sensitive-raw-id");
@@ -31,6 +31,6 @@ class EvolutionPipelineMetricsTest {
             assertNotEquals("sensitive-raw-id", EvolutionPipelineMetrics.opaqueCorrelation("sensitive-raw-id"));
             assertEquals(24, EvolutionPipelineMetrics.opaqueCorrelation("sensitive-raw-id").length());
             assertEquals("unavailable", EvolutionPipelineMetrics.opaqueCorrelation(null));
-        }
+        
     }
 }
