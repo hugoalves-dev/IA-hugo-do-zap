@@ -106,7 +106,7 @@ class PromptGenerationResultDeliveryRepositoryTest {
         var broker = mock(dev.hugo.watcher.RabbitEventPublisher.class);
         var durableOutbox = new NotificationOutboxRepository(jdbc, transactions,
                 new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, transactions), broker);
-        durableOutbox.enqueue(key, "telegram_admin_reply", "{\\"text\\":\\"safe result\\"}", "[]",
+        durableOutbox.enqueue(key, "telegram_admin_reply", "{\"text\":\"safe result\"}", "[]",
                 now, now.plusSeconds(600));
         assertDelivery(jobId, "PENDING", 0, null);
         assertNotNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key=?",
@@ -135,7 +135,7 @@ class PromptGenerationResultDeliveryRepositoryTest {
         var broker = mock(dev.hugo.watcher.RabbitEventPublisher.class);
         var durableOutbox = new NotificationOutboxRepository(jdbc, transactions,
                 new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, transactions), broker);
-        durableOutbox.enqueue(key, "telegram_admin_reply", "{\\"text\\":\\"safe result\\"}", "[]",
+        durableOutbox.enqueue(key, "telegram_admin_reply", "{\"text\":\"safe result\"}", "[]",
                 now, now.plusSeconds(600));
         assertDelivery(jobId, "PENDING", 0, null);
         jdbc.update("update outbox_actions set sensitive_expires_at=clock_timestamp()-interval '1 second' where action_key=?", key);
