@@ -375,6 +375,7 @@ class AdminCommandServiceTest {
 
     @Test void clearingDraftAllowsReplacingTheOperationalPromptAndInvalidatesEarlierPreview() {
         commands.execute(command("prompt_new", List.of(), false));
+        assertTrue(commands.acceptPromptInput("Pre-clear guidance.", 1001, 2002, null).accepted());
         CallbackAction oldPreview = tokens.consume(tokenFrom(commands.execute(command("prompt_preview", List.of(), false)).message()), 1001, 2002);
         assertTrue(commands.execute(command("prompt_clear", List.of(), false)).accepted());
         assertFalse(commands.execute(new AdminCommand(oldPreview.command(), oldPreview.arguments(), 1001, 2002, false)).accepted());
