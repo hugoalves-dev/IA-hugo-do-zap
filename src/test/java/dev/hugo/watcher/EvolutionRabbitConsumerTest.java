@@ -28,8 +28,14 @@ class EvolutionRabbitConsumerTest {
                 mock(NotificationService.class), mock(RabbitDeliveryMetrics.class));
         Channel channel = mock(Channel.class);
         Message message = message("evt-7", 0);
-
-        consumer.receive(message, channel);
+        try (var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry()) {
+            consumer.configurePipelineMetrics(new EvolutionPipelineMetrics(registry));
+            consumer.receive(message, channel);
+            assertEquals(1, registry.get("watcher.evolution.pipeline.events")
+                    .tags("stage", "inbox", "outcome", "accepted").counter().count());
+            assertEquals(1, registry.get("watcher.evolution.pipeline.events")
+                    .tags("stage", "rabbit", "outcome", "consumed").counter().count());
+        }
 
         verify(jobs).processAvailable();
         verify(channel).basicAck(31L, false);
