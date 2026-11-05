@@ -1,5 +1,7 @@
 package dev.hugo.watcher;
 
+import dev.hugo.watcher.ai.PromptGenerationResultDeliveryRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.json.JsonMapper;
@@ -17,8 +19,18 @@ import java.util.Map;
 public class RetentionRepository {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final JdbcTemplate jdbc;
+    private final PromptGenerationResultDeliveryRepository promptGenerationResults;
 
-    public RetentionRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    @Autowired
+    public RetentionRepository(JdbcTemplate jdbc, PromptGenerationResultDeliveryRepository promptGenerationResults) {
+        this.jdbc = jdbc;
+        this.promptGenerationResults = promptGenerationResults;
+    }
+
+    /** Retained for standalone retention tests. */
+    public RetentionRepository(JdbcTemplate jdbc) {
+        this(jdbc, new PromptGenerationResultDeliveryRepository(jdbc));
+    }
 
     int purgeInTransaction(Instant now) {
         Timestamp cutoff = Timestamp.from(now);
@@ -45,6 +57,7 @@ public class RetentionRepository {
                 """, cutoff);
         int pending = jdbc.update("delete from pending_notification where expires_at <= ?", cutoff);
         int scrubbedPreviews = scrubExpiredPreviews(now);
+        promptGenerationResults.expireOutboxRows(now);
         int outboxPayloads = jdbc.update("delete from outbox_actions where sensitive_expires_at <= ?", cutoff);
         int expiredWhatsappActions = jdbc.update("""
                 delete from whatsapp_action_outbox where action_id in (

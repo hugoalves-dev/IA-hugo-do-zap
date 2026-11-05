@@ -11,6 +11,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
+import java.sql.Timestamp;
+import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -53,5 +56,25 @@ class JdbcClassificationPromptRepositoryTest {
         assertThrows(IllegalArgumentException.class,
                 () -> repository.createDraftFromInput(1001, 2002, "Replay.", ClassificationPromptRepository.contentHash("Replay."), now.plusSeconds(4)));
         assertEquals(1, jdbc.queryForObject("select count(*) from classification_prompt_revisions", Integer.class));
+    }
+
+    @Test void generationLookupReturnsOwnedExpiredDraftOnly() {
+        Instant now = Instant.parse("2026-11-04T12:00:00Z");
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                insert into classification_prompt_drafts
+                    (id,owner_id,base_revision,body,origin,description,status,refinement_count,version,expires_at)
+                values (?,44,null,'Safe test prompt.','manual','', 'editing',0,2,?)
+                """, id, Timestamp.from(now.minusSeconds(1)));
+
+        var method = assertDoesNotThrow(() -> repository.getClass().getMethod(
+                "draftForGeneration", UUID.class, long.class),
+                "generation needs an owner-scoped lookup that can report expiry");
+        var expired = assertDoesNotThrow(() -> (Optional<?>) method.invoke(repository, id, 44L));
+        var anotherOwnersDraft = assertDoesNotThrow(() -> (Optional<?>) method.invoke(repository, id, 45L));
+
+        assertTrue(expired.isPresent());
+        assertTrue(anotherOwnersDraft.isEmpty());
+        assertTrue(repository.draft(id, 44, now).isEmpty(), "existing draft lookup must keep its expiry filter");
     }
 }

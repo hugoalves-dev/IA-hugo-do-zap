@@ -6,10 +6,14 @@ import dev.hugo.watcher.notification.ReportService;
 import dev.hugo.watcher.policy.AvailabilityState;
 import dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository.Status;
 import dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository.Budget;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -24,6 +28,7 @@ import java.util.UUID;
 
 @Service
 public class AdminCommandService {
+    private static final Logger log = LoggerFactory.getLogger(AdminCommandService.class);
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final ZoneId ADMIN_ZONE = ZoneId.of("America/Sao_Paulo");
     private static final Duration CONFIRMATION_TTL = Duration.ofMinutes(5);
@@ -43,6 +48,7 @@ public class AdminCommandService {
     private dev.hugo.watcher.ai.PromptGenerationService promptGeneration;
     private dev.hugo.watcher.ai.PromptCalibrationQueueRepository promptCalibrationQueue;
     private dev.hugo.watcher.ai.PromptGenerationQueueRepository promptGenerationQueue;
+    private dev.hugo.watcher.ai.PromptGenerationMetrics promptGenerationMetrics;
     private ContactPolicyOverviewService contactOverview;
     private dev.hugo.watcher.OperationalState operational;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
@@ -357,8 +363,10 @@ public class AdminCommandService {
             var draft = pendingPrompt(command, clock.instant());
             String instructions = String.join(" ", command.arguments());
             if (instructions.length() > 4096) throw new IllegalArgumentException("instructions_too_long");
+            String operation = command.name().equals("prompt_refine") ? "REFINE" : "GENERATE";
             var jobId = promptGenerationQueue.enqueue(draft.id(), draft.version(), command.userId(), command.chatId(),
-                    command.name().equals("prompt_refine") ? "REFINE" : "GENERATE", instructions, clock.instant());
+                    operation, instructions, clock.instant());
+            recordPromptGenerationEnqueued(jobId, operation);
             String message = "Solicitação de proposta recebida (" + jobId.toString().substring(0, 8)
                     + "). O resultado será enviado nesta conversa privada quando estiver pronto.";
             enqueueReply(message, command);
@@ -369,6 +377,20 @@ public class AdminCommandService {
                 enqueueReply(message, command);
                 return AdminResult.rejected(message);
             });
+        }
+    }
+
+    private void recordPromptGenerationEnqueued(UUID jobId, String operation) {
+        Runnable record = () -> {
+            if (promptGenerationMetrics != null) promptGenerationMetrics.enqueued(operation);
+            log.info("prompt_generation event=ENQUEUED jobId={} operation={}", jobId, operation);
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { record.run(); }
+            });
+        } else {
+            record.run();
         }
     }
 
@@ -926,6 +948,11 @@ public class AdminCommandService {
     @Autowired(required = false)
     public void configurePromptGenerationQueue(dev.hugo.watcher.ai.PromptGenerationQueueRepository queue) {
         this.promptGenerationQueue = queue;
+    }
+
+    @Autowired(required = false)
+    public void configurePromptGenerationMetrics(dev.hugo.watcher.ai.PromptGenerationMetrics metrics) {
+        this.promptGenerationMetrics = metrics;
     }
 
     private static boolean isMutation(String name, List<String> args) {

@@ -13,6 +13,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -248,6 +252,28 @@ class AdminCommandServiceTest {
         verifyNoInteractions(generation);
         assertEquals(1, jdbc.queryForObject("select count(*) from prompt_generation_jobs where status='PENDING'", Integer.class));
         assertEquals("Clarify urgency", jdbc.queryForObject("select instructions from prompt_generation_jobs", String.class));
+    }
+
+    @Test void promptGenerationEnqueueLogsCorrelationWithoutInstructions() {
+        String secretInstruction = "synthetic-private-instruction";
+        commands.execute(command("prompt_ai_default", List.of(), false));
+        Logger logger = (Logger) LoggerFactory.getLogger(AdminCommandService.class);
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try {
+            assertTrue(commands.execute(command("prompt_generate", List.of(secretInstruction), false)).accepted());
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        var messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+        var jobId = jdbc.queryForObject("select job_id::text from prompt_generation_jobs", String.class);
+        assertTrue(messages.stream().anyMatch(message -> message.contains("event=ENQUEUED")
+                && message.contains("operation=GENERATE") && message.contains(jobId)), messages.toString());
+        assertTrue(messages.stream().noneMatch(message -> message.contains(secretInstruction)), messages.toString());
     }
 
     @Test void promptRevisionFlowCollectsPartsAndConfirmsThePreviewedVersion() {

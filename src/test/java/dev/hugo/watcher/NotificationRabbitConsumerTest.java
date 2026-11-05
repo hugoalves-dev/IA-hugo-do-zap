@@ -66,6 +66,44 @@ class NotificationRabbitConsumerTest {
     }
 
     @Test
+    void promptGenerationResultIsMeasuredAsAdminDelivery() throws Exception {
+        String actionKey = "prompt-generation-result:50000000-0000-0000-0000-000000000050";
+        NotificationService notifications = mock(NotificationService.class);
+        when(notifications.deliverQueuedAction(eq(actionKey), any())).thenReturn(true);
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        RabbitDeliveryMetrics metrics = mock(RabbitDeliveryMetrics.class);
+        NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher, metrics);
+        Channel channel = mock(Channel.class);
+
+        consumer.receive(message(actionKey, 0), channel);
+
+        verify(metrics).record(eq("admin"), any());
+        verify(channel).basicAck(17L, false);
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void promptGenerationResultDeadLetterIsPersistedWithoutPayload() throws Exception {
+        String actionKey = "prompt-generation-result:50000000-0000-0000-0000-000000000051";
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("temporary Telegram transport failure", 1_000))
+                .when(notifications).deliverQueuedAction(eq(actionKey), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
+                mock(RabbitDeliveryMetrics.class));
+        Channel channel = mock(Channel.class);
+
+        consumer.receive(message(actionKey, 3), channel);
+
+        boolean recorded = mockingDetails(notifications).getInvocations().stream().anyMatch(invocation ->
+                invocation.getMethod().getName().equals("markPromptGenerationResultDeadLetter")
+                        && actionKey.equals(invocation.getArgument(0)));
+        assertTrue(recorded, "the job's payload-free delivery summary must record a DLQ outcome");
+        verify(channel).basicNack(17L, false, false);
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
     void honorsTelegramRetryAfterOnItsSeparateRateLimitQueue() throws Exception {
         NotificationService notifications = mock(NotificationService.class);
         doThrow(new NotificationRetryException("rate limited", 4_250, true))

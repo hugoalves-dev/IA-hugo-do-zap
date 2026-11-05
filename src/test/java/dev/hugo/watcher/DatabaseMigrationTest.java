@@ -10,6 +10,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.sql.DriverManager;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -18,6 +19,69 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class DatabaseMigrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+
+    @Test void upgradesPromptGenerationDiagnosticsFromV60() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        String schema = "upgrade_prompt_generation_diagnostics";
+        Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema).target("60").load().migrate();
+        jdbc.update("""
+                insert into upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                    (job_id,draft_id,expected_draft_version,actor_user_id,chat_id,operation,instructions,status,
+                     created_at,started_at,completed_at)
+                values ('50000000-0000-0000-0000-000000000060','60000000-0000-0000-0000-000000000060',
+                        2,1001,2002,'REFINE','','FAILED',now(),now(),now())
+                """);
+        assertEquals(0, jdbc.queryForObject("""
+                select count(*) from information_schema.columns
+                where table_schema=? and table_name='prompt_generation_jobs' and column_name='failure_stage'
+                """, Integer.class, schema));
+
+        Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema).load().migrate();
+
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from information_schema.columns
+                where table_schema=? and table_name='prompt_generation_jobs' and column_name='failure_stage'
+                """, Integer.class, schema));
+        assertEquals("NOT_ENQUEUED", jdbc.queryForObject("""
+                select result_delivery_status from upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """, String.class));
+        assertEquals(0, jdbc.queryForObject("""
+                select result_delivery_attempts from upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """, Integer.class));
+        assertDoesNotThrow(() -> jdbc.update("""
+                update upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                set result_delivery_status='SUPPRESSED'
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """));
+        assertDoesNotThrow(() -> jdbc.update("""
+                update upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                set result_delivery_status='DEAD_LETTER'
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """));
+        assertDoesNotThrow(() -> jdbc.update("""
+                update upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                set failure_stage='PROVIDER',failure_code='PROVIDER_OUTCOME_UNKNOWN'
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """), "transport timeouts need an explicit uncertain-outcome code");
+        assertDoesNotThrow(() -> jdbc.update("""
+                insert into upgrade_prompt_generation_diagnostics.telegram_admin_audit
+                    (action,outcome,actor_user_id,actor_chat_id,created_at)
+                values ('prompt_generation','PROPOSED',1001,2002,now())
+                """), "a generated draft is proposed, not applied to the active prompt");
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from upgrade_prompt_generation_diagnostics.telegram_admin_audit
+                where action='prompt_generation' and outcome='PROPOSED'
+                """, Integer.class));
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("""
+                update upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                set failure_stage='PRIVATE',failure_code='PROVIDER_FAILURE'
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """));
+    }
 
     @Test void v59PreservesExistingPromptInputSessions() {
         var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(

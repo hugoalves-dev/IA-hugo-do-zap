@@ -37,6 +37,7 @@ class AiSimulationAcceptanceTest {
         jdbc.update("delete from decision_delivery_attempts");
         jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
+        jdbc.update("delete from prompt_generation_jobs");
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from processed_message");
         jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null");
@@ -208,6 +209,149 @@ class AiSimulationAcceptanceTest {
         assertEquals("COMPLETE", jdbc.queryForObject("select status from prompt_generation_jobs", String.class));
         assertEquals("", jdbc.queryForObject("select instructions from prompt_generation_jobs", String.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='telegram_admin_reply'", Integer.class));
+    }
+
+    @Test void failedPromptGenerationPersistsSafeReasonAndQueuesAdminReply() {
+        assertPromptDiagnosticsMigrated();
+        var repository = new JdbcClassificationPromptRepository(jdbc, manager);
+        var prompts = new ClassificationPromptService(repository, new ClassificationPromptValidator(), manager);
+        var draft = prompts.createManualDraft(1001, null, clock.instant());
+        var properties = new AiClassificationProperties(true, null, null, "fake-router", "fake-model", 10,
+                Duration.ofSeconds(1), "owner@s.whatsapp.net", true, true, true, false);
+        ProviderTransport transport = (request, timeout, max) -> {
+            calls.incrementAndGet();
+            throw new AssertionError("disabled local budget must block before HTTP");
+        };
+        var generator = new OpenRouterPromptGenerator(properties, transport, budgets, clock);
+        var service = new PromptGenerationService(prompts, repository, new ClassificationPromptValidator(),
+                generator, properties, state(), manager);
+        var queue = new PromptGenerationQueueRepository(jdbc, manager);
+        UUID jobId = queue.enqueue(draft.id(), draft.version(), 1001, 2002, "REFINE",
+                "synthetic instructions that must not appear in diagnostics", clock.instant());
+        var worker = new PromptGenerationWorker(queue, service, new dev.hugo.watcher.NotificationOutboxRepository(jdbc, manager),
+                new dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository(jdbc), manager, clock);
+
+        worker.process();
+
+        assertEquals("FAILED", jdbc.queryForObject("select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("PREFLIGHT", jdbc.queryForObject("select failure_stage from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("BUDGET_MODE_BLOCKED", jdbc.queryForObject("select failure_code from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("", jdbc.queryForObject("select instructions from prompt_generation_jobs where job_id=?", String.class, jobId));
+        String payload = jdbc.queryForObject("select payload::text from outbox_actions where action_key=?",
+                String.class, "prompt-generation-result:" + jobId);
+        assertTrue(payload.contains("orçamento local"));
+        assertFalse(payload.contains("synthetic instructions"));
+        assertEquals(0, jdbc.queryForObject("select count(*) from ai_budget_reservations", Integer.class));
+        assertEquals(0, calls.get());
+    }
+
+    @Test void promptTransportTimeoutFinishesUnknownWithoutProviderReplay() {
+        assertPromptDiagnosticsMigrated();
+        var repository = new JdbcClassificationPromptRepository(jdbc, manager);
+        var prompts = new ClassificationPromptService(repository, new ClassificationPromptValidator(), manager);
+        var draft = prompts.createManualDraft(1001, null, clock.instant());
+        var properties = new AiClassificationProperties(true, null, null, "fake-router", "fake-model", 10,
+                Duration.ofSeconds(1), "owner@s.whatsapp.net", true, false, true, false);
+        ProviderTransport transport = (request, timeout, max) -> {
+            calls.incrementAndGet();
+            throw new ClassificationProviderException(ClassificationProviderException.Kind.TIMEOUT);
+        };
+        var generator = new OpenRouterPromptGenerator(properties, transport, budgets, clock);
+        var service = new PromptGenerationService(prompts, repository, new ClassificationPromptValidator(),
+                generator, properties, state(), manager);
+        var queue = new PromptGenerationQueueRepository(jdbc, manager);
+        UUID jobId = queue.enqueue(draft.id(), draft.version(), 1001, 2002, "REFINE", "Clarify deadlines.", clock.instant());
+        var worker = new PromptGenerationWorker(queue, service, new dev.hugo.watcher.NotificationOutboxRepository(jdbc, manager),
+                new dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository(jdbc), manager, clock);
+
+        worker.process();
+
+        assertEquals("UNKNOWN", jdbc.queryForObject("select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("PROVIDER", jdbc.queryForObject("select failure_stage from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("PROVIDER_OUTCOME_UNKNOWN", jdbc.queryForObject("select failure_code from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("UNCERTAIN", jdbc.queryForObject("select status from ai_budget_reservations", String.class));
+
+        worker.process();
+
+        assertEquals(1, calls.get());
+    }
+
+    @Test void outboxAdmissionFailureRecoversAsUnknownWithoutProviderReplay() {
+        assertPromptDiagnosticsMigrated();
+        var repository = new JdbcClassificationPromptRepository(jdbc, manager);
+        var prompts = new ClassificationPromptService(repository, new ClassificationPromptValidator(), manager);
+        var draft = prompts.createManualDraft(1001, null, clock.instant());
+        var properties = new AiClassificationProperties(true, null, null, "fake-router", "fake-model", 10,
+                Duration.ofSeconds(1), "owner@s.whatsapp.net", true, false, true, false);
+        ProviderTransport transport = (request, timeout, max) -> {
+            calls.incrementAndGet();
+            String content = "{\"prompt\":\"Use explicit deadlines.\",\"summary\":\"Clarify deadlines.\"}";
+            return openrouter(content);
+        };
+        var generator = new OpenRouterPromptGenerator(properties, transport, budgets, clock);
+        var service = new PromptGenerationService(prompts, repository, new ClassificationPromptValidator(),
+                generator, properties, state(), manager);
+        var queue = new PromptGenerationQueueRepository(jdbc, manager);
+        UUID jobId = queue.enqueue(draft.id(), draft.version(), 1001, 2002, "GENERATE", "Clarify deadlines.", clock.instant());
+        var failingOutbox = new dev.hugo.watcher.NotificationOutboxRepository(jdbc, manager) {
+            @Override public void enqueue(String actionKey, String actionType, String payload, String pendingSnapshot,
+                                          Instant createdAt, Instant sensitiveExpiresAt) {
+                throw new IllegalStateException("synthetic outbox failure");
+            }
+        };
+        var failedWorker = new PromptGenerationWorker(queue, service, failingOutbox,
+                new dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository(jdbc), manager, clock);
+
+        failedWorker.process();
+
+        assertEquals("DISPATCHED", jdbc.queryForObject("select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("OUTBOX", jdbc.queryForObject("select failure_stage from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("RESULT_ENQUEUE_FAILED", jdbc.queryForObject("select failure_code from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("RESULT_ENQUEUE_FAILED", jdbc.queryForObject("select result_delivery_last_error from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("Use explicit deadlines.", repository.draft(draft.id(), 1001, clock.instant()).orElseThrow().body());
+        jdbc.update("update prompt_generation_jobs set started_at=? where job_id=?",
+                java.sql.Timestamp.from(clock.instant().minus(Duration.ofMinutes(3))), jobId);
+
+        var recoveryWorker = new PromptGenerationWorker(queue, service, new dev.hugo.watcher.NotificationOutboxRepository(jdbc, manager),
+                new dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository(jdbc), manager, clock);
+        recoveryWorker.process();
+        recoveryWorker.process();
+
+        assertEquals("UNKNOWN", jdbc.queryForObject("select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("RESULT_ENQUEUE_FAILED", jdbc.queryForObject("select failure_code from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals(1, calls.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_key=?",
+                Integer.class, "prompt-generation-result:" + jobId));
+    }
+
+    @Test void unknownPromptJobStaysTerminalAcrossWorkerRestart() {
+        assertPromptDiagnosticsMigrated();
+        var repository = new JdbcClassificationPromptRepository(jdbc, manager);
+        var prompts = new ClassificationPromptService(repository, new ClassificationPromptValidator(), manager);
+        var draft = prompts.createManualDraft(1001, null, clock.instant());
+        var queue = new PromptGenerationQueueRepository(jdbc, manager);
+        UUID jobId = queue.enqueue(draft.id(), draft.version(), 1001, 2002, "GENERATE", "Never replay.", clock.instant());
+        var claimed = queue.claimPending(clock.instant());
+        assertEquals(jobId, claimed.id());
+        assertTrue(queue.finishUnknown(claimed, clock.instant(), clock.instant().plusSeconds(1)));
+
+        var properties = new AiClassificationProperties(true, null, null, "fake-router", "fake-model", 10,
+                Duration.ofSeconds(1), "owner@s.whatsapp.net", true, false, true, false);
+        var generator = new OpenRouterPromptGenerator(properties, (request, timeout, max) -> {
+            calls.incrementAndGet();
+            return openrouter("{}");
+        }, budgets, clock);
+        var service = new PromptGenerationService(prompts, repository, new ClassificationPromptValidator(),
+                generator, properties, state(), manager);
+        var restartedWorker = new PromptGenerationWorker(queue, service,
+                new dev.hugo.watcher.NotificationOutboxRepository(jdbc, manager),
+                new dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository(jdbc), manager, clock);
+
+        restartedWorker.process();
+
+        assertEquals("UNKNOWN", jdbc.queryForObject("select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("WORKER_INTERRUPTED", jdbc.queryForObject("select failure_code from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals(0, calls.get());
     }
     @Test void technicalOpenRouterFailureWithoutGeminiConsentCannotFallback() {
         jdbc.update("delete from ai_data_consents where provider='gemini'");
@@ -1042,6 +1186,12 @@ class AiSimulationAcceptanceTest {
     }
     private int countActions() { return jdbc.queryForObject("select count(*) from whatsapp_action_outbox",Integer.class); }
     private int countAlerts() { return jdbc.queryForObject("select count(*) from outbox_actions where action_type='intelligent_alert'",Integer.class); }
+    private void assertPromptDiagnosticsMigrated() {
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from information_schema.columns
+                where table_schema=current_schema() and table_name='prompt_generation_jobs' and column_name='failure_stage'
+                """, Integer.class), "V61 prompt generation diagnostics migration is required for this assertion");
+    }
     private dev.hugo.watcher.OperationalState state() { return state(true); }
     private dev.hugo.watcher.OperationalState state(boolean shadowEnabled) {
         var config = new AiClassificationProperties(true,null,null,"key","model",10,Duration.ofSeconds(1),"owner@s.whatsapp.net",true,false,true,false);
