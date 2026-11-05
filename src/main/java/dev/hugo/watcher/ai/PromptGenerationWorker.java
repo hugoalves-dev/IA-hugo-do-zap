@@ -67,11 +67,14 @@ public class PromptGenerationWorker {
         log.info("prompt_generation event=CLAIMED jobId={} operation={} queue_wait_ms={}",
                 job.id(), job.operation(), Math.max(0, queueWait.toMillis()));
         PromptGenerationFailure failure = null;
+        PromptInstructionScope.Feedback scopeFeedback = null;
         try {
-            if ("REFINE".equals(job.operation())) generation.refine(job.draftId(), job.actorUserId(),
+            PromptGenerationService.Proposal proposal;
+            if ("REFINE".equals(job.operation())) proposal = generation.refine(job.draftId(), job.actorUserId(),
                     job.expectedDraftVersion(), job.instructions(), clock.instant(), job.providerContext());
-            else generation.propose(job.draftId(), job.actorUserId(), job.expectedDraftVersion(),
+            else proposal = generation.propose(job.draftId(), job.actorUserId(), job.expectedDraftVersion(),
                     job.instructions(), clock.instant(), job.providerContext());
+            if (proposal != null) scopeFeedback = proposal.feedback();
         } catch (PromptGenerationFailure diagnostic) {
             failure = diagnostic;
         } catch (RuntimeException unexpected) {
@@ -84,16 +87,21 @@ public class PromptGenerationWorker {
         String terminalStatus = failure == null ? "COMPLETE"
                 : failure.reasonCode() == PromptGenerationFailure.ReasonCode.PROVIDER_OUTCOME_UNKNOWN
                 ? "UNKNOWN" : "FAILED";
-        finish(job, terminalStatus, cutoff, failure, false);
+        finish(job, terminalStatus, cutoff, failure, false, scopeFeedback);
     }
 
     private void finish(PromptGenerationJob job, String state, Instant cutoff, PromptGenerationFailure failure,
                         boolean staleRecovery) {
+        finish(job, state, cutoff, failure, staleRecovery, null);
+    }
+
+    private void finish(PromptGenerationJob job, String state, Instant cutoff, PromptGenerationFailure failure,
+                        boolean staleRecovery, PromptInstructionScope.Feedback feedback) {
         PromptGenerationFailure resultFailure = failure != null ? failure : job.diagnostic();
         if ("UNKNOWN".equals(state) && resultFailure == null)
             resultFailure = new PromptGenerationFailure(PromptGenerationFailure.Stage.CLAIM,
                     PromptGenerationFailure.ReasonCode.WORKER_INTERRUPTED);
-        String text = resultText(state, resultFailure);
+        String text = resultText(state, resultFailure, feedback);
         boolean updated;
         try {
             updated = Boolean.TRUE.equals(transactions.execute(status -> {
@@ -146,9 +154,11 @@ public class PromptGenerationWorker {
                 job.id(), job.operation());
     }
 
-    private static String resultText(String state, PromptGenerationFailure failure) {
+    private static String resultText(String state, PromptGenerationFailure failure,
+                                     PromptInstructionScope.Feedback feedback) {
         if ("COMPLETE".equals(state))
-            return "Sua proposta de prompt está pronta como rascunho. Use /prompt_preview para revisar e editar antes de ativar.";
+            return "Proposta de classificação salva como rascunho, não ativada. Use /prompt_preview para revisar."
+                    + (feedback == null ? "" : "\n" + feedback.telegramSummary());
         if ("UNKNOWN".equals(state)) {
             if (failure != null && failure.reasonCode() == PromptGenerationFailure.ReasonCode.PROVIDER_OUTCOME_UNKNOWN)
                 return "Não foi possível confirmar se o provedor processou a chamada. Confira o rascunho com /prompt_preview; a chamada não será repetida automaticamente.";
@@ -169,6 +179,8 @@ public class PromptGenerationWorker {
             case PROVIDER_FAILURE, INVALID_PROVIDER_OUTPUT -> "O provedor não concluiu a solicitação. O rascunho foi preservado e nenhuma nova chamada automática será feita.";
             case PROPOSAL_REJECTED -> "A proposta não passou na validação. O rascunho anterior foi preservado.";
             case INVALID_INSTRUCTIONS -> "Informe instruções explícitas válidas para gerar a proposta. O rascunho foi preservado.";
+            case POLICY_ONLY_REQUEST -> "Pedido de política detectado. Nenhum prompt foi alterado e não houve chamada à IA. Use /regras_notificacao e /regra_notificacao para configurar notificações; respostas automáticas exigem autorizações separadas.";
+            case NO_EFFECTIVE_PROMPT_CHANGE -> "NO_EFFECTIVE_PROMPT_CHANGE: o provedor não fez mudança efetiva na classificação. Nenhuma proposta foi salva; políticas seguem pendentes e nenhuma ação foi habilitada.";
             default -> "Não foi possível gerar a proposta com segurança. O rascunho anterior foi preservado.";
         };
     }

@@ -64,7 +64,10 @@ public final class OpenRouterPromptGenerator {
                             "require_parameters", true),
                     "max_tokens", MAX_OUTPUT_TOKENS,
                     "messages", List.of(
-                            Map.of("role", "system", "content", "Propose operational classification guidance only. Preserve all safety and schema constraints. Return the exact JSON schema; no commentary."),
+                            Map.of("role", "system", "content", "Propose changes only to semantic classification guidance (intent, request detection, urgency, response recommendation). " +
+                                    "Contact markers, working hours, read/unread state, priority, notification routing, automatic reply permissions and templates are OUT OF SCOPE. " +
+                                    "Never claim or implement a policy change by editing a prompt. If no classification improvement is possible, return the original prompt unchanged. " +
+                                    "Preserve all safety and schema constraints. Return the exact JSON schema; no commentary."),
                             Map.of("role", "user", "content", JSON.writeValueAsString(Map.of(
                                     "currentOperationalPrompt", operationalPrompt,
                                     "adminInstructions", explicitInstructions)))),

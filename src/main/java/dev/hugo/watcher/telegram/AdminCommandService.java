@@ -49,6 +49,11 @@ public class AdminCommandService {
     private dev.hugo.watcher.ai.PromptCalibrationQueueRepository promptCalibrationQueue;
     private dev.hugo.watcher.ai.PromptGenerationQueueRepository promptGenerationQueue;
     private dev.hugo.watcher.ai.PromptGenerationMetrics promptGenerationMetrics;
+    private dev.hugo.watcher.ai.PromptScopeFeedbackRepository promptScopeFeedback;
+    @Autowired(required = false)
+    public void configurePromptScopeFeedback(dev.hugo.watcher.ai.PromptScopeFeedbackRepository feedback) {
+        this.promptScopeFeedback = feedback;
+    }
     private ContactPolicyOverviewService contactOverview;
     private dev.hugo.watcher.notification.ContactNotificationRuleRepository contactNotificationRules;
     @Autowired(required = false)
@@ -425,12 +430,23 @@ public class AdminCommandService {
             var draft = pendingPrompt(command, clock.instant());
             String instructions = String.join(" ", command.arguments());
             if (instructions.length() > 4096) throw new IllegalArgumentException("instructions_too_long");
+            var scope = dev.hugo.watcher.ai.PromptInstructionScope.inspect(instructions);
+            if (scope.policyOnly()) {
+                String response = "Solicitação fora do escopo do prompt de classificação. "
+                        + "Nenhum prompt ou política foi alterado; nenhuma chamada paga foi feita.\n"
+                        + scope.feedback(false).telegramSummary();
+                enqueueReply(response, command);
+                return AdminResult.rejected(response);
+            }
             String operation = command.name().equals("prompt_refine") ? "REFINE" : "GENERATE";
             var jobId = promptGenerationQueue.enqueue(draft.id(), draft.version(), command.userId(), command.chatId(),
                     operation, instructions, clock.instant());
             recordPromptGenerationEnqueued(jobId, operation);
             String message = "Solicitação de proposta recebida (" + jobId.toString().substring(0, 8)
-                    + "). O resultado será enviado nesta conversa privada quando estiver pronto.";
+                    + "). O resultado será enviado nesta conversa privada quando estiver pronto."
+                    + (scope.notificationPolicy() || scope.autoReplyPolicy()
+                        ? "\n⚠️ Pedido misto: regras de notificação/resposta não serão configuradas pela IA."
+                        : "");
             enqueueReply(message, command);
             return AdminResult.accepted(message);
         } catch (RuntimeException exception) {
@@ -469,13 +485,21 @@ public class AdminCommandService {
             var draft = pendingPrompt(command, now);
             var preview = promptSettings.preview(draft.id(), command.userId(), now);
             String message = "Prévia do rascunho\n" + preview.diffSummary() + "\nValidação: "
-                    + (preview.validation().valid() ? "válida" : "inválida (" + String.join(", ", preview.validation().violationCodes()) + ")")
-                    + "\n\n" + preview.body();
+                    + (preview.validation().valid() ? "válida" : "inválida (" + String.join(", ", preview.validation().violationCodes()) + ")");
+            if (promptScopeFeedback != null && "ai_assisted".equals(draft.origin())) {
+                var scope = promptScopeFeedback.forDraft(draft.id(), command.userId(), preview.body());
+                if (scope.isPresent()) message += "\n" + scope.get().telegramSummary();
+            }
+            String baseline = promptSettings.forRevision(preview.baseRevision() == null ? 0
+                    : Math.toIntExact(preview.baseRevision())).content();
+            boolean effective = dev.hugo.watcher.ai.PromptInstructionScope.effectiveChange(baseline, preview.body());
+            if (!effective) message += "\nNO_EFFECTIVE_PROMPT_CHANGE: nenhuma alteração efetiva; ativação não disponível.";
+            message += "\n\n" + preview.body();
             List<List<Map<String, String>>> keyboard = List.of();
             var active = promptSettings.activeState();
             boolean sameBase = java.util.Objects.equals(active.revisionId(), preview.baseRevision());
             if (!sameBase) message += "\n\nO prompt ativo mudou; inicie um novo rascunho antes de ativar.";
-            if (preview.validation().valid() && sameBase) {
+            if (preview.validation().valid() && sameBase && effective) {
                 Instant expiry = now.plus(CONFIRMATION_TTL).isBefore(draft.expiresAt()) ? now.plus(CONFIRMATION_TTL) : draft.expiresAt();
                 String token = tokens.issue(command.userId(), command.chatId(), new CallbackAction("nav_prompt_publish",
                         List.of(draft.id().toString(), Long.toString(preview.draftVersion()),

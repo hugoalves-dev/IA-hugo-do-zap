@@ -14,6 +14,8 @@ public final class PromptGenerationFailure extends IllegalStateException {
         DRAFT_CONFLICT,
         REFINEMENT_LIMIT,
         INVALID_INSTRUCTIONS,
+        POLICY_ONLY_REQUEST,
+        NO_EFFECTIVE_PROMPT_CHANGE,
         PROVIDER_FAILURE,
         PROVIDER_OUTCOME_UNKNOWN,
         INVALID_PROVIDER_OUTPUT,

@@ -4,6 +4,7 @@ import dev.hugo.watcher.OperationalState;
 import dev.hugo.watcher.ai.ClassificationPromptRepository.Draft;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
@@ -20,6 +21,13 @@ public final class PromptGenerationService {
     private final AiClassificationProperties properties;
     private final OperationalState operational;
     private final PromptGenerationMetrics metrics;
+    private TransactionTemplate persistenceTransaction;
+    private PromptScopeFeedbackRepository feedbackRepository;
+
+    @Autowired(required = false)
+    public void configureScopeFeedbackRepository(PromptScopeFeedbackRepository feedbackRepository) {
+        this.feedbackRepository = feedbackRepository;
+    }
 
     @Autowired
     public PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
@@ -27,6 +35,7 @@ public final class PromptGenerationService {
                                    AiClassificationProperties properties, OperationalState operational,
                                    PlatformTransactionManager transactionManager, PromptGenerationMetrics metrics) {
         this(prompts, repository, validator, generator, properties, operational, metrics);
+        this.persistenceTransaction = new TransactionTemplate(transactionManager);
     }
 
     public PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
@@ -34,6 +43,7 @@ public final class PromptGenerationService {
                                    AiClassificationProperties properties, OperationalState operational,
                                    PlatformTransactionManager transactionManager) {
         this(prompts, repository, validator, generator, properties, operational, (PromptGenerationMetrics) null);
+        this.persistenceTransaction = new TransactionTemplate(transactionManager);
     }
 
     PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
@@ -93,6 +103,9 @@ public final class PromptGenerationService {
             throw failure(PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.REFINEMENT_LIMIT);
         if (instructions == null || instructions.isBlank() || instructions.length() > 4096)
             throw failure(PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.INVALID_INSTRUCTIONS);
+        var scope = PromptInstructionScope.inspect(instructions);
+        if (scope.policyOnly()) throw failure(
+                PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.POLICY_ONLY_REQUEST);
         PromptGenerationFailure denial = ListGate.failure(operational, properties);
         if (denial != null) throw denial;
 
@@ -117,19 +130,32 @@ public final class PromptGenerationService {
                     Duration.ofNanos(System.nanoTime() - providerStarted));
         }
         String body = normalize(output.prompt());
+        if (!PromptInstructionScope.effectiveChange(draft.body(), body)) throw failure(
+                PromptGenerationFailure.Stage.VALIDATE, PromptGenerationFailure.ReasonCode.NO_EFFECTIVE_PROMPT_CHANGE);
         String summary = output.summary().strip();
         if (summary.length() > 500) summary = summary.substring(0, 500);
         if (!validator.validate(body).valid()) throw failure(
                 PromptGenerationFailure.Stage.VALIDATE, PromptGenerationFailure.ReasonCode.PROPOSAL_REJECTED);
+        var feedback = scope.feedback(true);
         Draft saved;
         try {
-            saved = prompts.saveProposal(draftId, adminId, draft.version(), body, "ai_assisted", summary, now);
+            String finalSummary = summary;
+            if (persistenceTransaction != null && feedbackRepository != null) {
+                saved = persistenceTransaction.execute(status -> {
+                    Draft updated = prompts.saveProposal(draftId, adminId, draft.version(), body,
+                            "ai_assisted", finalSummary, now);
+                    feedbackRepository.save(updated.id(), updated.version(), body, feedback, now);
+                    return updated;
+                });
+            } else {
+                saved = prompts.saveProposal(draftId, adminId, draft.version(), body, "ai_assisted", summary, now);
+            }
         } catch (IllegalStateException conflict) {
             throw failure(PromptGenerationFailure.Stage.PERSIST, PromptGenerationFailure.ReasonCode.DRAFT_CONFLICT);
         } catch (RuntimeException persistenceFailure) {
             throw failure(PromptGenerationFailure.Stage.PERSIST, PromptGenerationFailure.ReasonCode.PERSISTENCE_FAILURE);
         }
-        return new Proposal(saved, summary);
+        return new Proposal(saved, summary, feedback);
     }
 
     private static PromptGenerationFailure failure(PromptGenerationFailure.Stage stage,
@@ -155,5 +181,7 @@ public final class PromptGenerationService {
         }
     }
 
-    public record Proposal(Draft draft, String changeSummary) { }
+    public record Proposal(Draft draft, String changeSummary, PromptInstructionScope.Feedback feedback) {
+        public Proposal(Draft draft, String changeSummary) { this(draft, changeSummary, null); }
+    }
 }
