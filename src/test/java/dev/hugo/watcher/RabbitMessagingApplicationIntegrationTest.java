@@ -165,7 +165,7 @@ class RabbitMessagingApplicationIntegrationTest {
                     java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
             jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null where singleton_id=1");
             outbox.enqueue(key, "telegram_admin_reply",
-                    "{\\"eventType\\":\\"telegram_admin_reply\\",\\"text\\":\\"A geração falhou; revisão necessária.\\"}",
+                    "{\"eventType\":\"telegram_admin_reply\",\"text\":\"A geração falhou; revisão necessária.\"}",
                     "[]", now, now.plusSeconds(600));
             assertEquals("PENDING", jdbc.queryForObject(
                     "select result_delivery_status from prompt_generation_jobs where job_id=?", String.class, jobId));
