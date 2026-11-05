@@ -167,6 +167,9 @@ class BackendWorkflowContractTest(unittest.TestCase):
             self.assertEqual({"watcher", "evolution-api", "rabbitmq"}, set(default["services"]))
             self.assertEqual("evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339", default["services"]["evolution-api"]["image"])
             self.assertEqual("false", default["services"]["evolution-api"]["environment"]["CACHE_REDIS_ENABLED"])
+            # Evolution LOG/WEBHOOKS levels dump message contents and the webhook apikey to stdout.
+            # This is a security boundary: do not re-enable verbose categories by default.
+            self.assertEqual({"ERROR", "WARN"}, set(default["services"]["evolution-api"]["environment"]["LOG_LEVEL"].split(",")))
             self.assertEqual("true", default["services"]["evolution-api"]["environment"]["CACHE_LOCAL_ENABLED"])
             self.assertNotIn("depends_on", default["services"]["evolution-api"])
             self.assertEqual("ghcr.io/hugoalves-dev/ia-hugo-do-zap:latest", default["services"]["watcher"]["image"])
