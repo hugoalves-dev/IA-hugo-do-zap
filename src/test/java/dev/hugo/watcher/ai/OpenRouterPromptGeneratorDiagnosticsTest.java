@@ -45,7 +45,7 @@ class OpenRouterPromptGeneratorDiagnosticsTest {
 
     @Test void maliciousOrUnrecognizedFieldsAreNotCopiedIntoLogs() {
         String response = """
-                {"error":{"code":"private-api-token","type":"unsafe\nInjected log line",
+                {"error":{"code":"private-api-token","type":"unsafe\\nInjected log line",
                   "metadata":{"failed_routing_step":"Filter by user-sensitive-string"}}}
                 """;
 
