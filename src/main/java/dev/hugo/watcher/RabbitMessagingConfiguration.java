@@ -25,6 +25,7 @@ class RabbitMessagingConfiguration {
     static final String INCOMING_QUEUE = "watcher.incoming";
     static final String ADMIN_QUEUE = "watcher.admin";
     static final String NOTIFICATION_QUEUE = "watcher.notifications";
+    static final String PROMPT_RESULT_QUEUE = "watcher.prompt-results";
     static final String DEAD_LETTER_QUEUE = "watcher.dead-letter";
     static final String DEAD_LETTER_EXCHANGE = "watcher.dead-letter";
 
@@ -52,6 +53,7 @@ class RabbitMessagingConfiguration {
     @Bean Queue watcherIncomingQueue() { return durableQueue(INCOMING_QUEUE); }
     @Bean Queue watcherAdminQueue() { return durableQueue(ADMIN_QUEUE); }
     @Bean Queue watcherNotificationQueue() { return durableQueue(NOTIFICATION_QUEUE); }
+    @Bean Queue watcherPromptResultQueue() { return durableQueue(PROMPT_RESULT_QUEUE); }
     @Bean Queue watcherDeadLetterQueue() { return QueueBuilder.durable(DEAD_LETTER_QUEUE).build(); }
 
     @Bean Queue incomingRetryQueueOne(RabbitMessagingProperties properties) {
@@ -71,6 +73,21 @@ class RabbitMessagingConfiguration {
     }
     @Bean Queue adminRetryQueueThree(RabbitMessagingProperties properties) {
         return retryQueue("watcher.admin.retry.3", "admin", 30_000, properties);
+    }
+    @Bean Queue promptResultRetryQueueOne(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.prompt-results.retry.1", "prompt-results", 1_000, properties);
+    }
+    @Bean Queue promptResultRetryQueueTwo(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.prompt-results.retry.2", "prompt-results", 5_000, properties);
+    }
+    @Bean Queue promptResultRetryQueueThree(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.prompt-results.retry.3", "prompt-results", 30_000, properties);
+    }
+    @Bean Queue promptResultRateLimitQueue(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.prompt-results.rate-limited", "prompt-results", properties);
+    }
+    @Bean Queue promptResultLeaseQueue(RabbitMessagingProperties properties) {
+        return retryQueue("watcher.prompt-results.lease", "prompt-results", 120_000, properties);
     }
     @Bean Queue notificationRetryQueueOne(RabbitMessagingProperties properties) {
         return retryQueue("watcher.notifications.retry.1", "notifications", 1_000, properties);
@@ -107,6 +124,32 @@ class RabbitMessagingConfiguration {
     @Bean Binding notificationBinding(@Qualifier("watcherNotificationQueue") Queue queue,
                                       @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
         return BindingBuilder.bind(queue).to(watcherEventExchange).with("notifications");
+    }
+
+    @Bean Binding promptResultBinding(@Qualifier("watcherPromptResultQueue") Queue queue,
+                                      @Qualifier("watcherEventExchange") DirectExchange watcherEventExchange) {
+        return BindingBuilder.bind(queue).to(watcherEventExchange).with("prompt-results");
+    }
+
+    @Bean Binding promptResultRetryBindingOne(@Qualifier("promptResultRetryQueueOne") Queue queue,
+                                              @Qualifier("watcherEventExchange") DirectExchange exchange) {
+        return BindingBuilder.bind(queue).to(exchange).with("prompt-results.retry.1");
+    }
+    @Bean Binding promptResultRetryBindingTwo(@Qualifier("promptResultRetryQueueTwo") Queue queue,
+                                              @Qualifier("watcherEventExchange") DirectExchange exchange) {
+        return BindingBuilder.bind(queue).to(exchange).with("prompt-results.retry.2");
+    }
+    @Bean Binding promptResultRetryBindingThree(@Qualifier("promptResultRetryQueueThree") Queue queue,
+                                                @Qualifier("watcherEventExchange") DirectExchange exchange) {
+        return BindingBuilder.bind(queue).to(exchange).with("prompt-results.retry.3");
+    }
+    @Bean Binding promptResultRateLimitBinding(@Qualifier("promptResultRateLimitQueue") Queue queue,
+                                               @Qualifier("watcherEventExchange") DirectExchange exchange) {
+        return BindingBuilder.bind(queue).to(exchange).with("prompt-results.rate-limited");
+    }
+    @Bean Binding promptResultLeaseBinding(@Qualifier("promptResultLeaseQueue") Queue queue,
+                                           @Qualifier("watcherEventExchange") DirectExchange exchange) {
+        return BindingBuilder.bind(queue).to(exchange).with("prompt-results.lease");
     }
 
     @Bean Binding deadLetterBinding(@Qualifier("watcherDeadLetterQueue") Queue queue,
