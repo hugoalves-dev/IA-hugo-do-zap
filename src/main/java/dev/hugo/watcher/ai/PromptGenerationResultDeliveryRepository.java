@@ -88,7 +88,17 @@ public class PromptGenerationResultDeliveryRepository {
         if (summary.isEmpty()) return;
         String previous = summary.getFirst();
         String status = PRESERVED_EXPIRY_STATES.contains(previous) ? previous : "EXPIRED";
-        update(jobId, actionKey, status, state);
+        // Distinguish a broker confirm from a Telegram transport attempt in durable diagnostics.
+        boolean unconsumed = "EXPIRED".equals(status) && state.attempts() == 0
+                && state.rabbitConfirmedAt() != null;
+        DeliveryState terminal = unconsumed
+                ? new DeliveryState(state.actionType(), state.status(), state.attempts(),
+                        "RabbitConfirmedUnconsumed", state.rabbitConfirmedAt(), state.expiresAt())
+                : state;
+        update(jobId, actionKey, status, terminal);
+        if (unconsumed)
+            log.warn("prompt_generation_delivery event=RESULT_EXPIRED_UNCONSUMED jobId={} status=EXPIRED attempts=0",
+                    jobId);
     }
 
     private void update(UUID jobId, String actionKey, String status, DeliveryState state) {
