@@ -35,7 +35,7 @@ class OpenRouterPromptGeneratorTest {
     }
 
     @Test void generateAndRefineShareTheSafeRequestContractWithoutPaidRetries() {
-        String response = "{\\"choices\\":[{\\"message\\":{\\"content\\":\\"{\\\\\\"prompt\\\\\\":\\\\\\"Safe draft.\\\\\\",\\\\\\"summary\\\\\\":\\\\\\"Reviewed.\\\\\\"}\\"}}]}";
+        String response = "{\"choices\":[{\"message\":{\"content\":\"{\"prompt\":\"Consider deadlines.\",\"summary\":\"Clarified urgency.\"}\"}}]}";
         var fake = new FakeProviderTransport(request -> FakeProviderTransport.response(200, response));
         var generator = new OpenRouterPromptGenerator(properties(), fake, budget(), Clock.systemUTC());
         generator.generate("Existing rules.", "Create draft.", () -> true,
