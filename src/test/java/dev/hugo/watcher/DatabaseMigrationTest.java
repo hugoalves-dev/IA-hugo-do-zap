@@ -53,6 +53,16 @@ class DatabaseMigrationTest {
                 where job_id='50000000-0000-0000-0000-000000000060'
                 """, Integer.class));
         assertDoesNotThrow(() -> jdbc.update("""
+                update upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                set result_delivery_status='SUPPRESSED'
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """));
+        assertDoesNotThrow(() -> jdbc.update("""
+                update upgrade_prompt_generation_diagnostics.prompt_generation_jobs
+                set result_delivery_status='DEAD_LETTER'
+                where job_id='50000000-0000-0000-0000-000000000060'
+                """));
+        assertDoesNotThrow(() -> jdbc.update("""
                 insert into upgrade_prompt_generation_diagnostics.telegram_admin_audit
                     (action,outcome,actor_user_id,actor_chat_id,created_at)
                 values ('prompt_generation','PROPOSED',1001,2002,now())

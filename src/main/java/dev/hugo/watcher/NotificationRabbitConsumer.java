@@ -84,7 +84,8 @@ public class NotificationRabbitConsumer {
     }
 
     private static boolean isAdminAction(String actionKey) {
-        return actionKey.startsWith("telegram_admin_reply:") || actionKey.startsWith("telegram_admin_edit:");
+        return actionKey.startsWith("telegram_admin_reply:") || actionKey.startsWith("telegram_admin_edit:")
+                || actionKey.startsWith("prompt-generation-result:");
     }
 
     private static String deferredRoute(String actionKey, NotificationDeferredException.Reason reason) {
@@ -112,6 +113,8 @@ public class NotificationRabbitConsumer {
                                    String retryRoute) throws java.io.IOException {
         int retries = retryCount(message);
         if (retries >= MAX_RETRIES) {
+            if (body.startsWith("prompt-generation-result:"))
+                notifications.markPromptGenerationResultDeadLetter(body);
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
             return;
         }

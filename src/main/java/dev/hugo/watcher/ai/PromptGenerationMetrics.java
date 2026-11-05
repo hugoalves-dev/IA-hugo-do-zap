@@ -14,7 +14,7 @@ public final class PromptGenerationMetrics {
     private static final Set<String> OPERATIONS = Set.of("GENERATE", "REFINE");
     private static final Set<String> JOB_STATUSES = Set.of("PENDING", "DISPATCHED", "COMPLETE", "FAILED", "UNKNOWN");
     private static final Set<String> DELIVERY_STATUSES = Set.of(
-            "NOT_ENQUEUED", "PENDING", "PROCESSING", "ACKNOWLEDGED", "CANCELLED", "EXPIRED");
+            "NOT_ENQUEUED", "PENDING", "PROCESSING", "ACKNOWLEDGED", "SUPPRESSED", "CANCELLED", "DEAD_LETTER", "EXPIRED");
     private final MeterRegistry registry;
 
     public PromptGenerationMetrics(MeterRegistry registry) {

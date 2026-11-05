@@ -74,6 +74,46 @@ class NotificationServiceTest {
                 java.sql.Timestamp.class));
     }
 
+    @Test void rabbitConfirmFailureLeavesCompletedResultActionReplayable() {
+        UUID jobId = UUID.randomUUID();
+        Instant createdAt = Instant.now();
+        jdbc.update("""
+                insert into prompt_generation_jobs
+                    (job_id,draft_id,expected_draft_version,actor_user_id,chat_id,operation,instructions,status,
+                     created_at,started_at,completed_at)
+                values (?, ?, 2, 1001, 2002, 'REFINE', '', 'COMPLETE', ?, ?, ?)
+                """, jobId, UUID.randomUUID(), Timestamp.from(createdAt), Timestamp.from(createdAt), Timestamp.from(createdAt));
+        String actionKey = "prompt-generation-result:" + jobId;
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(manager);
+        Instant expiry = createdAt.plus(Duration.ofDays(1));
+        org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
+                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                        org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.eq(actionKey),
+                        org.mockito.ArgumentMatchers.anyMap());
+
+        assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status ->
+                rabbitOutbox.enqueue(actionKey, "telegram_admin_reply", "{\"text\":\"safe result\"}", "[]", createdAt, expiry)));
+
+        assertEquals("COMPLETE", jdbc.queryForObject(
+                "select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("PENDING", jdbc.queryForObject(
+                "select result_delivery_status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertNull(jdbc.queryForObject(
+                "select result_delivery_rabbit_confirmed_at from prompt_generation_jobs where job_id=?",
+                Timestamp.class, jobId));
+
+        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.eq(actionKey),
+                org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(1, rabbitOutbox.publishPendingAdminReplies());
+        assertNotNull(jdbc.queryForObject(
+                "select result_delivery_rabbit_confirmed_at from prompt_generation_jobs where job_id=?",
+                Timestamp.class, jobId));
+    }
+
     @Test void legacyNotificationFilterNeedsGlobalFlagAndConversationOptIn() {
         String messageTime = "2026-10-26T10:59:00Z";
         String disabledChat = "legacy-disabled@s.whatsapp.net";
@@ -226,6 +266,8 @@ class NotificationServiceTest {
         jdbc.update("delete from decision_delivery_attempts");
         jdbc.update("delete from decision_delivery_claims");
         jdbc.update("delete from outbox_actions");
+        jdbc.update("delete from prompt_generation_jobs");
+        jdbc.update("delete from prompt_generation_jobs");
         jdbc.update("delete from triage_legacy_filter_opt_ins");
         jdbc.update("delete from pending_notification");
         jdbc.update("delete from processed_message");

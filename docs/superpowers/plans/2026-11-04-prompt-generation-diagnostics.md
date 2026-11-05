@@ -28,6 +28,7 @@
 - An existing or concurrently claimed `prompt-generation-result` action must preserve current idempotency/lease ownership and keep its payload out of logs. Add a test to Task 3's `PromptGenerationResultDeliveryRepositoryTest`.
 - A Rabbit publisher confirm failure after the database commit must leave the outbox action recoverable without reverting the completed job or rerunning generation. Add a test to Task 3's `NotificationServiceTest`.
 - Expiry racing with an acknowledged Telegram action must retain `ACKNOWLEDGED` in the job summary while expiring/removing the outbox payload. Add a test to Task 3's `PromptGenerationResultDeliveryRepositoryTest`.
+- A prompt-result message exhausted from the Rabbit retry budget must leave an explicit `DEAD_LETTER` summary while retaining its sanitized transport error. Add a test to Task 3's `NotificationRabbitConsumerTest`.
 - Malformed or secret-bearing provider errors must yield only a stable safe code in the job, logs, and Telegram reply. Add a test to Task 1's `PromptGenerationServiceTest`.
 
 ---
@@ -109,29 +110,35 @@
 
 **Files:**
 - Create: `src/main/java/dev/hugo/watcher/ai/PromptGenerationResultDeliveryRepository.java`
+- Create: `src/main/resources/db/migration/V62__prompt_generation_delivery_outcomes.sql`
 - Modify: `src/main/java/dev/hugo/watcher/NotificationOutboxRepository.java`
+- Modify: `src/main/java/dev/hugo/watcher/NotificationService.java`
 - Modify: `src/main/java/dev/hugo/watcher/RetentionRepository.java`
 - Modify: `src/main/java/dev/hugo/watcher/NotificationRabbitConsumer.java`
 - Modify: `src/main/java/dev/hugo/watcher/PersistenceBeansConfiguration.java`
+- Modify: `src/test/java/dev/hugo/watcher/DatabaseMigrationTest.java`
 - Create: `src/test/java/dev/hugo/watcher/ai/PromptGenerationResultDeliveryRepositoryTest.java`
 - Modify: `src/test/java/dev/hugo/watcher/NotificationServiceTest.java`
 - Modify: `src/test/java/dev/hugo/watcher/NotificationRabbitConsumerTest.java`
 
 **Interfaces:**
 - `PromptGenerationResultDeliveryRepository` updates one job by parsing only the canonical `prompt-generation-result:<UUID>` key and mirrors enqueue, publish confirmation, claim, acknowledgement, retry, and expiry. Unknown/malformed action keys are ignored; other outbox action types are untouched.
-- Delivery status values mirror outbox states. On expiry, preserve `ACKNOWLEDGED`; mark only an unacknowledged action `EXPIRED`. Store only bounded sanitized `last_error`, attempts, confirmation, and expiry metadata.
+- Delivery status values mirror outbox states, with `SUPPRESSED` and `DEAD_LETTER` recorded when delivery is explicitly suppressed or RabbitMQ exhausts its retry budget. On expiry, preserve `ACKNOWLEDGED`, `SUPPRESSED`, `DEAD_LETTER`, and `CANCELLED`; mark only other expired actions `EXPIRED`. Store only bounded sanitized `last_error`, attempts, confirmation, and expiry metadata.
 - Record a counter `watcher.prompt.generation.delivery` tagged with finite delivery status; do not tag it with action key or job UUID.
 - `NotificationRabbitConsumer.isAdminAction` treats `prompt-generation-result:` as an admin path for existing low-cardinality delivery metrics.
 
 - [ ] **Step 1: Write failing transition tests**
   - `PromptGenerationResultDeliveryRepositoryTest.mirrorsOutboxLifecycleWithoutPayload`
   - `PromptGenerationResultDeliveryRepositoryTest.retentionPreservesAcknowledgedStatusAndExpiresUnacknowledgedAction`
+  - `PromptGenerationResultDeliveryRepositoryTest.resultSummaryAllowsSuppressedAndDeadLetterStates`
   - `NotificationServiceTest.rabbitConfirmFailureLeavesCompletedResultActionReplayable`
   - `NotificationRabbitConsumerTest.promptGenerationResultIsMeasuredAsAdminDelivery`
+  - `NotificationRabbitConsumerTest.promptGenerationResultDeadLetterIsPersistedWithoutPayload`
+  - `DatabaseMigrationTest.upgradesPromptGenerationDiagnosticsFromV60`
   - Assert delivery metadata persists after outbox row deletion, Rabbit confirmation and Telegram acknowledgement are distinct, retries only affect transport, and WhatsApp actions are unchanged.
 - [ ] **Step 2: Run the focused tests and confirm they fail because no durable delivery summary is updated/classified.**
 - [ ] **Step 3: Add the delivery repository and call it transactionally from outbox and retention transitions; classify the job result action as administrative in Rabbit metrics.**
-- [ ] **Step 4: Run `mvn -B -ntp -Dtest=PromptGenerationResultDeliveryRepositoryTest,NotificationServiceTest,NotificationRabbitConsumerTest test` and confirm the new tests pass.**
+- [ ] **Step 4: Run `mvn -B -ntp -Dtest=PromptGenerationResultDeliveryRepositoryTest,NotificationServiceTest,NotificationRabbitConsumerTest,DatabaseMigrationTest test` and confirm the new tests pass.**
 - [ ] **Step 5: Commit the task as `feat(telegram): trace prompt result delivery`.**
 - [ ] **Step 6: Record the task completion and command result in the execution ledger.**
 

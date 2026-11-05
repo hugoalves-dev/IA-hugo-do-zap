@@ -24,6 +24,7 @@ class PromptGenerationMetricsTest {
                 "GENERATE", "FAILED", "PREFLIGHT", "BUDGET_MODE_BLOCKED", Duration.ofMillis(21));
         invoke(metrics, "provider", new Class<?>[]{String.class, String.class, Duration.class},
                 "REFINE", "HTTP_RESPONSE_RECEIVED", Duration.ofMillis(120));
+        invoke(metrics, "delivery", new Class<?>[]{String.class}, "DEAD_LETTER");
 
         assertEquals(1.0, registry.get("watcher.prompt.generation.jobs")
                 .tag("operation", "GENERATE").tag("status", "PENDING").tag("reason_code", "NONE")
@@ -33,6 +34,8 @@ class PromptGenerationMetricsTest {
                 .counter().count());
         assertEquals(1.0, registry.get("watcher.prompt.generation.stage")
                 .tag("stage", "PREFLIGHT").tag("reason_code", "BUDGET_MODE_BLOCKED").counter().count());
+        assertEquals(1.0, registry.get("watcher.prompt.generation.delivery")
+                .tag("delivery_status", "DEAD_LETTER").counter().count());
 
         Set<String> allowed = Set.of("operation", "status", "stage", "reason_code", "outcome", "delivery_status");
         Set<String> observed = registry.getMeters().stream().flatMap(meter -> meter.getId().getTags().stream())

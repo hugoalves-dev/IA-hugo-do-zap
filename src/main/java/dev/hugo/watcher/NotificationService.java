@@ -130,6 +130,11 @@ public class NotificationService {
         return action != null && deliverClaimed(action);
     }
 
+    /** Persists the transport-level DLQ outcome without opening or logging the result payload. */
+    public void markPromptGenerationResultDeadLetter(String actionKey) {
+        outbox.markPromptGenerationResultDeadLetter(actionKey);
+    }
+
     private boolean deliverClaimed(OutboxAction action) {
         try {
             if (isConnectionAlert(action)) {
