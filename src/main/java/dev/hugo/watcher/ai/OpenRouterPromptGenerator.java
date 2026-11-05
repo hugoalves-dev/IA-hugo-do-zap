@@ -60,7 +60,6 @@ public final class OpenRouterPromptGenerator {
         try {
             String body = JSON.writeValueAsString(Map.of(
                     "model", properties.openRouterModel(),
-                    "temperature", 0.2,
                     "provider", Map.of("zdr", true, "data_collection", "deny", "allow_fallbacks", false,
                             "require_parameters", true),
                     "max_tokens", MAX_OUTPUT_TOKENS,
