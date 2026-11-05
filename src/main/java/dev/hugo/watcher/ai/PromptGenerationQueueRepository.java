@@ -84,8 +84,28 @@ public class PromptGenerationQueueRepository {
     }
 
     public boolean finishUnknown(PromptGenerationJob job, Instant now, Instant cutoff) {
-        var diagnostic = job.diagnostic() == null ? new PromptGenerationFailure(
+        return finishUnknown(job, now, cutoff, job.diagnostic());
+    }
+
+    public boolean finishUnknown(PromptGenerationJob job, Instant now, Instant cutoff,
+                                 PromptGenerationFailure failure) {
+        return updateUnknown(job, now, cutoff, failure);
+    }
+
+    /** Finishes the currently claimed job as UNKNOWN after a provider transport exception. */
+    public boolean finishUnknown(PromptGenerationJob job, Instant now, PromptGenerationFailure failure) {
+        return updateUnknown(job, now, null, failure);
+    }
+
+    private boolean updateUnknown(PromptGenerationJob job, Instant now, Instant cutoff,
+                                  PromptGenerationFailure failure) {
+        var diagnostic = failure != null ? failure : job.diagnostic() == null ? new PromptGenerationFailure(
                 PromptGenerationFailure.Stage.CLAIM, PromptGenerationFailure.ReasonCode.WORKER_INTERRUPTED) : job.diagnostic();
+        if (cutoff == null) return jdbc.update("""
+                update prompt_generation_jobs set status='UNKNOWN',instructions='',completed_at=?,
+                    failure_stage=coalesce(failure_stage,?),failure_code=coalesce(failure_code,?)
+                where job_id=? and status='DISPATCHED'
+                """, Timestamp.from(now), diagnostic.stage().name(), diagnostic.reasonCode().name(), job.id()) == 1;
         return jdbc.update("""
                 update prompt_generation_jobs set status='UNKNOWN',instructions='',completed_at=?,
                     failure_stage=coalesce(failure_stage,?),failure_code=coalesce(failure_code,?)

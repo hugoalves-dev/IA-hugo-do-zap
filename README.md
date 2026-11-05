@@ -128,7 +128,7 @@ WHERE job_id = '<job UUID>';
 
 As métricas `watcher.prompt.generation.jobs` e `watcher.prompt.generation.stage` contam estados e motivos; `watcher.prompt.generation.queue.wait`, `watcher.prompt.generation.provider.latency` e `watcher.prompt.generation.end_to_end` medem duração; `watcher.prompt.generation.delivery` conta estados de entrega. Seus rótulos são limitados a operação, estado, etapa, motivo, resultado do provedor ou estado de entrega; `job_id`, chat e reserva nunca são rótulos Prometheus. Elas são exportadas pelo endpoint interno `/actuator/prometheus`.
 
-No log correlacionado ao job, `BUDGET_DISPATCHED` é a transição contábil anterior ao transporte; `TRANSPORT_INVOKED` registra a entrada no cliente HTTP e `HTTP_RESPONSE_RECEIVED` registra que uma resposta HTTP chegou. Uma reserva `UNCERTAIN` ou o evento `BUDGET_DISPATCHED`, isoladamente, não prova que o provedor recebeu a chamada. Nenhum desses estados autoriza reenvio automático.
+No log correlacionado ao job, `BUDGET_DISPATCHED` é a transição contábil anterior ao transporte; `TRANSPORT_INVOKED` registra a entrada no cliente HTTP e `HTTP_RESPONSE_RECEIVED` registra que uma resposta HTTP chegou. Uma reserva `UNCERTAIN` ou o evento `BUDGET_DISPATCHED`, isoladamente, não prova que o provedor recebeu a chamada. Uma exceção de transporte após a invocação termina o job em `UNKNOWN/PROVIDER_OUTCOME_UNKNOWN`; nenhuma nova chamada automática é feita.
 
 ## Modos de simulação e ações reais
 

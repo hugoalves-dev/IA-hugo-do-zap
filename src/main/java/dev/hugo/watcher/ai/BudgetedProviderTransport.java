@@ -60,6 +60,8 @@ public final class BudgetedProviderTransport implements ProviderTransport {
             budgets.markUncertain(reservation.id());
             logPromptEvent("BUDGET_UNCERTAIN", reservation.id(), null, "TRANSPORT_FAILURE");
             logPromptEvent("TRANSPORT_FAILURE", reservation.id(), null);
+            if (promptContext != null) throw new PromptGenerationFailure(PromptGenerationFailure.Stage.PROVIDER,
+                    PromptGenerationFailure.ReasonCode.PROVIDER_OUTCOME_UNKNOWN);
             throw error;
         }
         logPromptEvent("HTTP_RESPONSE_RECEIVED", reservation.id(), response == null ? null : response.statusCode());

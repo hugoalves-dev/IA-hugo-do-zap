@@ -24,7 +24,8 @@
 
 ## Review Focus
 
-- A provider timeout after reservation dispatch must remain `UNKNOWN`/uncertain and must not cause a second provider invocation. Add a test to Task 1's `BudgetedProviderTransportTest`.
+- A provider timeout after reservation dispatch must leave the budget reservation `UNCERTAIN` and must not cause a second provider invocation. Add a test to Task 1's `BudgetedProviderTransportTest`.
+- A prompt-generation transport exception after invocation must persist `UNKNOWN/PROVIDER_OUTCOME_UNKNOWN`, and restarting the worker must not call the provider again. Add a test to `AiSimulationAcceptanceTest.promptTransportTimeoutFinishesUnknownWithoutProviderReplay`.
 - An existing or concurrently claimed `prompt-generation-result` action must preserve current idempotency/lease ownership and keep its payload out of logs. Add a test to Task 3's `PromptGenerationResultDeliveryRepositoryTest`.
 - A Rabbit publisher confirm failure after the database commit must leave the outbox action recoverable without reverting the completed job or rerunning generation. Add a test to Task 3's `NotificationServiceTest`.
 - Expiry racing with an acknowledged Telegram action must retain `ACKNOWLEDGED` in the job summary while expiring/removing the outbox payload. Add a test to Task 3's `PromptGenerationResultDeliveryRepositoryTest`.
@@ -146,10 +147,12 @@
 
 **Files:**
 - Modify: `README.md`
+- Create: `src/main/resources/db/migration/V63__prompt_provider_outcome_unknown.sql`
+- Modify: `src/test/java/dev/hugo/watcher/DatabaseMigrationTest.java`
 - Modify: `src/test/java/dev/hugo/watcher/SpringFlywayStartupTest.java`
 - Verify: `src/main/java/dev/hugo/watcher/ai/`, `src/main/java/dev/hugo/watcher/NotificationOutboxRepository.java`, `src/main/java/dev/hugo/watcher/NotificationRabbitConsumer.java`
 
-- [ ] **Step 1: Document the stable failure/metric names, safe admin guidance for local-budget and draft failures, delivery-summary query fields, and the distinction between reservation dispatch and HTTP response.** Update the startup migration assertion to V62. Do not document production credentials or invite real paid reproduction.
+- [ ] **Step 1: Document the stable failure/metric names, safe admin guidance for local-budget and draft failures, delivery-summary query fields, and the distinction between reservation dispatch and HTTP response.** Document `UNKNOWN/PROVIDER_OUTCOME_UNKNOWN` after transport invocation. Add V63 to extend the stable code check and update the startup migration assertion to V63. Do not document production credentials or invite real paid reproduction.
 - [ ] **Step 2: Run focused provider, worker, notification, and Telegram tests, then run the release gates:**
   - `python3 -B -m unittest discover -s tests/ci -p 'test*.py'`
   - `mvn -B -ntp verify`

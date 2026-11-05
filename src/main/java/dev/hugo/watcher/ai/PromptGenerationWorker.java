@@ -51,7 +51,7 @@ public class PromptGenerationWorker {
     @Scheduled(fixedDelayString = "${watcher.telegram.prompt-generation-delay:PT2S}")
     public void process() {
         var cutoff = clock.instant().minus(Duration.ofMinutes(2));
-        for (var stale : queue.staleDispatched(cutoff)) finish(stale, "UNKNOWN", cutoff, stale.diagnostic());
+        for (var stale : queue.staleDispatched(cutoff)) finish(stale, "UNKNOWN", cutoff, stale.diagnostic(), true);
         PromptGenerationJob job;
         try {
             job = queue.claimPending(clock.instant());
@@ -81,10 +81,14 @@ public class PromptGenerationWorker {
         if (failure != null) log.warn(
                 "prompt_generation event=GENERATION_FAILED jobId={} operation={} stage={} reason_code={}",
                 job.id(), job.operation(), failure.stage().name(), failure.reasonCode().name());
-        finish(job, failure == null ? "COMPLETE" : "FAILED", cutoff, failure);
+        String terminalStatus = failure == null ? "COMPLETE"
+                : failure.reasonCode() == PromptGenerationFailure.ReasonCode.PROVIDER_OUTCOME_UNKNOWN
+                ? "UNKNOWN" : "FAILED";
+        finish(job, terminalStatus, cutoff, failure, false);
     }
 
-    private void finish(PromptGenerationJob job, String state, Instant cutoff, PromptGenerationFailure failure) {
+    private void finish(PromptGenerationJob job, String state, Instant cutoff, PromptGenerationFailure failure,
+                        boolean staleRecovery) {
         PromptGenerationFailure resultFailure = failure != null ? failure : job.diagnostic();
         if ("UNKNOWN".equals(state) && resultFailure == null)
             resultFailure = new PromptGenerationFailure(PromptGenerationFailure.Stage.CLAIM,
@@ -94,7 +98,9 @@ public class PromptGenerationWorker {
         try {
             updated = Boolean.TRUE.equals(transactions.execute(status -> {
                 boolean changed = "UNKNOWN".equals(state)
-                        ? queue.finishUnknown(job, clock.instant(), cutoff)
+                        ? staleRecovery
+                        ? queue.finishUnknown(job, clock.instant(), cutoff, failure)
+                        : queue.finishUnknown(job, clock.instant(), failure)
                         : queue.finish(job.id(), state, clock.instant(), failure);
                 if (!changed) return false;
                 audit.audit("prompt_generation", "COMPLETE".equals(state) ? "PROPOSED" : "REJECTED",
@@ -144,6 +150,8 @@ public class PromptGenerationWorker {
         if ("COMPLETE".equals(state))
             return "Sua proposta de prompt está pronta como rascunho. Use /prompt_preview para revisar e editar antes de ativar.";
         if ("UNKNOWN".equals(state)) {
+            if (failure != null && failure.reasonCode() == PromptGenerationFailure.ReasonCode.PROVIDER_OUTCOME_UNKNOWN)
+                return "Não foi possível confirmar se o provedor processou a chamada. Confira o rascunho com /prompt_preview; a chamada não será repetida automaticamente.";
             if (failure != null && failure.reasonCode() == PromptGenerationFailure.ReasonCode.RESULT_ENQUEUE_FAILED)
                 return "Não foi possível confirmar o envio do resultado. Confira o rascunho com /prompt_preview; a chamada de IA não será repetida automaticamente.";
             return "A solicitação de prompt terminou em estado incerto após interrupção. Confira o rascunho com /prompt_preview; ela não será repetida automaticamente.";

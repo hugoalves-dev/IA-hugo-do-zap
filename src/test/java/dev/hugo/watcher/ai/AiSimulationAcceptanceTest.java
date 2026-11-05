@@ -245,6 +245,37 @@ class AiSimulationAcceptanceTest {
         assertEquals(0, calls.get());
     }
 
+    @Test void promptTransportTimeoutFinishesUnknownWithoutProviderReplay() {
+        assertPromptDiagnosticsMigrated();
+        var repository = new JdbcClassificationPromptRepository(jdbc, manager);
+        var prompts = new ClassificationPromptService(repository, new ClassificationPromptValidator(), manager);
+        var draft = prompts.createManualDraft(1001, null, clock.instant());
+        var properties = new AiClassificationProperties(true, null, null, "fake-router", "fake-model", 10,
+                Duration.ofSeconds(1), "owner@s.whatsapp.net", true, false, true, false);
+        ProviderTransport transport = (request, timeout, max) -> {
+            calls.incrementAndGet();
+            throw new ClassificationProviderException(ClassificationProviderException.Kind.TIMEOUT);
+        };
+        var generator = new OpenRouterPromptGenerator(properties, transport, budgets, clock);
+        var service = new PromptGenerationService(prompts, repository, new ClassificationPromptValidator(),
+                generator, properties, state(), manager);
+        var queue = new PromptGenerationQueueRepository(jdbc, manager);
+        UUID jobId = queue.enqueue(draft.id(), draft.version(), 1001, 2002, "REFINE", "Clarify deadlines.", clock.instant());
+        var worker = new PromptGenerationWorker(queue, service, new dev.hugo.watcher.NotificationOutboxRepository(jdbc, manager),
+                new dev.hugo.watcher.telegram.TelegramAdminPersistenceRepository(jdbc), manager, clock);
+
+        worker.process();
+
+        assertEquals("UNKNOWN", jdbc.queryForObject("select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("PROVIDER", jdbc.queryForObject("select failure_stage from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("PROVIDER_OUTCOME_UNKNOWN", jdbc.queryForObject("select failure_code from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("UNCERTAIN", jdbc.queryForObject("select status from ai_budget_reservations", String.class));
+
+        worker.process();
+
+        assertEquals(1, calls.get());
+    }
+
     @Test void outboxAdmissionFailureRecoversAsUnknownWithoutProviderReplay() {
         assertPromptDiagnosticsMigrated();
         var repository = new JdbcClassificationPromptRepository(jdbc, manager);
