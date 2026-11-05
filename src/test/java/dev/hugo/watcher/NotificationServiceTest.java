@@ -90,7 +90,7 @@ class NotificationServiceTest {
         var tx = new org.springframework.transaction.support.TransactionTemplate(manager);
         Instant expiry = createdAt.plus(Duration.ofDays(1));
         org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
-                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("prompt-results"),
                         org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.eq(actionKey),
                         org.mockito.ArgumentMatchers.anyMap());
 
@@ -105,7 +105,7 @@ class NotificationServiceTest {
                 "select result_delivery_rabbit_confirmed_at from prompt_generation_jobs where job_id=?",
                 Timestamp.class, jobId));
 
-        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("prompt-results"),
                 org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.eq(actionKey),
                 org.mockito.ArgumentMatchers.anyMap());
         assertEquals(1, rabbitOutbox.publishPendingAdminReplies());
