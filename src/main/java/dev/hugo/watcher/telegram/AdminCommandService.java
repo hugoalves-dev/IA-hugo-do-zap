@@ -50,6 +50,11 @@ public class AdminCommandService {
     private dev.hugo.watcher.ai.PromptGenerationQueueRepository promptGenerationQueue;
     private dev.hugo.watcher.ai.PromptGenerationMetrics promptGenerationMetrics;
     private ContactPolicyOverviewService contactOverview;
+    private dev.hugo.watcher.notification.ContactNotificationRuleRepository contactNotificationRules;
+    @Autowired(required = false)
+    public void configureContactNotificationRules(dev.hugo.watcher.notification.ContactNotificationRuleRepository rules) {
+        this.contactNotificationRules = rules;
+    }
     private dev.hugo.watcher.OperationalState operational;
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
 
@@ -164,6 +169,8 @@ public class AdminCommandService {
                     + "\nO ambiente define o teto de Shadow; a pausa salva no PostgreSQL pode bloquear, nunca liberar, o modo.";
             case "settings_ai" -> aiSettings();
             case "settings_notifications" -> notificationSettings();
+            case "regras_notificacao" -> notificationRules();
+            case "regra_notificacao" -> configureNotificationRule(command);
             case "settings_profiles" -> profiles();
             case "contato" -> contactOverview(args);
             case "settings_availability" -> availabilitySettings();
@@ -281,7 +288,62 @@ public class AdminCommandService {
                 + "\nRespostas simuladas configuradas: " + on(operational.simulatedReplies())
                 + "\nAlertas reais efetivos: " + on(operational.alerts())
                 + "\nRespostas reais efetivas: " + on(operational.replies())
-                + "\nBloqueios da decisão: consulte /decisao <id>; consentimento, política e horário continuam independentes.";
+                + "\nBloqueios da decisão: consulte /decisao <id>; consentimento, política e horário continuam independentes."
+                + "\nRegras determinísticas opt-in: /regras_notificacao.";
+    }
+
+    private String notificationRules() {
+        if (contactNotificationRules == null) return "Regras de notificação indisponíveis.";
+        var rows = contactNotificationRules.all();
+        if (rows.isEmpty()) return "Nenhuma regra por contato/marcador configurada. Sem alterações no comportamento legado."
+                + "\nCriar: /regra_notificacao marcador JC WORK_ONLY NORMAL"
+                + "\nPrioridade: /regra_notificacao marcador CH HERDAR PRIORITY"
+                + "\nContato: /regra_notificacao contato <jid> HERDAR PRIORITY"
+                + "\nRemover: /regra_notificacao remover marcador|contato <valor>.";
+        StringBuilder text = new StringBuilder("Regras de notificação (opt-in):");
+        for (var rule : rows) {
+            text.append("\n").append(rule.selectorType()).append(" ").append(rule.selector())
+                    .append(" · perfil ").append(rule.profile() == null ? "HERDAR" : rule.profile())
+                    .append(" · prioridade ").append(rule.priority());
+            if (text.length() > 2800) { text.append("\n… mais regras não exibidas"); break; }
+        }
+        return text.append("\nO envio segue sujeito a arquivamento, leitura, horário, feriados e demais gates.").toString();
+    }
+
+    private String configureNotificationRule(AdminCommand command) {
+        if (contactNotificationRules == null) throw new IllegalStateException("notification_rules_unavailable");
+        List<String> args = command.arguments();
+        if (args.isEmpty() || "listar".equalsIgnoreCase(args.getFirst())) return notificationRules();
+        boolean remove = "remover".equalsIgnoreCase(args.getFirst());
+        int start = remove ? 1 : 0;
+        if (args.size() != (remove ? 3 : 4))
+            throw new IllegalArgumentException("Use /regra_notificacao marcador|contato <valor> WORK_ONLY|ANYTIME|HERDAR NORMAL|PRIORITY; "
+                    + "ou /regra_notificacao remover marcador|contato <valor>.");
+        String type = switch (args.get(start).toLowerCase(java.util.Locale.ROOT)) {
+            case "marcador" -> "MARKER";
+            case "contato" -> "CONTACT";
+            default -> throw new IllegalArgumentException("Use marcador ou contato.");
+        };
+        String selector = "MARKER".equals(type)
+                ? dev.hugo.watcher.notification.ContactNotificationRules.marker(args.get(start + 1))
+                : identities.canonicalJidFor(args.get(start + 1));
+        if (selector == null || selector.endsWith("@g.us") || selector.endsWith("@broadcast"))
+            throw new IllegalArgumentException("Regra por contato exige um identificador privado canônico.");
+        if (remove) {
+            return contactNotificationRules.remove(type, selector, command.userId(), clock.instant())
+                    ? "Regra removida. Histórico de auditoria preservado." : "Regra já não existia.";
+        }
+        String requested = args.get(2).toUpperCase(java.util.Locale.ROOT);
+        String profile = switch (requested) {
+            case "HERDAR" -> null;
+            case "WORK_ONLY", "ANYTIME" -> requested;
+            default -> throw new IllegalArgumentException("Perfil deve ser WORK_ONLY, ANYTIME ou HERDAR.");
+        };
+        String priority = args.get(3).toUpperCase(java.util.Locale.ROOT);
+        return contactNotificationRules.save(type, selector, profile, priority,
+                command.userId(), clock.instant())
+                ? "Regra salva. PRIORITY antecipa a conversa na fila de notificações elegíveis; não altera urgência nem autoriza resposta."
+                : "Regra idêntica à já configurada; nenhuma alteração aplicada.";
     }
 
     private String availabilitySettings() {
@@ -957,6 +1019,7 @@ public class AdminCommandService {
 
     private static boolean isMutation(String name, List<String> args) {
         return List.of("ocupado", "disponivel", "ferias", "simulacao", "emergencia", "recuperar", "perfil", "template", "feriado", "triagem", "apelido", "contexto", "contexto_default", "prompt_activate", "prompt_restore", "prompt_publish", "prompt_restore_apply", "prompt_reset_apply", "prompt_test").contains(name)
+                || (name.equals("regra_notificacao") && !args.isEmpty() && !"listar".equalsIgnoreCase(args.getFirst()))
                 || (name.equals("orcamento") && !args.isEmpty());
     }
 
@@ -1006,7 +1069,7 @@ public class AdminCommandService {
 
     private static String on(boolean value) { return value ? "ligado" : "desligado"; }
     private static String help() {
-        return "/menu, /status, /contexto <horas> <versão>, /contexto_default <versão>, /prompt, /prompt_current, /prompt_list, /prompt_new, /prompt_clear, /prompt_preview, /prompt_cancel, /prompt_history, /prompt_restore <revisão>, /prompt_reset, /prompt_compare <v1> <v2>, /prompt_activate <revisão> <versão-ativa>, /prompt_page <revisão> <posição>, /prompt_test <revisão>, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /contato <jid>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /apelido <jid> <nome...>|remover, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
+        return "/menu, /status, /contexto <horas> <versão>, /contexto_default <versão>, /prompt, /prompt_current, /prompt_list, /prompt_new, /prompt_clear, /prompt_preview, /prompt_cancel, /prompt_history, /prompt_restore <revisão>, /prompt_reset, /prompt_compare <v1> <v2>, /prompt_activate <revisão> <versão-ativa>, /prompt_page <revisão> <posição>, /prompt_test <revisão>, /ocupado [minutos], /disponivel [minutos], /ferias <início> <fim>, /simulacao on|off, /relatorio, /ultimas [1-10], /decisao <id>, /contato <jid>, /triagem <id> on|off (filtro legado; exige confirmação), /emergencia, /recuperar, /perfis, /perfil <chat> <perfil>, /regras_notificacao, /regra_notificacao marcador|contato <valor> WORK_ONLY|ANYTIME|HERDAR NORMAL|PRIORITY, /regra_notificacao remover marcador|contato <valor>, /apelido <jid> <nome...>|remover, /templates, /template <id> on|off, /feriados, /feriado <data> <jurisdição> <fonte-https> <nome>, /orcamento [diário mensal], /confirm <token>.";
     }
 
 }

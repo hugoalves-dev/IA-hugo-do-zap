@@ -87,7 +87,8 @@ public class TelegramMessageFormatter {
             if (!chat.path("isGroup").asBoolean(false) && phone != null)
                 name = "<a href=\"https://wa.me/" + phone + "\">" + name + "</a>";
             int count = chat.path("messageCount").asInt(0);
-            StringBuilder line = new StringBuilder("\n\n<b>• ").append(name).append(" — ").append(count)
+            String marker = "PRIORITY".equals(chat.path("notificationPriority").asString("")) ? "🔔 " : "";
+            StringBuilder line = new StringBuilder("\n\n<b>• ").append(marker).append(name).append(" — ").append(count)
                     .append(count == 1 ? " mensagem</b>" : " mensagens</b>");
             try {
                 Instant last = Instant.parse(chat.path("lastMessageAt").asString(""));

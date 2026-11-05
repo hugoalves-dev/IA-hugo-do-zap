@@ -80,7 +80,7 @@ public final class ContactNotificationRules {
         if (name == null || name.isBlank()) return Set.of();
         String normalized = Normalizer.normalize(name, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "").toUpperCase(Locale.ROOT);
-        return Set.of(normalized.split("[^A-Z0-9]+")).stream()
+        return java.util.Arrays.stream(normalized.split("[^A-Z0-9]+"))
                 .filter(value -> !value.isBlank()).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 

@@ -25,6 +25,9 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import dev.hugo.watcher.notification.IntelligentAlertService;
+import dev.hugo.watcher.notification.ContactNotificationRules;
+import java.util.HashMap;
+import java.util.Comparator;
 
 /** Persists notification payloads before Telegram delivery and acknowledges snapshots conditionally. */
 public class NotificationService {
@@ -45,6 +48,9 @@ public class NotificationService {
     private final IntelligentAlertService intelligentAlerts;
     private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
     private final boolean triageLegacyFilterEnabled;
+    private ContactNotificationRules contactRules;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void configureContactRules(ContactNotificationRules rules) { this.contactRules = rules; }
     private final AtomicBoolean flushing = new AtomicBoolean();
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -299,8 +305,9 @@ public class NotificationService {
                 if (row.group() && !properties.isIncludeGroups()) continue;
                 String displayName = resolveDisplayName(row);
                 if (row.group() && isBlockedGroup(displayName)) continue;
-                String policy = isWorkOnly(displayName) ? "WORK_ONLY" : "ANYTIME";
-                if ("WORK_ONLY".equals(policy) && !inWindow) continue;
+                var route = route(row, now, inWindow);
+                String policy = route.profile();
+                if (!route.allowed()) continue;
 
                 Map<String, Object> chat = new LinkedHashMap<>(chats.get(i));
                 chat.put("displayName", displayNameForTelegram(row));
@@ -308,6 +315,8 @@ public class NotificationService {
                 if (!row.group() && validatedPhone(row.phoneJid()) != null) chat.put("phoneJid", row.phoneJid());
                 chat.put("isGroup", row.group());
                 chat.put("policy", policy);
+                chat.remove("notificationPriority");
+                if (route.priority()) chat.put("notificationPriority", "PRIORITY");
                 allowedChats.add(chat);
                 allowedSnapshots.add(snapshot);
                 totalMessages += integer(chat.get("messageCount"));
@@ -359,7 +368,11 @@ public class NotificationService {
         ZoneId zone = ZoneId.of(properties.getTimezone());
         boolean inWorkWindow = inWorkWindow(now, zone);
         ArchiveMode mode = archiveModes.getMode();
-        List<PendingRow> pending = readPending(now, mode);
+        List<PendingRow> pending = new ArrayList<>(readPending(now, mode).stream().filter(row -> row != null).toList());
+        Map<String, ContactNotificationRules.Route> routing = new HashMap<>();
+        for (PendingRow row : pending) routing.put(row.chatJid(), route(row, now, inWorkWindow));
+        // Stable sort: urgent delivery order without changing the semantic urgency from the classifier.
+        pending.sort(Comparator.comparing((PendingRow row) -> routing.get(row.chatJid()).priority()).reversed());
         List<LegacyChat> chats = new ArrayList<>();
         List<Map<String, Object>> snapshots = new ArrayList<>();
         int deferredQueued = 0;
@@ -378,15 +391,17 @@ public class NotificationService {
                 queries.discardBlockedGroup(row.chatJid());
                 continue;
             }
-            String policy = isWorkOnly(displayName) ? "WORK_ONLY" : "ANYTIME";
-            if ("WORK_ONLY".equals(policy) && !inWorkWindow) {
-                if (outbox.rabbitDispatchEnabled() && deferredQueued < properties.getMaxBatchSize()
-                        && enqueueDeferredChat(row, displayName, mode, zone, now)) deferredQueued++;
+            var route = routing.get(row.chatJid());
+            String policy = route.profile();
+            if (!route.allowed()) {
+                if ("WORK_ONLY".equals(policy) && !inWorkWindow && outbox.rabbitDispatchEnabled()
+                        && deferredQueued < properties.getMaxBatchSize()
+                        && enqueueDeferredChat(row, displayName, mode, zone, now, route.priority())) deferredQueued++;
                 continue;
             }
             if (chats.size() >= properties.getMaxBatchSize()) break;
 
-            chats.add(toLegacyChat(row, displayName, policy, zone, now));
+            chats.add(toLegacyChat(row, displayName, policy, zone, now, route.priority()));
             sensitiveExpiry = min(sensitiveExpiry, row.expiresAt());
             if (row.previewExpiry() != null && row.previewExpiry().isAfter(now)
                     && row.preview() != null && !row.preview().isBlank()) {
@@ -427,13 +442,14 @@ public class NotificationService {
                 && queries.hasUniqueTriageIgnore(row.chatJid(), row.lastMessageAt(), now);
     }
 
-    private boolean enqueueDeferredChat(PendingRow row, String displayName, ArchiveMode mode, ZoneId zone, Instant now) {
+    private boolean enqueueDeferredChat(PendingRow row, String displayName, ArchiveMode mode, ZoneId zone, Instant now,
+                                        boolean priority) {
         String actionKey = ARCHIVED_MESSAGES + ":deferred:" + sha256(mode.name() + "\n" + row.chatJid()
                 + "\n" + row.generation());
         if (outbox.hasActiveActionKey(actionKey)) return false;
 
         String policy = "WORK_ONLY";
-        LegacyChat chat = toLegacyChat(row, displayName, policy, zone, now);
+        LegacyChat chat = toLegacyChat(row, displayName, policy, zone, now, priority);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("eventType", ARCHIVED_MESSAGES);
         payload.put("archiveMode", mode.name());
@@ -488,7 +504,8 @@ public class NotificationService {
         return rows.stream().filter(row -> mode.accepts(row.archived(), row.synchronizedSnapshot())).toList();
     }
 
-    private LegacyChat toLegacyChat(PendingRow row, String displayName, String policy, ZoneId zone, Instant now) {
+    private LegacyChat toLegacyChat(PendingRow row, String displayName, String policy, ZoneId zone, Instant now,
+                                    boolean priority) {
         Map<String, Object> chat = new LinkedHashMap<>();
         chat.put("jid", row.canonicalJid());
         chat.put("displayName", displayNameForTelegram(row));
@@ -509,7 +526,17 @@ public class NotificationService {
             chat.put("lastMessageSender", row.previewSenderName() == null ? "Participante" : row.previewSenderName());
         chat.put("isGroup", row.group());
         chat.put("policy", policy);
+        if (priority) chat.put("notificationPriority", "PRIORITY");
         return new LegacyChat(row.messageCount(), chat);
+    }
+
+    private ContactNotificationRules.Route route(PendingRow row, Instant now, boolean inLegacyWindow) {
+        boolean legacyWorkOnly = isWorkOnly(resolveDisplayName(row));
+        if (contactRules == null)
+            return new ContactNotificationRules.Route(legacyWorkOnly ? "WORK_ONLY" : "ANYTIME",
+                    !legacyWorkOnly || inLegacyWindow, false);
+        return contactRules.route(row.canonicalJid(), resolveDisplayName(row), row.group(), legacyWorkOnly,
+                inLegacyWindow, now);
     }
 
     private boolean inWorkWindow(Instant now, ZoneId zone) {
