@@ -46,7 +46,10 @@ public class NotificationRabbitConsumer {
                     || deferred.reason() == NotificationDeferredException.Reason.SCHEDULED) {
                 Instant availableAt = deferred.availableAt() == null
                         ? Instant.now().plusMillis(deferred.delayMillis()) : deferred.availableAt();
-                publisher.publishDeferred(route(actionKey), availableAt, id, actionKey, deferredHeaders(message));
+                if ("prompt-results".equals(route(actionKey)))
+                    publisher.publishDeferred("prompt-results", availableAt, id, actionKey, deferredHeaders(message));
+                else
+                    publisher.publishDeferred(availableAt, id, actionKey, deferredHeaders(message));
             } else {
                 String deferredRoute = deferredRoute(actionKey, deferred.reason());
                 long delay = deferred.reason() == NotificationDeferredException.Reason.ACTIVE_LEASE
