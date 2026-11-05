@@ -35,7 +35,7 @@ class OpenRouterPromptGeneratorTest {
     }
 
     @Test void generateAndRefineShareTheSafeRequestContractWithoutPaidRetries() {
-        String response = "{\"choices\":[{\"message\":{\"content\":\"{\"prompt\":\"Consider deadlines.\",\"summary\":\"Clarified urgency.\"}\"}}]}";
+        String response = "{\"choices\":[{\"message\":{\"content\":\"{\\\"prompt\\\":\\\"Consider deadlines.\\\",\\\"summary\\\":\\\"Clarified urgency.\\\"}\"}}]}";
         var fake = new FakeProviderTransport(request -> FakeProviderTransport.response(200, response));
         var generator = new OpenRouterPromptGenerator(properties(), fake, budget(), Clock.systemUTC());
         generator.generate("Existing rules.", "Create draft.", () -> true,
@@ -46,12 +46,12 @@ class OpenRouterPromptGeneratorTest {
         assertEquals(2, fake.requests().size());
         for (var request : fake.requests()) {
             String payload = FakeProviderTransport.requestBody(request);
-            assertFalse(payload.contains("\\"temperature\\""));
-            assertTrue(payload.contains("\\"require_parameters\\":true"));
-            assertTrue(payload.contains("\\"zdr\\":true"));
-            assertTrue(payload.contains("\\"data_collection\\":\\"deny\\""));
-            assertTrue(payload.contains("\\"allow_fallbacks\\":false"));
-            assertTrue(payload.contains("\\"response_format\\":"));
+            assertFalse(payload.contains("\"temperature\""));
+            assertTrue(payload.contains("\"require_parameters\":true"));
+            assertTrue(payload.contains("\"zdr\":true"));
+            assertTrue(payload.contains("\"data_collection\":\"deny\""));
+            assertTrue(payload.contains("\"allow_fallbacks\":false"));
+            assertTrue(payload.contains("\"response_format\":"));
         }
     }
 
