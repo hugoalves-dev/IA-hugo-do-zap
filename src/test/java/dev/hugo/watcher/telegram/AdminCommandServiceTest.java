@@ -57,6 +57,8 @@ class AdminCommandServiceTest {
         calibrationQueue = new dev.hugo.watcher.ai.PromptCalibrationQueueRepository(jdbc, new DataSourceTransactionManager(source));
         commands.configurePromptCalibration(calibrationQueue);
         commands.configurePromptGenerationQueue(new dev.hugo.watcher.ai.PromptGenerationQueueRepository(jdbc, new DataSourceTransactionManager(source)));
+        commands.configureContactNotificationRules(new dev.hugo.watcher.notification.ContactNotificationRuleRepository(jdbc));
+        commands.configurePromptScopeFeedback(new dev.hugo.watcher.ai.PromptScopeFeedbackRepository(jdbc));
     }
 
 
@@ -81,6 +83,40 @@ class AdminCommandServiceTest {
             assertTrue(delivered.startsWith("[🤖 HUGO ZAP BOT]: "), command.name());
             assertFalse(delivered.startsWith("[🤖 HUGO ZAP BOT]: [🤖 HUGO ZAP BOT]: "), command.name());
         }
+    }
+
+    @Test void notificationRuleRequiresConfirmationAndIsAuditedAndIdempotent() {
+        var configure = List.of("marcador", "(JC)", "WORK_ONLY", "NORMAL");
+        assertTrue(commands.execute(command("regra_notificacao", configure, false)).confirmationRequired());
+        assertEquals(0, jdbc.queryForObject("select count(*) from contact_notification_rules", Integer.class));
+        assertTrue(commands.execute(command("regra_notificacao", configure, true)).accepted());
+        assertEquals("WORK_ONLY", jdbc.queryForObject(
+                "select profile_name from contact_notification_rules where selector='JC'", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from contact_notification_rule_audit", Integer.class));
+        assertTrue(commands.execute(command("regra_notificacao", configure, true)).accepted());
+        assertEquals(1, jdbc.queryForObject("select count(*) from contact_notification_rule_audit", Integer.class),
+                "re-applying the same rule should not produce a second audit mutation");
+        assertTrue(commands.execute(command("regra_notificacao",
+                List.of("remover", "marcador", "JC"), true)).accepted());
+        assertEquals(0, jdbc.queryForObject("select count(*) from contact_notification_rules", Integer.class));
+        assertEquals(2, jdbc.queryForObject("select count(*) from contact_notification_rule_audit", Integer.class));
+    }
+
+    @Test void policyOnlyPromptInstructionsAreRejectedWithoutEnqueueOrPaidCall() {
+        assertTrue(commands.execute(command("prompt_new", List.of(), false)).accepted());
+        var result = commands.execute(command("prompt_refine",
+                List.of("Contacts", "with", "(JC)", "should", "be", "notified", "during", "work", "hours",
+                        "and", "CH", "receives", "priority"), false));
+        assertFalse(result.accepted());
+        assertTrue(result.message().contains("Nenhum prompt ou política foi alterado"));
+        assertEquals(0, jdbc.queryForObject("select count(*) from prompt_generation_jobs", Integer.class));
+    }
+
+    @Test void unchangedPromptPreviewNeverOffersActivation() {
+        assertTrue(commands.execute(command("prompt_new", List.of(), false)).accepted());
+        var preview = commands.execute(command("prompt_preview", List.of(), false));
+        assertTrue(preview.message().contains("NO_EFFECTIVE_PROMPT_CHANGE"));
+        assertFalse(preview.message().contains("Para solicitar ativação"));
     }
 
     @Test void manualContactAliasRequiresConfirmationAndCanBeRemoved() {
