@@ -7,6 +7,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.util.UUID;
 
 /** Creates validated editable prompt proposals; never activates a revision. */
@@ -18,29 +19,40 @@ public final class PromptGenerationService {
     private final OpenRouterPromptGenerator generator;
     private final AiClassificationProperties properties;
     private final OperationalState operational;
+    private final PromptGenerationMetrics metrics;
 
     @Autowired
     public PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
                                    ClassificationPromptValidator validator, OpenRouterPromptGenerator generator,
                                    AiClassificationProperties properties, OperationalState operational,
+                                   PlatformTransactionManager transactionManager, PromptGenerationMetrics metrics) {
+        this(prompts, repository, validator, generator, properties, operational, metrics);
+    }
+
+    public PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
+                                   ClassificationPromptValidator validator, OpenRouterPromptGenerator generator,
+                                   AiClassificationProperties properties, OperationalState operational,
                                    PlatformTransactionManager transactionManager) {
+        this(prompts, repository, validator, generator, properties, operational, (PromptGenerationMetrics) null);
+    }
+
+    PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
+                            ClassificationPromptValidator validator, OpenRouterPromptGenerator generator,
+                            AiClassificationProperties properties, OperationalState operational,
+                            PromptGenerationMetrics metrics) {
         this.prompts = prompts;
         this.repository = repository;
         this.validator = validator;
         this.generator = generator;
         this.properties = properties;
         this.operational = operational;
+        this.metrics = metrics;
     }
 
     PromptGenerationService(ClassificationPromptService prompts, ClassificationPromptRepository repository,
                             ClassificationPromptValidator validator, OpenRouterPromptGenerator generator,
                             AiClassificationProperties properties, OperationalState operational) {
-        this.prompts = prompts;
-        this.repository = repository;
-        this.validator = validator;
-        this.generator = generator;
-        this.properties = properties;
-        this.operational = operational;
+        this(prompts, repository, validator, generator, properties, operational, (PromptGenerationMetrics) null);
     }
 
     public Proposal propose(UUID draftId, long adminId, String explicitInstructions, Instant now) {
@@ -85,15 +97,24 @@ public final class PromptGenerationService {
         if (denial != null) throw denial;
 
         OpenRouterPromptGenerator.Proposal output;
+        String operation = context == null ? (refinement ? "REFINE" : "GENERATE") : context.operation();
+        long providerStarted = System.nanoTime();
+        String providerOutcome = "SUCCESS";
         try {
             output = generator.generate(draft.body(), instructions,
                     () -> ListGate.failure(operational, properties) == null, context);
         } catch (PromptGenerationFailure failure) {
+            providerOutcome = failure.reasonCode().name();
             throw failure;
         } catch (BudgetExceededException failure) {
+            providerOutcome = PromptGenerationFailure.ReasonCode.BUDGET_EXHAUSTED.name();
             throw failure(PromptGenerationFailure.Stage.PROVIDER, PromptGenerationFailure.ReasonCode.BUDGET_EXHAUSTED);
         } catch (RuntimeException failure) {
+            providerOutcome = PromptGenerationFailure.ReasonCode.PROVIDER_FAILURE.name();
             throw failure(PromptGenerationFailure.Stage.PROVIDER, PromptGenerationFailure.ReasonCode.PROVIDER_FAILURE);
+        } finally {
+            if (metrics != null) metrics.provider(operation, providerOutcome,
+                    Duration.ofNanos(System.nanoTime() - providerStarted));
         }
         String body = normalize(output.prompt());
         String summary = output.summary().strip();

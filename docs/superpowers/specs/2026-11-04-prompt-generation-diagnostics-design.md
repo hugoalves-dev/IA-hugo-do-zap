@@ -20,6 +20,7 @@ Make `/prompt_generate` and `/prompt_refine` failures diagnosable per job and ma
 - Tell the administrator when local policy, draft state, provider, validation, or persistence prevents a proposal, using a safe actionable explanation where possible.
 - Preserve the transactional job-result outbox, transport retry policy, budget reservation semantics, and the rule against repeating a paid request after `DISPATCHED` or an uncertain outcome.
 - Keep proposals as drafts; never activate them or enable WhatsApp sends.
+- Record a successful prompt-generation audit outcome as `PROPOSED`, distinct from `APPLIED`, because generating an editable draft does not activate it.
 
 ## Non-goals
 
@@ -30,6 +31,7 @@ Make `/prompt_generate` and `/prompt_refine` failures diagnosable per job and ma
 ## Constraints
 
 - Use an additive Flyway migration for any new job diagnostic columns.
+- Extend the audit outcome constraint only through a forward migration so successful draft generation can be recorded as `PROPOSED` without claiming activation.
 - Keep provider calls outside database transactions and never release a reservation after its dispatch boundary.
 - Keep the job status update and result outbox enqueue atomic. If outbox admission fails, leave the job recoverable without rerunning generation.
 - Mirror result-action transitions into a small, payload-free job summary in the same database transactions as the outbox transition; classify retention expiry without erasing an already acknowledged delivery result.

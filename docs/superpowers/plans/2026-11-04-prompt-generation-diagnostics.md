@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - Terminal `FAILED` or `UNKNOWN` jobs carry a sanitized `failure_stage` and `failure_code`; successful jobs carry neither. A `DISPATCHED` job may temporarily carry only `OUTBOX/RESULT_ENQUEUE_FAILED` so stale recovery can preserve that cause.
+- A successful prompt generation is audited as `PROPOSED`, never `APPLIED`; V61 widens the audit outcome constraint while preserving existing outcomes.
 - Stages are finite: `CLAIM`, `PREFLIGHT`, `PROVIDER`, `VALIDATE`, `PERSIST`, `OUTBOX`, `DELIVERY`.
 - Provider `DISPATCHED` is a budget ledger transition before the HTTP delegate; log transport invocation and received HTTP response as distinct facts.
 - Never repeat a paid call after provider dispatch or an uncertain result. Keep proposals editable until the existing explicit activation flow.
@@ -73,6 +74,7 @@
 - Modify: `src/main/java/dev/hugo/watcher/ai/PromptGenerationJob.java`
 - Modify: `src/main/java/dev/hugo/watcher/ai/PromptGenerationQueueRepository.java`
 - Modify: `src/main/java/dev/hugo/watcher/ai/PromptGenerationWorker.java`
+- Modify: `src/main/java/dev/hugo/watcher/ai/PromptGenerationService.java`
 - Modify: `src/main/java/dev/hugo/watcher/telegram/AdminCommandService.java`
 - Modify: `src/test/java/dev/hugo/watcher/DatabaseMigrationTest.java`
 - Modify: `src/test/java/dev/hugo/watcher/ai/AiSimulationAcceptanceTest.java`
@@ -81,18 +83,19 @@
 - Modify: `src/test/java/dev/hugo/watcher/ai/PromptGenerationServiceTest.java`
 
 **Interfaces:**
-- `V61` adds nullable finite `failure_stage`/`failure_code`, and payload-free delivery summary fields `result_delivery_status`, `result_delivery_attempts`, `result_delivery_last_error`, `result_delivery_rabbit_confirmed_at`, `result_delivery_expires_at`; default delivery status is `NOT_ENQUEUED` and attempts are zero.
+- `V61` adds nullable finite `failure_stage`/`failure_code`, payload-free delivery summary fields `result_delivery_status`, `result_delivery_attempts`, `result_delivery_last_error`, `result_delivery_rabbit_confirmed_at`, `result_delivery_expires_at`, and allows `PROPOSED` as an audit outcome; default delivery status is `NOT_ENQUEUED` and attempts are zero.
 - The migration constrains stage, failure code, and delivery status to the finite values used by code. The job mapper returns no instructions in diagnostic projections.
 - Extend `PromptGenerationJob` with the existing fields needed for timing/correlation, without exposing instructions to logs.
 - `PromptGenerationQueueRepository.finish(...)` accepts terminal state plus optional sanitized failure stage/code; `finishUnknown(...)` writes `UNKNOWN/WORKER_INTERRUPTED` unless a more specific safe result-enqueue failure is already persisted.
 - If result outbox admission fails, `PromptGenerationWorker` logs `OUTBOX/RESULT_ENQUEUE_FAILED` and asks `PromptGenerationQueueRepository.recordResultEnqueueFailure(...)` to persist that safe code independently while the job remains `DISPATCHED`; stale recovery carries it into `UNKNOWN`.
 - `PromptGenerationMetrics` exposes fixed-name counters and timers with allowlisted tags only; no job, chat, draft, or reservation identifier is a tag.
+- `AdminCommandService.generatePrompt` records the committed enqueue event and counter after transaction commit; `PromptGenerationWorker` records claim/terminal events; `PromptGenerationService` times the actual generator call. `PromptGenerationJob` carries the stored failure fields for stale-job recovery and constructs its bounded provider context.
 
 - [ ] **Step 1: Add failing migration/acceptance tests**
   - `AiSimulationAcceptanceTest.failedPromptGenerationPersistsSafeReasonAndQueuesAdminReply`
   - `AiSimulationAcceptanceTest.outboxAdmissionFailureRecoversAsUnknownWithoutProviderReplay`
   - `AiSimulationAcceptanceTest.unknownPromptJobStaysTerminalAcrossWorkerRestart`
-  - `AdminCommandServiceTest.promptGenerationEnqueueRecordsOnlyBoundedOperationMetric`
+  - `AdminCommandServiceTest.promptGenerationEnqueueLogsCorrelationWithoutInstructions`
   - `DatabaseMigrationTest.upgradesPromptGenerationDiagnosticsFromV60`
   - `PromptGenerationMetricsTest.jobMetricsUseOnlyBoundedTags`
   - Assert terminal code/stage persistence, transaction rollback on outbox insert failure, later safe `UNKNOWN` notice, zero second provider calls, and no instructions in diagnostic columns/metrics.
