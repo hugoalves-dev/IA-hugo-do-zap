@@ -4,6 +4,8 @@
 
 Assistente pessoal para **conversas arquivadas do WhatsApp**: monitora mensagens novas elegíveis, encaminha notificações ao Telegram, respeita disponibilidade e horário de trabalho, e permite avaliar solicitações com IA em **Shadow Mode**, antes de qualquer ação real.
 
+**Stack do backend:** Spring Boot 4 / Java 25. O watcher antigo em TypeScript/Node.js + Baileys foi removido; a integração atual usa Evolution API e Spring.
+
 **Fluxo:** WhatsApp → Evolution API → webhook autenticado Spring → RabbitMQ → PostgreSQL + processamento Spring → Telegram Bot API. O OpenRouter é o classificador principal; Gemini é fallback técnico opcional. O antigo watcher Node/Baileys foi aposentado, e o n8n não faz parte do runtime de entrega atual.
 
 > [!WARNING]
@@ -44,7 +46,7 @@ Assistente pessoal para **conversas arquivadas do WhatsApp**: monitora mensagens
 
 4. Conecte o WhatsApp pelo **Evolution Manager**: a porta do Compose fica ligada a `127.0.0.1:8080`. Na VPS, use `ssh -N -L 8080:127.0.0.1:8080 usuario@servidor` e abra `http://localhost:8080/manager`. Crie a instância indicada por `WATCHER_EVOLUTION_INSTANCE`, use o QR Code do Manager, confirme estado `open` e configure **webhook da instância** apontando para `http://watcher:8080/internal/evolution/webhook` com `Authorization: Bearer <WATCHER_EVOLUTION_WEBHOOK_TOKEN>`. Não use webhook global, não exponha Manager/QR publicamente e não copie sessões.
 
-5. Para comandos administrativos, configure `WATCHER_TELEGRAM_ADMIN_USER_ID` e `WATCHER_TELEGRAM_CHAT_ID` de uma conversa privada. Ative **um único** método: `WATCHER_TELEGRAM_ADMIN_POLLING_ENABLED=true` **ou** `WATCHER_TELEGRAM_ADMIN_WEBHOOK_ENABLED=true`. No primeiro, nenhum outro consumidor `getUpdates` pode ficar ativo; no segundo, siga o [runbook do webhook Telegram](docs/telegram-webhook-migration.md). Recrie apenas o watcher ao mudar `.env`:
+   Para um novo pareamento, a API Evolution oferece `POST /instance/create` (criação da instância) e `GET /instance/connect/watcher-evolution` (solicitação do QR Code para a instância padrão). Use a instância e a chave configuradas e não recrie uma instância que já esteja conectada. No celular, acesse **WhatsApp → Aparelhos conectados** para ler o QR Code. **Nunca publique, envie em chat ou registre captura do QR Code**: ele concede acesso à sessão e não deve aparecer nos logs ou no Git.\n\n5. Para comandos administrativos, configure `WATCHER_TELEGRAM_ADMIN_USER_ID` e `WATCHER_TELEGRAM_CHAT_ID` de uma conversa privada. Ative **um único** método: `WATCHER_TELEGRAM_ADMIN_POLLING_ENABLED=true` **ou** `WATCHER_TELEGRAM_ADMIN_WEBHOOK_ENABLED=true`. No primeiro, nenhum outro consumidor `getUpdates` pode ficar ativo; no segundo, siga o [runbook do webhook Telegram](docs/telegram-webhook-migration.md). Recrie apenas o watcher ao mudar `.env`:
 
    ~~~bash
    docker compose --env-file .env up -d --no-deps --force-recreate watcher
