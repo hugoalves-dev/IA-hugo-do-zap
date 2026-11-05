@@ -36,14 +36,24 @@ public final class OpenRouterPromptGenerator {
     }
 
     public Proposal generate(String operationalPrompt, String explicitInstructions, BooleanSupplierGate gate) {
-        if (!gate.allowed() || !properties.configured() || properties.disableLocalBudget()
-                || properties.attemptHoldMicros() <= 0)
-            throw new IllegalStateException("prompt_generation_unavailable");
+        return generate(operationalPrompt, explicitInstructions, gate, null);
+    }
+
+    public Proposal generate(String operationalPrompt, String explicitInstructions, BooleanSupplierGate gate,
+                             PromptGenerationContext context) {
+        if (gate == null || !gate.allowed()) throw failure(PromptGenerationFailure.Stage.PREFLIGHT,
+                PromptGenerationFailure.ReasonCode.SHADOW_PAUSED);
+        if (properties == null || !properties.configured()) throw failure(PromptGenerationFailure.Stage.PREFLIGHT,
+                PromptGenerationFailure.ReasonCode.CONFIG_INVALID);
+        if (properties.disableLocalBudget()) throw failure(PromptGenerationFailure.Stage.PREFLIGHT,
+                PromptGenerationFailure.ReasonCode.BUDGET_MODE_BLOCKED);
+        if (properties.attemptHoldMicros() <= 0) throw failure(PromptGenerationFailure.Stage.PREFLIGHT,
+                PromptGenerationFailure.ReasonCode.CONFIG_INVALID);
         if (operationalPrompt == null || operationalPrompt.isBlank() || explicitInstructions == null
                 || explicitInstructions.isBlank() || explicitInstructions.length() > 4096)
-            throw new IllegalArgumentException("invalid_prompt_instructions");
+            throw failure(PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.INVALID_INSTRUCTIONS);
         ProviderTransport budgeted = new BudgetedProviderTransport(transport, budgets,
-                gate::allowed, "openrouter", properties.attemptHoldMicros(), clock);
+                gate::allowed, "openrouter", properties.attemptHoldMicros(), clock, context);
         try {
             String body = JSON.writeValueAsString(Map.of(
                     "model", properties.openRouterModel(),
@@ -67,7 +77,7 @@ public final class OpenRouterPromptGenerator {
                     .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build();
             ProviderTransport.Response response = budgeted.send(request, properties.timeout(), 64 * 1024);
             if (response == null || response.statusCode() < 200 || response.statusCode() >= 300)
-                throw new IllegalStateException("prompt_generation_provider_failure");
+                throw failure(PromptGenerationFailure.Stage.PROVIDER, PromptGenerationFailure.ReasonCode.PROVIDER_FAILURE);
             Map<?, ?> root = JSON.readValue(response.body(), Map.class);
             List<?> choices = (List<?>) root.get("choices");
             Map<?, ?> message = (Map<?, ?>) choices.getFirst();
@@ -75,11 +85,24 @@ public final class OpenRouterPromptGenerator {
             Map<?, ?> proposal = JSON.readValue(String.valueOf(content.get("content")), Map.class);
             if (proposal.size() != 2 || !(proposal.get("prompt") instanceof String prompt)
                     || !(proposal.get("summary") instanceof String summary))
-                throw new IllegalStateException("invalid_prompt_generation_response");
+                throw failure(PromptGenerationFailure.Stage.PROVIDER,
+                        PromptGenerationFailure.ReasonCode.INVALID_PROVIDER_OUTPUT);
             return new Proposal(prompt, summary);
-        } catch (JacksonException | ClassCastException | IndexOutOfBoundsException ex) {
-            throw new IllegalStateException("invalid_prompt_generation_response");
+        } catch (PromptGenerationFailure failure) {
+            throw failure;
+        } catch (BudgetExceededException failure) {
+            throw failure(PromptGenerationFailure.Stage.PROVIDER, PromptGenerationFailure.ReasonCode.BUDGET_EXHAUSTED);
+        } catch (JacksonException | ClassCastException | IndexOutOfBoundsException | NullPointerException exception) {
+            throw failure(PromptGenerationFailure.Stage.PROVIDER,
+                    PromptGenerationFailure.ReasonCode.INVALID_PROVIDER_OUTPUT);
+        } catch (RuntimeException exception) {
+            throw failure(PromptGenerationFailure.Stage.PROVIDER, PromptGenerationFailure.ReasonCode.PROVIDER_FAILURE);
         }
+    }
+
+    private static PromptGenerationFailure failure(PromptGenerationFailure.Stage stage,
+                                                   PromptGenerationFailure.ReasonCode reason) {
+        return new PromptGenerationFailure(stage, reason);
     }
 
     public record Proposal(String prompt, String summary) { }

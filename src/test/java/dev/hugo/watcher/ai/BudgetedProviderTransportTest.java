@@ -10,10 +10,14 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -57,6 +61,43 @@ class BudgetedProviderTransportTest {
         assertThrows(RuntimeException.class, () -> transport.send(request(), Duration.ofSeconds(1), 1024));
         assertEquals(1, calls.get());
         assertEquals("UNCERTAIN", jdbc.queryForObject("select status from ai_budget_reservations", String.class));
+    }
+    @Test void promptContextSeparatesTransportInvocationFromUncertainReservation() {
+        limits(10);
+        UUID jobId = UUID.fromString("50000000-0000-0000-0000-000000000050");
+        AtomicInteger calls = new AtomicInteger();
+        var contextType = assertDoesNotThrow(() -> Class.forName("dev.hugo.watcher.ai.PromptGenerationContext"));
+        var context = assertDoesNotThrow(() -> contextType.getConstructor(UUID.class, String.class)
+                .newInstance(jobId, "REFINE"));
+        var constructor = assertDoesNotThrow(() -> BudgetedProviderTransport.class.getConstructor(
+                ProviderTransport.class, BudgetService.class, java.util.function.BooleanSupplier.class,
+                String.class, long.class, Clock.class, contextType));
+        var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(BudgetedProviderTransport.class);
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            var transport = (ProviderTransport) constructor.newInstance((ProviderTransport) (request, timeout, max) -> {
+                calls.incrementAndGet();
+                return new ProviderTransport.Response(503, "provider response secret");
+            }, budgets, (java.util.function.BooleanSupplier) () -> true, "openrouter", 10,
+                    Clock.systemUTC(), context);
+            transport.send(request(), Duration.ofSeconds(1), 1024);
+        } catch (ReflectiveOperationException exception) {
+            fail("prompt-generation provider context must be supported", exception);
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        var messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+        assertEquals(1, calls.get());
+        assertEquals("UNCERTAIN", jdbc.queryForObject("select status from ai_budget_reservations", String.class));
+        assertTrue(messages.stream().anyMatch(message -> message.contains("TRANSPORT_INVOKED")
+                && message.contains(jobId.toString())), messages.toString());
+        assertTrue(messages.stream().anyMatch(message -> message.contains("HTTP_RESPONSE_RECEIVED")
+                && message.contains("503")), messages.toString());
+        assertTrue(messages.stream().noneMatch(message -> message.contains("provider response secret")));
     }
     @Test void confirmedOpenRouterCostSettlesButGeminiUsageIsNotBilling() {
         limits(30);

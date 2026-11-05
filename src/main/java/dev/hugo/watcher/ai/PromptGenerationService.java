@@ -44,48 +44,93 @@ public final class PromptGenerationService {
     }
 
     public Proposal propose(UUID draftId, long adminId, String explicitInstructions, Instant now) {
-        return run(draftId, adminId, explicitInstructions, now, false);
+        return run(draftId, adminId, -1, explicitInstructions, now, false, null);
     }
 
     public Proposal propose(UUID draftId, long adminId, long expectedVersion, String explicitInstructions, Instant now) {
-        return run(draftId, adminId, expectedVersion, explicitInstructions, now, false);
+        return run(draftId, adminId, expectedVersion, explicitInstructions, now, false, null);
+    }
+
+    public Proposal propose(UUID draftId, long adminId, long expectedVersion, String explicitInstructions,
+                            Instant now, PromptGenerationContext context) {
+        return run(draftId, adminId, expectedVersion, explicitInstructions, now, false, context);
     }
 
     public Proposal refine(UUID draftId, long adminId, String explicitInstructions, Instant now) {
-        return run(draftId, adminId, explicitInstructions, now, true);
+        return run(draftId, adminId, -1, explicitInstructions, now, true, null);
     }
 
     public Proposal refine(UUID draftId, long adminId, long expectedVersion, String explicitInstructions, Instant now) {
-        return run(draftId, adminId, expectedVersion, explicitInstructions, now, true);
+        return run(draftId, adminId, expectedVersion, explicitInstructions, now, true, null);
     }
 
-    private Proposal run(UUID draftId, long adminId, String instructions, Instant now, boolean refinement) {
-        return run(draftId, adminId, -1, instructions, now, refinement);
+    public Proposal refine(UUID draftId, long adminId, long expectedVersion, String explicitInstructions,
+                           Instant now, PromptGenerationContext context) {
+        return run(draftId, adminId, expectedVersion, explicitInstructions, now, true, context);
     }
 
-    private Proposal run(UUID draftId, long adminId, long expectedVersion, String instructions, Instant now, boolean refinement) {
-        Draft draft = repository.draft(draftId, adminId, now).orElseThrow(() -> new IllegalStateException("prompt_draft_unavailable"));
-        if (expectedVersion >= 0 && draft.version() != expectedVersion) throw new IllegalStateException("prompt_draft_conflict");
+    private Proposal run(UUID draftId, long adminId, long expectedVersion, String instructions, Instant now,
+                         boolean refinement, PromptGenerationContext context) {
+        Draft draft = repository.draftForGeneration(draftId, adminId).orElseThrow(() -> failure(
+                PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.DRAFT_UNAVAILABLE));
+        if (!draft.expiresAt().isAfter(now)) throw failure(
+                PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.DRAFT_EXPIRED);
+        if (expectedVersion >= 0 && draft.version() != expectedVersion) throw failure(
+                PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.DRAFT_CONFLICT);
         if (draft.origin().equals("ai_assisted") && draft.refinementCount() >= ClassificationPromptService.MAX_REFINEMENTS)
-            throw new IllegalStateException("prompt_refinement_limit");
-        if (!ListGate.allowed(operational, properties)) throw new IllegalStateException("prompt_generation_unavailable");
-        OpenRouterPromptGenerator.Proposal output = generator.generate(draft.body(), instructions,
-                () -> ListGate.allowed(operational, properties));
+            throw failure(PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.REFINEMENT_LIMIT);
+        if (instructions == null || instructions.isBlank() || instructions.length() > 4096)
+            throw failure(PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.INVALID_INSTRUCTIONS);
+        PromptGenerationFailure denial = ListGate.failure(operational, properties);
+        if (denial != null) throw denial;
+
+        OpenRouterPromptGenerator.Proposal output;
+        try {
+            output = generator.generate(draft.body(), instructions,
+                    () -> ListGate.failure(operational, properties) == null, context);
+        } catch (PromptGenerationFailure failure) {
+            throw failure;
+        } catch (BudgetExceededException failure) {
+            throw failure(PromptGenerationFailure.Stage.PROVIDER, PromptGenerationFailure.ReasonCode.BUDGET_EXHAUSTED);
+        } catch (RuntimeException failure) {
+            throw failure(PromptGenerationFailure.Stage.PROVIDER, PromptGenerationFailure.ReasonCode.PROVIDER_FAILURE);
+        }
         String body = normalize(output.prompt());
         String summary = output.summary().strip();
         if (summary.length() > 500) summary = summary.substring(0, 500);
-        if (!validator.validate(body).valid()) throw new IllegalArgumentException("prompt_proposal_rejected");
-        Draft saved = prompts.saveProposal(draftId, adminId, draft.version(), body, "ai_assisted", summary, now);
+        if (!validator.validate(body).valid()) throw failure(
+                PromptGenerationFailure.Stage.VALIDATE, PromptGenerationFailure.ReasonCode.PROPOSAL_REJECTED);
+        Draft saved;
+        try {
+            saved = prompts.saveProposal(draftId, adminId, draft.version(), body, "ai_assisted", summary, now);
+        } catch (IllegalStateException conflict) {
+            throw failure(PromptGenerationFailure.Stage.PERSIST, PromptGenerationFailure.ReasonCode.DRAFT_CONFLICT);
+        } catch (RuntimeException persistenceFailure) {
+            throw failure(PromptGenerationFailure.Stage.PERSIST, PromptGenerationFailure.ReasonCode.PERSISTENCE_FAILURE);
+        }
         return new Proposal(saved, summary);
+    }
+
+    private static PromptGenerationFailure failure(PromptGenerationFailure.Stage stage,
+                                                   PromptGenerationFailure.ReasonCode reason) {
+        return new PromptGenerationFailure(stage, reason);
     }
 
     private static String normalize(String body) { return body == null ? null : body.replace("\r\n", "\n").replace('\r', '\n'); }
 
     private static final class ListGate {
-        static boolean allowed(OperationalState operational, AiClassificationProperties properties) {
-            return operational != null && operational.simulation() && operational.classification()
-                    && properties != null && properties.configured() && !properties.disableLocalBudget()
-                    && properties.attemptHoldMicros() > 0;
+        static PromptGenerationFailure failure(OperationalState operational, AiClassificationProperties properties) {
+            if (operational == null || !operational.simulation() || !operational.classification())
+                return PromptGenerationService.failure(PromptGenerationFailure.Stage.PREFLIGHT,
+                        PromptGenerationFailure.ReasonCode.SHADOW_PAUSED);
+            if (properties == null) return PromptGenerationService.failure(PromptGenerationFailure.Stage.PREFLIGHT,
+                    PromptGenerationFailure.ReasonCode.CONFIG_INVALID);
+            if (properties.disableLocalBudget()) return PromptGenerationService.failure(
+                    PromptGenerationFailure.Stage.PREFLIGHT, PromptGenerationFailure.ReasonCode.BUDGET_MODE_BLOCKED);
+            if (!properties.configured() || properties.attemptHoldMicros() <= 0)
+                return PromptGenerationService.failure(PromptGenerationFailure.Stage.PREFLIGHT,
+                        PromptGenerationFailure.ReasonCode.CONFIG_INVALID);
+            return null;
         }
     }
 

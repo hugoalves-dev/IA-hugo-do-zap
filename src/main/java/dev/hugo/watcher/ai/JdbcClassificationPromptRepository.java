@@ -147,6 +147,18 @@ public class JdbcClassificationPromptRepository implements ClassificationPromptR
                 id, ownerId, Timestamp.from(now)).stream().findFirst();
     }
 
+    /** Returns an owner's draft regardless of expiry so prompt generation can report DRAFT_EXPIRED safely. */
+    @Override public Optional<Draft> draftForGeneration(UUID id, long ownerId) {
+        return jdbc.query("""
+                select id,owner_id,base_revision::bigint as base_revision,body,origin,description,status,
+                       refinement_count,version,expires_at
+                from classification_prompt_drafts where id=? and owner_id=?
+                """, (rs, row) -> new Draft(rs.getObject("id", UUID.class), rs.getLong("owner_id"),
+                rs.getObject("base_revision", Long.class), rs.getString("body"), rs.getString("origin"),
+                rs.getString("description"), rs.getString("status"), rs.getInt("refinement_count"),
+                rs.getLong("version"), rs.getTimestamp("expires_at").toInstant()), id, ownerId).stream().findFirst();
+    }
+
     public boolean appendDraftPart(UUID id, long ownerId, long expectedVersion, String part, Instant now) {
         return jdbc.update("""
                 update classification_prompt_drafts

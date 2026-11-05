@@ -27,6 +27,8 @@ public interface ClassificationPromptRepository {
     record Transition(Long previousRevision, Long nextRevision, String event, long authorId, Instant changedAt) {}
     default void createDraft(Draft draft) { throw new UnsupportedOperationException(); }
     default Optional<Draft> draft(UUID id, long ownerId, Instant now) { throw new UnsupportedOperationException(); }
+    /** Owner-scoped generation lookup; callers check expiry themselves to classify it safely. */
+    default Optional<Draft> draftForGeneration(UUID id, long ownerId) { throw new UnsupportedOperationException(); }
     default boolean appendDraftPart(UUID id, long ownerId, long version, String part, Instant now) { throw new UnsupportedOperationException(); }
     default boolean clearDraft(UUID id, long ownerId, long version, Instant now) { throw new UnsupportedOperationException(); }
     default boolean saveProposal(UUID id, long ownerId, long version, String body, String origin, String description, Instant now) { throw new UnsupportedOperationException(); }
