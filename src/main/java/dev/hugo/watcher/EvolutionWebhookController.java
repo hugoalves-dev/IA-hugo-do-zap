@@ -24,6 +24,18 @@ public class EvolutionWebhookController {
     private final EvolutionWebhookProperties properties;
     private final ConnectionService connections;
     private final RabbitEventPublisher publisher;
+    private EvolutionPipelineMetrics pipeline;
+
+    @Autowired(required = false)
+    public void configurePipelineMetrics(EvolutionPipelineMetrics pipeline) {
+        this.pipeline = pipeline;
+    }
+
+    private void observe(EvolutionPipelineMetrics.Stage stage,
+                         EvolutionPipelineMetrics.Outcome outcome, String eventType, String id) {
+        if (pipeline != null && "messages.upsert".equals(eventType))
+            pipeline.record(stage, outcome, id);
+    }
 
     @Autowired
     public EvolutionWebhookController(InboxRepository inbox, EvolutionWebhookProperties properties,
@@ -85,14 +97,22 @@ public class EvolutionWebhookController {
             }
         }
         if (eventType == null || eventType.isBlank() || externalId == null || externalId.isBlank()) {
+            observe(EvolutionPipelineMetrics.Stage.WEBHOOK, EvolutionPipelineMetrics.Outcome.REJECTED,
+                    eventType, externalId);
             return ResponseEntity.badRequest().build();
         }
+        observe(EvolutionPipelineMetrics.Stage.WEBHOOK, EvolutionPipelineMetrics.Outcome.RECEIVED,
+                eventType, externalId);
 
         if (publisher != null) {
             try {
                 publisher.publish("incoming", externalId, body);
+                observe(EvolutionPipelineMetrics.Stage.RABBIT, EvolutionPipelineMetrics.Outcome.PUBLISHED,
+                        eventType, externalId);
                 return ResponseEntity.accepted().build();
             } catch (RuntimeException ex) {
+                observe(EvolutionPipelineMetrics.Stage.RABBIT, EvolutionPipelineMetrics.Outcome.FAILED,
+                        eventType, externalId);
                 return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
             }
         }
@@ -107,8 +127,14 @@ public class EvolutionWebhookController {
 
         try {
             Acceptance acceptance = inbox.accept(new EvolutionEvent("evolution", instance, eventType, externalId, payload));
+            observe(EvolutionPipelineMetrics.Stage.INBOX,
+                    acceptance == Acceptance.NEW ? EvolutionPipelineMetrics.Outcome.ACCEPTED
+                            : EvolutionPipelineMetrics.Outcome.DUPLICATE,
+                    eventType, externalId);
             return ResponseEntity.status(acceptance == Acceptance.NEW ? HttpStatus.ACCEPTED : HttpStatus.OK).build();
         } catch (DataAccessException ex) {
+            observe(EvolutionPipelineMetrics.Stage.INBOX, EvolutionPipelineMetrics.Outcome.FAILED,
+                    eventType, externalId);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
     }
