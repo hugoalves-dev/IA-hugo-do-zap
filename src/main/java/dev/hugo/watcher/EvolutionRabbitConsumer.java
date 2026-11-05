@@ -26,6 +26,18 @@ public class EvolutionRabbitConsumer {
     private final ConnectionService connections;
     private final NotificationService notifications;
     private final RabbitDeliveryMetrics metrics;
+    private EvolutionPipelineMetrics pipeline;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void configurePipelineMetrics(EvolutionPipelineMetrics pipeline) {
+        this.pipeline = pipeline;
+    }
+
+    private void observe(EvolutionPipelineMetrics.Stage stage, EvolutionPipelineMetrics.Outcome outcome,
+                         String eventType, String id) {
+        if (pipeline != null && "messages.upsert".equals(eventType))
+            pipeline.record(stage, outcome, id);
+    }
 
     public EvolutionRabbitConsumer(InboxRepository inbox, EvolutionJobProcessor jobs,
                                    RabbitEventPublisher publisher, EvolutionWebhookProperties properties,
@@ -76,14 +88,22 @@ public class EvolutionRabbitConsumer {
                 return;
             }
 
-            inbox.accept(new EvolutionEvent("evolution", instance, eventType, id, payload));
+            Acceptance acceptance = inbox.accept(new EvolutionEvent("evolution", instance, eventType, id, payload));
+            observe(EvolutionPipelineMetrics.Stage.INBOX,
+                    acceptance == Acceptance.NEW ? EvolutionPipelineMetrics.Outcome.ACCEPTED
+                            : EvolutionPipelineMetrics.Outcome.DUPLICATE, eventType, id);
             jobs.processAvailable();
             if (jobs.isPending(eventType, id))
                 throw new IllegalStateException("inbound Evolution job was not completed");
             notifications.flushAfterInbound(java.time.Instant.now());
             metrics.record("whatsapp", ingressAt);
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+            observe(EvolutionPipelineMetrics.Stage.RABBIT, EvolutionPipelineMetrics.Outcome.CONSUMED,
+                    eventType, id);
         } catch (RuntimeException failure) {
+            if (pipeline != null)
+                pipeline.record(EvolutionPipelineMetrics.Stage.RABBIT,
+                        EvolutionPipelineMetrics.Outcome.FAILED, id);
             retryOrDeadLetter(message, channel, id == null || id.isBlank() ? UUID.randomUUID().toString() : id, body);
         }
     }
@@ -126,12 +146,18 @@ public class EvolutionRabbitConsumer {
         int retries = retryCount(message);
         if (retries >= MAX_RETRIES) {
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
+            if (pipeline != null)
+                pipeline.record(EvolutionPipelineMetrics.Stage.RABBIT,
+                        EvolutionPipelineMetrics.Outcome.DEAD_LETTER, id);
             return;
         }
         int nextRetry = retries + 1;
         publisher.publishDelayed("incoming.retry." + nextRetry, id, body,
                 Map.of("x-retry-count", nextRetry), RETRY_DELAY_MILLIS[nextRetry - 1]);
         channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        if (pipeline != null)
+            pipeline.record(EvolutionPipelineMetrics.Stage.RABBIT,
+                    EvolutionPipelineMetrics.Outcome.RETRY, id);
     }
 
     private static int retryCount(Message message) {
