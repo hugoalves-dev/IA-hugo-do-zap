@@ -146,9 +146,10 @@
 
 **Files:**
 - Modify: `README.md`
+- Modify: `src/test/java/dev/hugo/watcher/SpringFlywayStartupTest.java`
 - Verify: `src/main/java/dev/hugo/watcher/ai/`, `src/main/java/dev/hugo/watcher/NotificationOutboxRepository.java`, `src/main/java/dev/hugo/watcher/NotificationRabbitConsumer.java`
 
-- [ ] **Step 1: Document the stable failure/metric names, safe admin guidance for local-budget and draft failures, delivery-summary query fields, and the distinction between reservation dispatch and HTTP response.** Do not document production credentials or invite real paid reproduction.
+- [ ] **Step 1: Document the stable failure/metric names, safe admin guidance for local-budget and draft failures, delivery-summary query fields, and the distinction between reservation dispatch and HTTP response.** Update the startup migration assertion to V62. Do not document production credentials or invite real paid reproduction.
 - [ ] **Step 2: Run focused provider, worker, notification, and Telegram tests, then run the release gates:**
   - `python3 -B -m unittest discover -s tests/ci -p 'test*.py'`
   - `mvn -B -ntp verify`

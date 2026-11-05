@@ -108,6 +108,28 @@ O gerenciamento de prompts exige o User ID autorizado, o Chat ID configurado e u
 
 Para rascunhos com IA, use o menu **Criar com IA · ativo** ou **Criar com IA · Java default**, depois `/prompt_generate <instruções explícitas>`; `/prompt_refine <instruções explícitas>` permite até três refinamentos. O pedido é enfileirado e o resultado chega nesta conversa privada após uma única tentativa do worker. A geração usa somente OpenRouter, com saída limitada a 2.048 tokens, e requer configuração válida de classificação Shadow e orçamento local habilitado. Gemini não é fallback para autoria. O pedido contém apenas o prompt operacional selecionado e as instruções explícitas do administrador; não inclua mensagens de conversas, credenciais ou logs. A saída é validada e permanece como rascunho editável até preview e confirmação explícita.
 
+#### Diagnóstico de geração e entrega
+
+Cada solicitação recebe um `job_id`. `FAILED` e `UNKNOWN` mantêm `failure_stage` e `failure_code` sanitizados. Exemplos de falha acionável no Telegram: `BUDGET_MODE_BLOCKED` indica que o orçamento local está desativado; `DRAFT_EXPIRED` pede um novo rascunho; `DRAFT_CONFLICT` pede revisar o rascunho atual. Consulte a seção **Provedores de IA e limites operacionais** para configurar orçamento. O bot não altera flags nem repete automaticamente uma tentativa paga em estado incerto.
+
+Para inspecionar somente metadados, sem consultar instruções ou payloads:
+
+```sql
+SELECT job_id, operation, status, failure_stage, failure_code,
+       'prompt-generation-result:' || job_id::text AS result_action_key,
+       result_delivery_status, result_delivery_attempts,
+       result_delivery_last_error, result_delivery_rabbit_confirmed_at,
+       result_delivery_expires_at
+FROM prompt_generation_jobs
+WHERE job_id = '<job UUID>';
+```
+
+`result_delivery_status` pode ser `NOT_ENQUEUED`, `PENDING`, `PROCESSING`, `ACKNOWLEDGED`, `SUPPRESSED`, `CANCELLED`, `DEAD_LETTER` ou `EXPIRED`. `result_delivery_last_error` é um código de erro sanitizado. `rabbit_confirmed_at` confirma a publicação no RabbitMQ, não a entrega ao Telegram; `ACKNOWLEDGED` registra a confirmação do transporte Telegram, não a leitura pelo administrador. O outbox remove payloads e ações expiradas; o resumo sem payload permanece no job para diagnóstico.
+
+As métricas `watcher.prompt.generation.jobs` e `watcher.prompt.generation.stage` contam estados e motivos; `watcher.prompt.generation.queue.wait`, `watcher.prompt.generation.provider.latency` e `watcher.prompt.generation.end_to_end` medem duração; `watcher.prompt.generation.delivery` conta estados de entrega. Seus rótulos são limitados a operação, estado, etapa, motivo, resultado do provedor ou estado de entrega; `job_id`, chat e reserva nunca são rótulos Prometheus. Elas são exportadas pelo endpoint interno `/actuator/prometheus`.
+
+No log correlacionado ao job, `BUDGET_DISPATCHED` é a transição contábil anterior ao transporte; `TRANSPORT_INVOKED` registra a entrada no cliente HTTP e `HTTP_RESPONSE_RECEIVED` registra que uma resposta HTTP chegou. Uma reserva `UNCERTAIN` ou o evento `BUDGET_DISPATCHED`, isoladamente, não prova que o provedor recebeu a chamada. Nenhum desses estados autoriza reenvio automático.
+
 ## Modos de simulação e ações reais
 
 Por padrão, `WATCHER_SIMULATION_ENABLED=true` permite o modo shadow. Para pausá-lo globalmente, defina `WATCHER_SIMULATION_ENABLED=false`. A captura e o agendador ficam desligados quando o produtor real também está desligado. Com `WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED=true`, a avaliação real continua mesmo com shadow desligado. O administrador pode pausar avaliações shadow com `/simulacao off` e remover a pausa com `/simulacao on` (confirmado); o ambiente continua sendo a fonte de habilitação e a pausa não bloqueia o produtor real. Com shadow e produtor real desligados, não há captura, avaliação nem novas ações.
