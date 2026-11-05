@@ -17,6 +17,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @Testcontainers(disabledWithoutDocker = true)
 class PromptGenerationResultDeliveryRepositoryTest {
@@ -95,6 +97,54 @@ class PromptGenerationResultDeliveryRepositoryTest {
 
         assertDoesNotThrow(() -> jdbc.update("update prompt_generation_jobs set result_delivery_status='SUPPRESSED' where job_id=?", jobId));
         assertDoesNotThrow(() -> jdbc.update("update prompt_generation_jobs set result_delivery_status='DEAD_LETTER' where job_id=?", jobId));
+    }
+
+    @Test void confirmedButUnclaimedPromptResultIsReplayedWithoutAnotherProviderCall() {
+        Instant now = Instant.now();
+        UUID jobId = insertCompletedJob(now);
+        String key = "prompt-generation-result:" + jobId;
+        var broker = mock(dev.hugo.watcher.RabbitEventPublisher.class);
+        var durableOutbox = new NotificationOutboxRepository(jdbc, transactions,
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, transactions), broker);
+        durableOutbox.enqueue(key, "telegram_admin_reply", "{\\"text\\":\\"safe result\\"}", "[]",
+                now, now.plusSeconds(600));
+        assertDelivery(jobId, "PENDING", 0, null);
+        assertNotNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key=?",
+                java.sql.Timestamp.class, key));
+        verify(broker).publish(eq("prompt-results"), eq(key), eq(key), anyMap());
+
+        jdbc.update("update outbox_actions set updated_at=clock_timestamp()-interval '61 seconds' where action_key=?", key);
+        assertEquals(1, durableOutbox.publishPendingActions());
+        verify(broker, times(2)).publish(eq("prompt-results"), eq(key), eq(key), anyMap());
+        assertDelivery(jobId, "PENDING", 0, null);
+        assertEquals(0, durableOutbox.publishPendingActions(),
+                "repeat recovery should wait for the next replay threshold");
+
+        makeTelegramRateLimitReady();
+        var claim = durableOutbox.claimByKey(key, now);
+        assertNotNull(claim);
+        assertTrue(durableOutbox.acknowledge(claim, now));
+        assertEquals(0, durableOutbox.publishPendingActions());
+        verify(broker, times(2)).publish(eq("prompt-results"), eq(key), eq(key), anyMap());
+    }
+
+    @Test void expiredBrokerConfirmedResultWithoutAnyAttemptHasActionableFailureReason() {
+        Instant now = Instant.now();
+        UUID jobId = insertCompletedJob(now);
+        String key = "prompt-generation-result:" + jobId;
+        var broker = mock(dev.hugo.watcher.RabbitEventPublisher.class);
+        var durableOutbox = new NotificationOutboxRepository(jdbc, transactions,
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, transactions), broker);
+        durableOutbox.enqueue(key, "telegram_admin_reply", "{\\"text\\":\\"safe result\\"}", "[]",
+                now, now.plusSeconds(600));
+        assertDelivery(jobId, "PENDING", 0, null);
+        jdbc.update("update outbox_actions set sensitive_expires_at=clock_timestamp()-interval '1 second' where action_key=?", key);
+
+        new RetentionService(jdbc, transactions).purge(now.plusSeconds(1));
+
+        assertDelivery(jobId, "EXPIRED", 0, "RabbitConfirmedUnconsumed");
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_key=?",
+                Integer.class, key));
     }
 
     private void makeTelegramRateLimitReady() {
