@@ -47,16 +47,33 @@ public class HttpEvolutionActionTransport implements EvolutionActionTransport {
         }
     }
 
-    private static void validateConfiguration(EvolutionActionProperties properties) {
+    /**
+     * Fail fast without ever interpolating configuration values into exceptions or logs.
+     * Plain HTTP remains restricted to the exact internal Docker service URI.
+     */
+    static void validateConfiguration(EvolutionActionProperties properties) {
+        if (properties == null) throw invalid("watcher.whatsapp-actions.evolution");
         URI base = properties.getBaseUrl();
-        if (base == null || (!"https".equalsIgnoreCase(base.getScheme())
-                && !TRUSTED_INTERNAL_HTTP_ENDPOINT.equals(base)) || base.getHost() == null
-                || base.getUserInfo() != null || base.getQuery() != null || base.getFragment() != null
-                || properties.getInstance() == null || properties.getInstance().isBlank()
-                || properties.getApiKey() == null || properties.getApiKey().isBlank()
-                || properties.getTimeout() == null || properties.getTimeout().isNegative()
-                || properties.getTimeout().isZero() || properties.getTimeout().compareTo(Duration.ofMinutes(2)) > 0)
-            throw new IllegalArgumentException("Evolution action transport configuration is invalid");
+        if (base == null || base.getHost() == null || base.getHost().isBlank()
+                || (!"https".equalsIgnoreCase(base.getScheme())
+                    && !TRUSTED_INTERNAL_HTTP_ENDPOINT.equals(base))
+                || base.getUserInfo() != null || base.getQuery() != null || base.getFragment() != null)
+            throw invalid("watcher.whatsapp-actions.evolution.base-url");
+
+        if (properties.getInstance() == null || properties.getInstance().isBlank())
+            throw invalid("watcher.whatsapp-actions.evolution.instance");
+
+        if (properties.getApiKey() == null || properties.getApiKey().isBlank())
+            throw invalid("watcher.whatsapp-actions.evolution.api-key");
+
+        Duration timeout = properties.getTimeout();
+        if (timeout == null || timeout.isNegative() || timeout.isZero()
+                || timeout.compareTo(Duration.ofMinutes(2)) > 0)
+            throw invalid("watcher.whatsapp-actions.evolution.timeout");
+    }
+
+    private static IllegalArgumentException invalid(String property) {
+        return new IllegalArgumentException("Invalid Evolution action transport configuration: " + property);
     }
 
     private static String ensureSlash(String path) { return path.endsWith("/") ? path : path + "/"; }
