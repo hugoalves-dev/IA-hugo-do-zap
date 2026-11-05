@@ -5,6 +5,10 @@ import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -18,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = "watcher.rabbitmq.enabled=true")
+@Import(RabbitMessagingApplicationIntegrationTest.FakeTelegramConfiguration.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class RabbitMessagingApplicationIntegrationTest {
     @Container
@@ -53,15 +58,37 @@ class RabbitMessagingApplicationIntegrationTest {
     @Autowired org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry listeners;
     @Autowired EvolutionWebhookController evolutionWebhook;
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+    @Autowired NotificationOutboxRepository outbox;
+    private static final java.util.concurrent.ConcurrentLinkedQueue<TelegramDeliveryResult> OUTCOMES =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private static final java.util.concurrent.atomic.AtomicInteger SEND_ATTEMPTS =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    @TestConfiguration
+    static class FakeTelegramConfiguration {
+        @Bean @Primary TelegramTransport fakeTelegramTransport() {
+            return new TelegramTransport() {
+                @Override public TelegramDeliveryResult send(String text) { return sendAdmin(text, "{}"); }
+                @Override public TelegramDeliveryResult sendAdmin(String text, String payload) {
+                    SEND_ATTEMPTS.incrementAndGet();
+                    TelegramDeliveryResult result = OUTCOMES.poll();
+                    return result == null ? TelegramDeliveryResult.success() : result;
+                }
+            };
+        }
+    }
 
     @Test
     void startsDurableQueuesBeforeEnablingRabbitConsumers() {
         assertNotNull(admin.getQueueInfo("watcher.incoming"));
         assertNotNull(admin.getQueueInfo("watcher.admin"));
         assertNotNull(admin.getQueueInfo("watcher.notifications"));
+        assertNotNull(admin.getQueueInfo("watcher.prompt-results"));
+        assertNotNull(admin.getQueueInfo("watcher.prompt-results.rate-limited"));
+        assertNotNull(admin.getQueueInfo("watcher.prompt-results.retry.1"));
         assertNotNull(admin.getQueueInfo("watcher.dead-letter"));
         assertNotNull(publisher);
-        assertEquals(3, listeners.getListenerContainers().size());
+        assertEquals(4, listeners.getListenerContainers().size());
         assertTrue(listeners.getListenerContainers().stream().allMatch(
                 org.springframework.amqp.rabbit.listener.MessageListenerContainer::isRunning));
         try {
@@ -113,6 +140,59 @@ class RabbitMessagingApplicationIntegrationTest {
                 select count(*) from processing_jobs job join inbox_events inbox on inbox.id=job.inbox_event_id
                 where inbox.event_type='contacts.upsert' and job.status='COMPLETED'
                 """, Integer.class));
+    }
+
+    @Test
+    void confirmedPromptResultIsConsumedWithTelegramRateLimitRetryAndDuplicateProtection() throws Exception {
+        OUTCOMES.clear();
+        SEND_ATTEMPTS.set(0);
+        OUTCOMES.add(TelegramDeliveryResult.rateLimited(java.time.Duration.ofMillis(1_200)));
+        OUTCOMES.add(TelegramDeliveryResult.success());
+        var promptListener = listeners.getListenerContainer("promptResultDelivery");
+        assertNotNull(promptListener);
+        java.util.UUID jobId = java.util.UUID.randomUUID();
+        String key = "prompt-generation-result:" + jobId;
+        java.time.Instant now = java.time.Instant.now();
+
+        promptListener.stop();
+        try {
+            jdbc.update("""
+                    insert into prompt_generation_jobs
+                        (job_id,draft_id,expected_draft_version,actor_user_id,chat_id,operation,instructions,status,
+                         created_at,started_at,completed_at)
+                    values (?,?,0,1001,2002,'REFINE','','FAILED',?,?,?)
+                    """, jobId, java.util.UUID.randomUUID(), java.sql.Timestamp.from(now),
+                    java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
+            jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null where singleton_id=1");
+            outbox.enqueue(key, "telegram_admin_reply",
+                    "{\\"eventType\\":\\"telegram_admin_reply\\",\\"text\\":\\"A geração falhou; revisão necessária.\\"}",
+                    "[]", now, now.plusSeconds(600));
+            assertEquals("PENDING", jdbc.queryForObject(
+                    "select result_delivery_status from prompt_generation_jobs where job_id=?", String.class, jobId));
+            assertEquals(0, jdbc.queryForObject(
+                    "select result_delivery_attempts from prompt_generation_jobs where job_id=?", Integer.class, jobId));
+            assertNotNull(jdbc.queryForObject(
+                    "select result_delivery_rabbit_confirmed_at from prompt_generation_jobs where job_id=?",
+                    java.sql.Timestamp.class, jobId));
+            assertTrue(admin.getQueueInfo("watcher.prompt-results").getMessageCount() >= 1);
+        } finally {
+            promptListener.start();
+        }
+
+        boolean acknowledged = false;
+        for (int attempt = 0; attempt < 120; attempt++) {
+            String status = jdbc.queryForObject(
+                    "select result_delivery_status from prompt_generation_jobs where job_id=?", String.class, jobId);
+            if ("ACKNOWLEDGED".equals(status)) { acknowledged = true; break; }
+            Thread.sleep(100);
+        }
+        assertTrue(acknowledged, "confirmed result should reach Telegram through the prompt queue");
+        assertEquals(2, jdbc.queryForObject(
+                "select result_delivery_attempts from prompt_generation_jobs where job_id=?", Integer.class, jobId));
+        assertEquals(2, SEND_ATTEMPTS.get(), "the fake transport should see one rate limit and one success");
+        publisher.publish("prompt-results", key, key);
+        Thread.sleep(500);
+        assertEquals(2, SEND_ATTEMPTS.get(), "replayed/duplicate messages must not send an ACKed result again");
     }
 
     @Test
