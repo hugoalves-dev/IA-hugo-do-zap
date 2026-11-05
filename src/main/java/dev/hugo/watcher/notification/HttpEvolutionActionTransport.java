@@ -13,6 +13,8 @@ import tools.jackson.databind.json.JsonMapper;
 /** Evolution sendText client. HTTP success is accepted by Evolution, not proof of WhatsApp delivery. */
 public class HttpEvolutionActionTransport implements EvolutionActionTransport {
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    // Only this exact Docker Compose service endpoint may use cleartext HTTP.
+    private static final URI TRUSTED_INTERNAL_HTTP_ENDPOINT = URI.create("http://evolution-api:8080");
     private final EvolutionActionProperties properties;
     private final HttpClient http;
 
@@ -47,7 +49,8 @@ public class HttpEvolutionActionTransport implements EvolutionActionTransport {
 
     private static void validateConfiguration(EvolutionActionProperties properties) {
         URI base = properties.getBaseUrl();
-        if (base == null || !"https".equalsIgnoreCase(base.getScheme()) || base.getHost() == null
+        if (base == null || (!"https".equalsIgnoreCase(base.getScheme())
+                && !TRUSTED_INTERNAL_HTTP_ENDPOINT.equals(base)) || base.getHost() == null
                 || base.getUserInfo() != null || base.getQuery() != null || base.getFragment() != null
                 || properties.getInstance() == null || properties.getInstance().isBlank()
                 || properties.getApiKey() == null || properties.getApiKey().isBlank()
