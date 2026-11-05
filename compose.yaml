@@ -107,6 +107,9 @@ services:
       WEBHOOK_RETRY_JITTER_FACTOR: "0.2"
       WEBHOOK_RETRY_NON_RETRYABLE_STATUS_CODES: "400,401,403,404,422"
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?Set the Evolution API key}
+      # The upstream LOG/WEBHOOKS categories print full webhook payloads (including apikey).
+      # Keep only operational warnings/errors; Spring logging settings do not affect Evolution.
+      LOG_LEVEL: "ERROR,WARN"
     ports:
       - "127.0.0.1:${EVOLUTION_HOST_PORT:-8080}:8080"
     volumes:
