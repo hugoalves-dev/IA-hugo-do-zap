@@ -89,6 +89,74 @@ class EvolutionActionTransportConfigurationTest {
         }
     }
 
+    @Test void diagnosticsNameTheInvalidPropertyWithoutItsValue() {
+        var properties = new EvolutionActionProperties();
+        properties.setBaseUrl(java.net.URI.create("http://untrusted.invalid:8080/secret-path?token=secret"));
+        properties.setInstance("private-instance");
+        properties.setApiKey("private-api-key");
+        properties.setTimeout(java.time.Duration.ofSeconds(15));
+        assertInvalidProperty(properties, "base-url");
+
+        properties.setBaseUrl(java.net.URI.create("http://evolution-api:8080"));
+        properties.setInstance(" ");
+        assertInvalidProperty(properties, "instance");
+
+        properties.setInstance("private-instance");
+        properties.setApiKey(" ");
+        assertInvalidProperty(properties, "api-key");
+
+        properties.setApiKey("private-api-key");
+        for (var timeout : new java.time.Duration[] {
+                java.time.Duration.ZERO, java.time.Duration.ofSeconds(-1),
+                java.time.Duration.ofSeconds(121) }) {
+            properties.setTimeout(timeout);
+            assertInvalidProperty(properties, "timeout");
+        }
+        properties.setTimeout(null);
+        assertInvalidProperty(properties, "timeout");
+    }
+
+    @Test void validationAllowsOnlyExactInternalHttpOrHttps() {
+        var properties = new EvolutionActionProperties();
+        properties.setInstance("synthetic-instance");
+        properties.setApiKey("synthetic-key");
+        properties.setTimeout(java.time.Duration.ofSeconds(15));
+        for (String endpoint : new String[] { "http://evolution-api:8080", "https://example.test" }) {
+            properties.setBaseUrl(java.net.URI.create(endpoint));
+            assertDoesNotThrow(() -> HttpEvolutionActionTransport.validateConfiguration(properties));
+        }
+        for (String endpoint : new String[] { "http://localhost:8080",
+                "http://evolution-api:8081", "http://evolution-api",
+                "http://evolution-api:8080/", "http://evolution-api:8080/path",
+                "http://evolution-api:8080?debug=1", "http://evolution-api:8080#fragment",
+                "http://user@evolution-api:8080", "ftp://evolution-api:8080" }) {
+            properties.setBaseUrl(java.net.URI.create(endpoint));
+            assertInvalidProperty(properties, "base-url");
+        }
+    }
+
+    private static void assertInvalidProperty(EvolutionActionProperties properties, String suffix) {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> HttpEvolutionActionTransport.validateConfiguration(properties));
+        assertEquals("Invalid Evolution action transport configuration: watcher.whatsapp-actions.evolution." + suffix,
+                error.getMessage());
+        assertFalse(error.getMessage().contains("private-"));
+        assertFalse(error.getMessage().contains("secret"));
+    }
+
+    @Test void startupFailureIdentifiesRejectedPropertyWithoutLeakingSecrets() {
+        realTransportContext("http://evolution-api:8080")
+                .withPropertyValues("watcher.whatsapp-actions.evolution.api-key=")
+                .run(c -> {
+                    Throwable error = c.getStartupFailure();
+                    assertNotNull(error);
+                    while (error.getCause() != null) error = error.getCause();
+                    assertEquals("Invalid Evolution action transport configuration: "
+                            + "watcher.whatsapp-actions.evolution.api-key", error.getMessage());
+                    assertFalse(error.getMessage().contains("synthetic-test-key"));
+                });
+    }
+
     private ApplicationContextRunner realTransportContext(String url) {
         return context.withPropertyValues(
                 "watcher.decision-producer.real-mode-enabled=true",

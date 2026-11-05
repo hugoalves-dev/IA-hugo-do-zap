@@ -177,6 +177,14 @@ class BackendWorkflowContractTest(unittest.TestCase):
             self.assertEqual("synthetic-rabbitmq-password", default["services"]["rabbitmq"]["environment"]["RABBITMQ_DEFAULT_PASS"])
             self.assertIn("postgres.synthetic.invalid", default["services"]["watcher"]["environment"]["SPRING_DATASOURCE_URL"])
             watcher_env = default["services"]["watcher"]["environment"]
+            self.assertEqual("http://evolution-api:8080",
+                             watcher_env["WATCHER_WHATSAPP_ACTIONS_EVOLUTION_BASE_URL"])
+            self.assertEqual("15s", watcher_env["WATCHER_WHATSAPP_ACTIONS_EVOLUTION_TIMEOUT"])
+            self.assertEqual("watcher-evolution", watcher_env["WATCHER_WHATSAPP_ACTIONS_EVOLUTION_INSTANCE"])
+            for name in ("WATCHER_DECISION_PRODUCER_REAL_MODE_ENABLED",
+                         "WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED",
+                         "WATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED"):
+                self.assertEqual("false", watcher_env[name])
             for name in ("WATCHER_AI_ENABLED", "WATCHER_AI_GEMINIAPIKEY", "WATCHER_AI_GEMINIMODEL",
                          "WATCHER_AI_OPENROUTERAPIKEY", "WATCHER_AI_OPENROUTERMODEL",
                          "WATCHER_AI_ATTEMPTHOLDMICROS", "WATCHER_AI_TIMEOUT"):

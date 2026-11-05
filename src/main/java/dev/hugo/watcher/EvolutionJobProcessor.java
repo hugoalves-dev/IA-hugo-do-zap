@@ -35,6 +35,13 @@ public class EvolutionJobProcessor {
     private final MessageService messages;
     private final IdentityService identities;
     private final Clock clock;
+    private EvolutionPipelineMetrics pipeline;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void configurePipelineMetrics(EvolutionPipelineMetrics pipeline) {
+        this.pipeline = pipeline;
+    }
+
     @Value("${watcher.rabbitmq.enabled:false}")
     private boolean rabbitIngressEnabled;
 
@@ -76,8 +83,20 @@ public class EvolutionJobProcessor {
             if (claimed.isEmpty()) return completed;
             Job job = claimed.getFirst();
             try {
-                ProcessResult result = transactions.execute(status -> processAndComplete(job, clock.instant()));
-                if (result == ProcessResult.COMPLETED) completed++;
+                ProcessOutcome outcome = transactions.execute(status -> processAndComplete(job, clock.instant()));
+                ProcessResult result = java.util.Objects.requireNonNull(outcome).status();
+                if (result != ProcessResult.STALE_LEASE && result != ProcessResult.EXPIRED) completed++;
+                if (pipeline != null && "messages.upsert".equals(outcome.eventType())
+                        && result != ProcessResult.STALE_LEASE)
+                    pipeline.record(EvolutionPipelineMetrics.Stage.JOB,
+                            switch (result) {
+                                case COMPLETED -> EvolutionPipelineMetrics.Outcome.COMPLETED;
+                                case QUARANTINED -> EvolutionPipelineMetrics.Outcome.QUARANTINED;
+                                case DUPLICATE -> EvolutionPipelineMetrics.Outcome.DUPLICATE;
+                                case IGNORED -> EvolutionPipelineMetrics.Outcome.IGNORED;
+                                case EXPIRED -> EvolutionPipelineMetrics.Outcome.REJECTED;
+                                case STALE_LEASE -> EvolutionPipelineMetrics.Outcome.UNKNOWN;
+                            }, outcome.technicalId());
                 if (result == ProcessResult.STALE_LEASE) return completed;
             } catch (RuntimeException ex) {
                 if (rabbitIngressEnabled) {
@@ -99,15 +118,16 @@ public class EvolutionJobProcessor {
     }
 
     @SuppressWarnings("unchecked")
-    private ProcessResult processAndComplete(Job job, Instant now) {
+    private ProcessOutcome processAndComplete(Job job, Instant now) {
         List<String> rows = envelopes.lockEnvelope(job.id(), job.leaseToken());
-        if (rows.isEmpty()) return ProcessResult.STALE_LEASE;
+        if (rows.isEmpty()) return new ProcessOutcome(ProcessResult.STALE_LEASE, null, null);
         var validity = envelopes.checkLeaseAndInbox(job.id(), job.leaseToken());
-        if (validity.isEmpty() || !validity.getFirst().leaseValid()) return ProcessResult.STALE_LEASE;
+        if (validity.isEmpty() || !validity.getFirst().leaseValid())
+            return new ProcessOutcome(ProcessResult.STALE_LEASE, null, null);
         if (!validity.getFirst().inboxValid()) {
             jobs.expire(job.id(), job.leaseToken());
             envelopes.scrubExpiredInbox(job.inboxEventId());
-            return ProcessResult.EXPIRED;
+            return new ProcessOutcome(ProcessResult.EXPIRED, null, null);
         }
 
         JsonNode envelope;
@@ -116,7 +136,7 @@ public class EvolutionJobProcessor {
         } catch (RuntimeException ex) {
             quarantine(null, "invalid_persisted_envelope", now);
             jobs.complete(job.id(), job.leaseToken());
-            return ProcessResult.COMPLETED;
+            return new ProcessOutcome(ProcessResult.QUARANTINED, null, null);
         }
         JsonNode data = envelope == null ? null : envelope.get("data");
         String eventType = envelope == null ? null : text(envelope.get("event"));
@@ -129,18 +149,18 @@ public class EvolutionJobProcessor {
                 quarantine(null, "unsupported_or_unverified_envelope", now);
             }
             jobs.complete(job.id(), job.leaseToken());
-            return ProcessResult.COMPLETED;
+            return new ProcessOutcome(ProcessResult.COMPLETED, eventType, null);
         }
         if (data == null || !data.isObject()) {
             quarantine(null, "unsupported_or_unverified_envelope", now);
             jobs.complete(job.id(), job.leaseToken());
-            return ProcessResult.COMPLETED;
+            return new ProcessOutcome(ProcessResult.QUARANTINED, eventType, null);
         }
         List<EvolutionEvent> events = mapper.map(envelope, "webhook");
         if (events.size() != 1) {
             quarantine(null, "unsupported_or_unverified_envelope", now);
             jobs.complete(job.id(), job.leaseToken());
-            return ProcessResult.COMPLETED;
+            return new ProcessOutcome(ProcessResult.QUARANTINED, eventType, null);
         }
 
         EvolutionEvent event = events.getFirst();
@@ -155,7 +175,7 @@ public class EvolutionJobProcessor {
                 || event.jid().isEmpty()) {
             quarantine(event.externalId(), "unverified_message_metadata", now);
             jobs.complete(job.id(), job.leaseToken());
-            return ProcessResult.COMPLETED;
+            return new ProcessOutcome(ProcessResult.QUARANTINED, eventType, event.externalId());
         }
 
         boolean group = event.jid().orElseThrow().endsWith("@g.us");
@@ -171,11 +191,18 @@ public class EvolutionJobProcessor {
         String alternateChat = group ? null : text(key.get("remoteJidAlt"));
         String alternateParticipant = group ? text(key.get("participantAlt")) : null;
         Map<String, Object> content = JSON.readValue(message.toString(), Map.class);
-        messages.accept(new IncomingMessage(Optional.of(event.externalId()), event.jid().orElseThrow(),
-                optional(participant), optional(alternateChat), optional(alternateParticipant), fromMe.booleanValue(),
-                "notify", false, content, event.timestamp().orElseThrow()));
+        MessageService.Acceptance result = messages.accept(
+                new IncomingMessage(Optional.of(event.externalId()), event.jid().orElseThrow(),
+                        optional(participant), optional(alternateChat), optional(alternateParticipant),
+                        fromMe.booleanValue(), "notify", false, content, event.timestamp().orElseThrow()));
         jobs.complete(job.id(), job.leaseToken());
-        return ProcessResult.COMPLETED;
+        ProcessResult status = switch (result) {
+            case ACCEPTED -> ProcessResult.COMPLETED;
+            case DUPLICATE -> ProcessResult.DUPLICATE;
+            case IGNORED -> ProcessResult.IGNORED;
+            case QUARANTINED -> ProcessResult.QUARANTINED;
+        };
+        return new ProcessOutcome(status, eventType, event.externalId());
     }
 
     /**
@@ -202,7 +229,8 @@ public class EvolutionJobProcessor {
                 && !messageAt.isAfter(now.plus(Duration.ofMinutes(2)));
     }
 
-    private enum ProcessResult { COMPLETED, EXPIRED, STALE_LEASE }
+    private enum ProcessResult { COMPLETED, QUARANTINED, DUPLICATE, IGNORED, EXPIRED, STALE_LEASE }
+    private record ProcessOutcome(ProcessResult status, String eventType, String technicalId) { }
     private void observeContact(JsonNode contact) {
         if (!contact.isObject()) return;
         String jid = text(contact.get("remoteJid"));
