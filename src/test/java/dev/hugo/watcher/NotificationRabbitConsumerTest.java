@@ -192,6 +192,60 @@ class NotificationRabbitConsumerTest {
         verify(channel).basicAck(17L, false);
     }
 
+    @Test
+    void promptResultRetriesThroughDedicatedQueueAndPreservesItsActionKey() throws Exception {
+        String key = "prompt-generation-result:50000000-0000-0000-0000-000000000052";
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("transport rejected", 1_000))
+                .when(notifications).deliverQueuedAction(eq(key), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        Channel channel = mock(Channel.class);
+
+        new NotificationRabbitConsumer(notifications, publisher, mock(RabbitDeliveryMetrics.class))
+                .receive(message(key, 0), channel);
+
+        verify(publisher).publishDelayed("prompt-results.retry.1", key, key,
+                Map.of("x-retry-count", 1), 1_000);
+        verify(channel).basicAck(17L, false);
+    }
+
+    @Test
+    void promptResultRateLimitAndLeaseRemainOnDedicatedRoutes() throws Exception {
+        String key = "prompt-generation-result:50000000-0000-0000-0000-000000000053";
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("rate limited", 4_250, true),
+                new NotificationDeferredException(1_000, NotificationDeferredException.Reason.ACTIVE_LEASE))
+                .when(notifications).deliverQueuedAction(eq(key), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        Channel channel = mock(Channel.class);
+        NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
+                mock(RabbitDeliveryMetrics.class));
+
+        consumer.receive(message(key, 0), channel);
+        consumer.receive(message(key, 1), channel);
+
+        verify(publisher).publishDelayed("prompt-results.rate-limited", key, key,
+                Map.of("x-retry-count", 1), 4_250);
+        verify(publisher).publishDelayed("prompt-results.lease", key, key,
+                Map.of("x-retry-count", 1), 120_000);
+        verify(channel, times(2)).basicAck(17L, false);
+    }
+
+    @Test
+    void duplicateBrokerMessageCannotCauseAnotherTelegramSend() throws Exception {
+        String key = "prompt-generation-result:50000000-0000-0000-0000-000000000054";
+        NotificationService notifications = mock(NotificationService.class);
+        when(notifications.deliverQueuedAction(eq(key), any())).thenReturn(false);
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        Channel channel = mock(Channel.class);
+
+        new NotificationRabbitConsumer(notifications, publisher, mock(RabbitDeliveryMetrics.class))
+                .receive(message(key, 0), channel);
+
+        verify(channel).basicAck(17L, false);
+        verifyNoInteractions(publisher);
+    }
+
     private static Message message(String actionKey, int retries) {
         MessageProperties properties = new MessageProperties();
         properties.setMessageId(actionKey);

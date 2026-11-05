@@ -46,7 +46,10 @@ public class NotificationRabbitConsumer {
                     || deferred.reason() == NotificationDeferredException.Reason.SCHEDULED) {
                 Instant availableAt = deferred.availableAt() == null
                         ? Instant.now().plusMillis(deferred.delayMillis()) : deferred.availableAt();
-                publisher.publishDeferred(availableAt, id, actionKey, deferredHeaders(message));
+                if ("prompt-results".equals(route(actionKey)))
+                    publisher.publishDeferred("prompt-results", availableAt, id, actionKey, deferredHeaders(message));
+                else
+                    publisher.publishDeferred(availableAt, id, actionKey, deferredHeaders(message));
             } else {
                 String deferredRoute = deferredRoute(actionKey, deferred.reason());
                 long delay = deferred.reason() == NotificationDeferredException.Reason.ACTIVE_LEASE
@@ -58,7 +61,7 @@ public class NotificationRabbitConsumer {
             int retries = retryCount(message);
             if (retry.rateLimited()) {
                 retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey,
-                        retry.delayMillis(), "notifications.rate-limited");
+                        retry.delayMillis(), route(actionKey) + ".rate-limited");
             } else {
                 long delay = RETRY_DELAY_MILLIS[Math.min(retries, RETRY_DELAY_MILLIS.length - 1)];
                 retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, delay,
@@ -72,6 +75,13 @@ public class NotificationRabbitConsumer {
         } finally {
             RabbitDeliveryContext.clear();
         }
+    }
+
+    /** Dedicated consumer prevents unrelated notification backlogs from starving prompt results. */
+    @RabbitListener(id = "promptResultDelivery", queues = RabbitMessagingConfiguration.PROMPT_RESULT_QUEUE,
+            containerFactory = "rabbitListenerContainerFactory")
+    public void receivePromptResult(Message message, Channel channel) throws java.io.IOException {
+        receive(message, channel);
     }
 
     private static Instant ingressAt(Message message) {
@@ -91,13 +101,17 @@ public class NotificationRabbitConsumer {
     private static String deferredRoute(String actionKey, NotificationDeferredException.Reason reason) {
         return switch (reason) {
             case WORK_WINDOW, SCHEDULED -> throw new IllegalArgumentException("scheduled actions use a date-specific queue");
-            case RATE_LIMIT -> "notifications.rate-limited";
-            case ACTIVE_LEASE -> "notifications.lease";
+            case RATE_LIMIT -> route(actionKey) + ".rate-limited";
+            case ACTIVE_LEASE -> route(actionKey) + ".lease";
         };
     }
 
+    private static String route(String actionKey) {
+        return actionKey.startsWith("prompt-generation-result:") ? "prompt-results" : "notifications";
+    }
+
     private static String retryRoute(String actionKey, int attempt) {
-        return "notifications.retry." + Math.min(3, attempt);
+        return route(actionKey) + ".retry." + Math.min(3, attempt);
     }
 
     private static Map<String, Object> deferredHeaders(Message message) {
