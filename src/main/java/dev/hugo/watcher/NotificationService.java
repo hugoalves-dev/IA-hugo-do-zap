@@ -49,6 +49,13 @@ public class NotificationService {
     private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
     private final boolean triageLegacyFilterEnabled;
     private ContactNotificationRules contactRules;
+    private EvolutionPipelineMetrics pipeline;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void configurePipelineMetrics(EvolutionPipelineMetrics pipeline) { this.pipeline = pipeline; }
+    private void observeArchivedDelivery(OutboxAction action, EvolutionPipelineMetrics.Outcome outcome) {
+        if (pipeline != null && ARCHIVED_MESSAGES.equals(action.actionType()))
+            pipeline.record(EvolutionPipelineMetrics.Stage.TELEGRAM, outcome, action.actionKey());
+    }
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void configureContactRules(ContactNotificationRules rules) { this.contactRules = rules; }
     private final AtomicBoolean flushing = new AtomicBoolean();
@@ -220,13 +227,16 @@ public class NotificationService {
                         : telegram.send(telegramFormatter.format(latest));
                 if (result.delivered()) {
                     outbox.acknowledge(latest, clock.instant());
+                    observeArchivedDelivery(action, EvolutionPipelineMetrics.Outcome.SENT);
                     return true;
                 } else if (latest == null) {
                     outbox.suppress(action, clock.instant());
+                    observeArchivedDelivery(action, EvolutionPipelineMetrics.Outcome.SUPPRESSED);
                     return false;
                 }
                 else {
                     outbox.retry(action, clock.instant(), "DeliveryFailure", result.rateLimited(), result.retryAfter());
+                    observeArchivedDelivery(action, EvolutionPipelineMetrics.Outcome.RETRY);
                     throwRetryIfQueued(action, result.rateLimited(), result.retryAfter());
                     return false;
                 }
