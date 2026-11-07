@@ -3,6 +3,8 @@ package dev.hugo.watcher;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Declarables;
+import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -109,6 +111,23 @@ class RabbitMessagingConfiguration {
     }
     @Bean Queue adminLeaseQueue(RabbitMessagingProperties properties) {
         return retryQueue("watcher.admin.lease", "admin", 120_000, properties);
+    }
+
+    /** Optional staging topology; native ingress must not be enabled before producer recovery is validated. */
+    @Bean
+    @ConditionalOnProperty(prefix = "watcher.rabbitmq.native-evolution", name = "enabled", havingValue = "true")
+    Declarables nativeEvolutionBindings(@Qualifier("watcherIncomingQueue") Queue queue,
+            @org.springframework.beans.factory.annotation.Value("${watcher.rabbitmq.native-evolution.exchange:watcher.evolution}")
+            String exchangeName) {
+        if (exchangeName == null || exchangeName.isBlank())
+            throw new IllegalArgumentException("native Evolution exchange is required");
+        TopicExchange exchange = new TopicExchange(exchangeName, true, false);
+        var declarations = new java.util.ArrayList<org.springframework.amqp.core.Declarable>();
+        declarations.add(exchange);
+        for (String route : java.util.List.of("messages.upsert", "connection.update", "contacts.upsert",
+                "contacts.update", "chats.upsert", "chats.update", "chats.set"))
+            declarations.add(BindingBuilder.bind(queue).to(exchange).with(route));
+        return new Declarables(declarations);
     }
 
     @Bean Binding incomingBinding(@Qualifier("watcherIncomingQueue") Queue queue,

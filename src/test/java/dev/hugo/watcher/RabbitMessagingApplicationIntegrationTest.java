@@ -51,6 +51,7 @@ class RabbitMessagingApplicationIntegrationTest {
         registry.add("watcher.evolution.instance", () -> "watcher-evolution");
         registry.add("watcher.whatsapp-actions.owner-jid", () -> "15550000000@s.whatsapp.net");
         registry.add("watcher.runtime.scheduling-enabled", () -> "false");
+        registry.add("watcher.rabbitmq.native-evolution.enabled", () -> "true");
     }
 
     @Autowired RabbitAdmin admin;
@@ -140,6 +141,29 @@ class RabbitMessagingApplicationIntegrationTest {
                 select count(*) from processing_jobs job join inbox_events inbox on inbox.id=job.inbox_event_id
                 where inbox.event_type='contacts.upsert' and job.status='COMPLETED'
                 """, Integer.class));
+    }
+
+    @Test
+    void nativeEvolutionContactEventCanReachTheExistingConsumer() throws Exception {
+        var template = new org.springframework.amqp.rabbit.core.RabbitTemplate(admin.getRabbitTemplate().getConnectionFactory());
+        String body = """
+                {"event":"contacts.update","instance":"watcher-evolution","data":[
+                  {"remoteJid":"5511888812345@s.whatsapp.net","pushName":"Native Loja"}]}
+                """;
+        template.convertAndSend("watcher.evolution", "contacts.update", body, message -> {
+            message.getMessageProperties().setMessageId("native-contact-42");
+            return message;
+        });
+        boolean processed = false;
+        for (int attempt = 0; attempt < 50; attempt++) {
+            Integer count = jdbc.queryForObject("""
+                    select count(*) from contact_identity
+                    where canonical_jid='5511888812345@s.whatsapp.net' and display_name='Native Loja'
+                    """, Integer.class);
+            if (count != null && count == 1) { processed = true; break; }
+            Thread.sleep(100);
+        }
+        assertTrue(processed, "native topic event should be routed into the watcher consumer");
     }
 
     @Test
