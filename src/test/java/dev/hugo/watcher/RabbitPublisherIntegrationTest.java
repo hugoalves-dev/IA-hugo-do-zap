@@ -80,6 +80,19 @@ class RabbitPublisherIntegrationTest {
             assertNotNull(received);
             assertEquals(MessageDeliveryMode.PERSISTENT, received.getMessageProperties().getReceivedDeliveryMode());
             assertEquals(id, received.getMessageProperties().getMessageId());
+
+            Instant ingressAt = Instant.parse("2026-11-06T12:00:00Z");
+            RabbitDeliveryContext.set(ingressAt);
+            try {
+                publisher.publishDelayed("incoming", "retry-with-ingress", "{}", java.util.Map.of("x-retry-count", 1), 1_000);
+            } finally {
+                RabbitDeliveryContext.clear();
+            }
+            var retried = template.receive(queue.getName(), 5_000);
+            assertNotNull(retried);
+            assertEquals(ingressAt.toString(), retried.getMessageProperties().getHeader("x-ingress-at"));
+            assertEquals(1, (int) retried.getMessageProperties().getHeader("x-retry-count"));
+
             IllegalStateException unroutable = assertThrows(IllegalStateException.class,
                     () -> publisher.publish("missing.route", "missing-1", "{}"));
             assertEquals("RabbitMQ did not route the event", unroutable.getMessage());
