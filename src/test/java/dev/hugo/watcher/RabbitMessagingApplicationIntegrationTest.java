@@ -84,12 +84,14 @@ class RabbitMessagingApplicationIntegrationTest {
         assertNotNull(admin.getQueueInfo("watcher.incoming"));
         assertNotNull(admin.getQueueInfo("watcher.admin"));
         assertNotNull(admin.getQueueInfo("watcher.notifications"));
+        assertNotNull(admin.getQueueInfo("watcher.admin-replies"));
+        assertNotNull(admin.getQueueInfo("watcher.admin-replies.retry.1"));
         assertNotNull(admin.getQueueInfo("watcher.prompt-results"));
         assertNotNull(admin.getQueueInfo("watcher.prompt-results.rate-limited"));
         assertNotNull(admin.getQueueInfo("watcher.prompt-results.retry.1"));
         assertNotNull(admin.getQueueInfo("watcher.dead-letter"));
         assertNotNull(publisher);
-        assertEquals(4, listeners.getListenerContainers().size());
+        assertEquals(5, listeners.getListenerContainers().size());
         assertTrue(listeners.getListenerContainers().stream().allMatch(
                 org.springframework.amqp.rabbit.listener.MessageListenerContainer::isRunning));
         try {
@@ -164,6 +166,32 @@ class RabbitMessagingApplicationIntegrationTest {
             Thread.sleep(100);
         }
         assertTrue(processed, "native topic event should be routed into the watcher consumer");
+    }
+
+    @Test
+    void adminReplyIsDeliveredWhileNotificationConsumerIsStopped() throws Exception {
+        var notificationListener = listeners.getListenerContainer("notificationDelivery");
+        assertNotNull(notificationListener);
+        String key = "telegram_admin_reply:" + java.util.UUID.randomUUID();
+        java.time.Instant now = java.time.Instant.now();
+        notificationListener.stop();
+        try {
+            OUTCOMES.clear();
+            jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null where singleton_id=1");
+            outbox.enqueue(key, "telegram_admin_reply",
+                    "{\"eventType\":\"telegram_admin_reply\",\"text\":\"teste\"}", "[]",
+                    now, now.plusSeconds(600));
+            boolean delivered = false;
+            for (int attempt = 0; attempt < 100; attempt++) {
+                String status = jdbc.queryForObject("select status from outbox_actions where action_key=?",
+                        String.class, key);
+                if ("ACKNOWLEDGED".equals(status)) { delivered = true; break; }
+                Thread.sleep(100);
+            }
+            assertTrue(delivered, "administrator reply should not depend on the notification consumer");
+        } finally {
+            notificationListener.start();
+        }
     }
 
     @Test

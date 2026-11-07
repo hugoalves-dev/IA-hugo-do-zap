@@ -199,7 +199,9 @@ public class NotificationOutboxRepository {
         // Prompt results have their own durable consumer so an unrelated Telegram backlog cannot starve them.
         // Confirmed-but-unclaimed results are replayed with the same idempotent action key.
         String destination = "telegram_admin_reply".equals(actionType)
-                && actionKey.startsWith("prompt-generation-result:") ? "prompt-results" : "notifications";
+                && actionKey.startsWith("prompt-generation-result:") ? "prompt-results"
+                : ("telegram_admin_reply".equals(actionType) || "telegram_admin_edit".equals(actionType))
+                ? "admin-replies" : "notifications";
         if (delayMillis > 0)
             rabbitPublisher.publishDeferred(destination, availableAt.toInstant(), actionKey, actionKey, headers);
         else

@@ -27,6 +27,7 @@ class RabbitMessagingConfiguration {
     static final String INCOMING_QUEUE = "watcher.incoming";
     static final String ADMIN_QUEUE = "watcher.admin";
     static final String NOTIFICATION_QUEUE = "watcher.notifications";
+    static final String ADMIN_REPLY_QUEUE = "watcher.admin-replies";
     static final String PROMPT_RESULT_QUEUE = "watcher.prompt-results";
     static final String DEAD_LETTER_QUEUE = "watcher.dead-letter";
     static final String DEAD_LETTER_EXCHANGE = "watcher.dead-letter";
@@ -111,6 +112,28 @@ class RabbitMessagingConfiguration {
     }
     @Bean Queue adminLeaseQueue(RabbitMessagingProperties properties) {
         return retryQueue("watcher.admin.lease", "admin", 120_000, properties);
+    }
+
+    @Bean Declarables adminReplyTopology(@Qualifier("watcherEventExchange") DirectExchange exchange,
+                                         RabbitMessagingProperties properties) {
+        var declarations = new java.util.ArrayList<org.springframework.amqp.core.Declarable>();
+        Queue replies = durableQueue(ADMIN_REPLY_QUEUE);
+        declarations.add(replies);
+        declarations.add(BindingBuilder.bind(replies).to(exchange).with("admin-replies"));
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            int ttl = new int[] { 1_000, 5_000, 30_000 }[attempt - 1];
+            String route = "admin-replies.retry." + attempt;
+            Queue queue = retryQueue("watcher." + route, "admin-replies", ttl, properties);
+            declarations.add(queue);
+            declarations.add(BindingBuilder.bind(queue).to(exchange).with(route));
+        }
+        Queue rateLimited = retryQueue("watcher.admin-replies.rate-limited", "admin-replies", properties);
+        Queue lease = retryQueue("watcher.admin-replies.lease", "admin-replies", 120_000, properties);
+        declarations.add(rateLimited);
+        declarations.add(lease);
+        declarations.add(BindingBuilder.bind(rateLimited).to(exchange).with("admin-replies.rate-limited"));
+        declarations.add(BindingBuilder.bind(lease).to(exchange).with("admin-replies.lease"));
+        return new Declarables(declarations);
     }
 
     /** Optional staging topology; native ingress must not be enabled before producer recovery is validated. */

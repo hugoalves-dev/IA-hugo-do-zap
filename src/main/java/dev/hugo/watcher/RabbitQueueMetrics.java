@@ -13,6 +13,7 @@ public class RabbitQueueMetrics {
     private static final String[][] QUEUES = {
             {"incoming", RabbitMessagingConfiguration.INCOMING_QUEUE},
             {"admin", RabbitMessagingConfiguration.ADMIN_QUEUE},
+            {"admin-replies", RabbitMessagingConfiguration.ADMIN_REPLY_QUEUE},
             {"notifications", RabbitMessagingConfiguration.NOTIFICATION_QUEUE},
             {"dead-letter", RabbitMessagingConfiguration.DEAD_LETTER_QUEUE}
     };
