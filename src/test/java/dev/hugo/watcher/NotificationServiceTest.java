@@ -58,7 +58,7 @@ class NotificationServiceTest {
         Instant expiry = createdAt.plusSeconds(86_400);
 
         org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
-                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
                         org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.eq("rabbit-test"),
                         org.mockito.ArgumentMatchers.anyMap());
         assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status ->
@@ -66,7 +66,7 @@ class NotificationServiceTest {
         assertNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key='rabbit-test'",
                 java.sql.Timestamp.class));
 
-        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
                 org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.eq("rabbit-test"),
                 org.mockito.ArgumentMatchers.anyMap());
         assertEquals(1, rabbitOutbox.publishPendingActions());

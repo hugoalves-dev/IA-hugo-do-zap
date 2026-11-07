@@ -105,7 +105,15 @@ public class NotificationService {
     }
 
     public void flush(Instant now) {
-        if (now == null || !flushing.compareAndSet(false, true)) return;
+        flush(now, false);
+    }
+
+    private void flush(Instant now, boolean requireCompletion) {
+        if (now == null) return;
+        if (!flushing.compareAndSet(false, true)) {
+            if (requireCompletion) throw new IllegalStateException("Notification flush already in progress");
+            return;
+        }
         try {
             transactions.executeWithoutResult(status -> enqueueArchivedBatch(now));
             if (outbox.rabbitDispatchEnabled()) {
@@ -128,7 +136,7 @@ public class NotificationService {
 
     /** Generates due notification state, then republishes pending state after an upstream replay. */
     public void flushAfterInbound(Instant now) {
-        flush(now);
+        flush(now, true);
         outbox.publishPendingActions();
     }
 
