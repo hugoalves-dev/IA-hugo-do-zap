@@ -18,17 +18,20 @@ public class RabbitPendingJobRecovery implements ApplicationRunner {
 
     private final JobRepository jobs;
     private final RabbitEventPublisher publisher;
+    private final NotificationOutboxRepository notificationOutbox;
     private final Clock clock;
     private final TelegramWebhookInboxRepository telegramInbox;
     private final RabbitListenerEndpointRegistry listeners;
 
     public RabbitPendingJobRecovery(JobRepository jobs, RabbitEventPublisher publisher, Clock clock,
                                     TelegramWebhookInboxRepository telegramInbox,
+                                    NotificationOutboxRepository notificationOutbox,
                                     RabbitListenerEndpointRegistry listeners) {
         this.jobs = jobs;
         this.publisher = publisher;
         this.clock = clock;
         this.telegramInbox = telegramInbox;
+        this.notificationOutbox = notificationOutbox;
         this.listeners = listeners;
     }
 
@@ -53,6 +56,9 @@ public class RabbitPendingJobRecovery implements ApplicationRunner {
                 telegramInbox.markRabbitBacklogConfirmed(update.updateId());
             }
         }
+        // One-time cutover/restart recovery only. New actions publish directly after commit;
+        // this drains legacy pending rows before consumers start and closes the old-DB/new-broker gap.
+        while (notificationOutbox.publishPendingActions() > 0) { }
         listeners.start();
     }
 }

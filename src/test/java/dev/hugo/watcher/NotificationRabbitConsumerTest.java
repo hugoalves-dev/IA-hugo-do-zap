@@ -15,6 +15,28 @@ import static org.mockito.Mockito.*;
 
 class NotificationRabbitConsumerTest {
     @Test
+    void deliversTheFullRabbitJobAndCarriesItUnchangedAcrossRetry() throws Exception {
+        var job = new RabbitDeliveryJob("telegram_admin_reply:777", "telegram_admin_reply",
+                "{\"text\":\"reply body\"}", "[]");
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("temporary Telegram failure", 1_000))
+                .when(notifications).deliverQueuedAction(eq(job), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
+                mock(RabbitDeliveryMetrics.class));
+        Channel channel = mock(Channel.class);
+        Message message = message(job.toJson(), 0);
+        message.getMessageProperties().setMessageId(job.actionKey());
+
+        consumer.receive(message, channel);
+
+        verify(notifications).deliverQueuedAction(eq(job), any());
+        verify(publisher).publishDelayed(eq("admin-replies.retry.1"), eq(job.actionKey()),
+                eq(job.toJson()), eq(Map.of("x-retry-count", 1)), eq(1_000L));
+        verify(channel).basicAck(17L, false);
+    }
+
+    @Test
     void acknowledgesOnlyAfterTheNamedNotificationIsDelivered() throws Exception {
         NotificationService notifications = mock(NotificationService.class);
         when(notifications.deliverQueuedAction(eq("archived_messages:abc"), any())).thenReturn(true);

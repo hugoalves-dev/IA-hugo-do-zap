@@ -186,12 +186,17 @@ public class NotificationOutboxRepository {
 
     private void publishAction(String actionKey) {
         List<Object[]> publication = jdbc.query("""
-                select rabbit_ingress_at,available_at,action_type from outbox_actions where action_key=?
-                """, (rs, row) -> new Object[] {rs.getTimestamp(1), rs.getTimestamp(2), rs.getString(3)}, actionKey);
+                select rabbit_ingress_at,available_at,action_type,payload::text,pending_snapshot::text
+                from outbox_actions where action_key=?
+                """, (rs, row) -> new Object[] {rs.getTimestamp(1), rs.getTimestamp(2), rs.getString(3),
+                rs.getString(4), rs.getString(5)}, actionKey);
         java.util.Map<String, Object> headers = new java.util.HashMap<>();
         Timestamp ingress = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[0];
         Timestamp availableAt = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[1];
         String actionType = publication.isEmpty() ? null : (String) publication.getFirst()[2];
+        String payload = publication.isEmpty() ? null : (String) publication.getFirst()[3];
+        String pendingSnapshot = publication.isEmpty() ? null : (String) publication.getFirst()[4];
+        if (actionType == null || payload == null) return;
         if (ingress != null) headers.put("x-ingress-at", ingress.toInstant().toString());
         Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
         long delayMillis = availableAt == null ? 0
@@ -203,9 +208,11 @@ public class NotificationOutboxRepository {
                 : ("telegram_admin_reply".equals(actionType) || "telegram_admin_edit".equals(actionType))
                 ? "admin-replies" : "notifications";
         if (delayMillis > 0)
-            rabbitPublisher.publishDeferred(destination, availableAt.toInstant(), actionKey, actionKey, headers);
+            rabbitPublisher.publishDeferred(destination, availableAt.toInstant(), actionKey,
+                    new RabbitDeliveryJob(actionKey, actionType, payload, pendingSnapshot).toJson(), headers);
         else
-            rabbitPublisher.publish(destination, actionKey, actionKey, headers);
+            rabbitPublisher.publish(destination, actionKey,
+                    new RabbitDeliveryJob(actionKey, actionType, payload, pendingSnapshot).toJson(), headers);
         transactions.executeWithoutResult(status -> {
             int updated = jdbc.update("""
                     update outbox_actions set rabbit_confirmed_at=coalesce(rabbit_confirmed_at,clock_timestamp()),

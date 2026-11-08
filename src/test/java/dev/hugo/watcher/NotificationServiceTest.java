@@ -59,7 +59,7 @@ class NotificationServiceTest {
 
         org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
                 .when(publisher).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
-                        org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.eq("rabbit-test"),
+                        org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.anyString(),
                         org.mockito.ArgumentMatchers.anyMap());
         assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status ->
                 rabbitOutbox.enqueue("rabbit-test", "telegram_admin_reply", "{}", "[]", createdAt, expiry)));
@@ -67,9 +67,14 @@ class NotificationServiceTest {
                 java.sql.Timestamp.class));
 
         org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
-                org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.eq("rabbit-test"),
+                org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyMap());
         assertEquals(1, rabbitOutbox.publishPendingActions());
+        var jobJson = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(publisher, org.mockito.Mockito.times(2)).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
+                org.mockito.ArgumentMatchers.eq("rabbit-test"), jobJson.capture(), org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(new RabbitDeliveryJob("rabbit-test", "telegram_admin_reply", "{}", "[]"),
+                RabbitDeliveryJob.parse(jobJson.getValue()));
         assertNotNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key='rabbit-test'",
                 java.sql.Timestamp.class));
     }
@@ -91,7 +96,7 @@ class NotificationServiceTest {
         Instant expiry = createdAt.plus(Duration.ofDays(1));
         org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
                 .when(publisher).publish(org.mockito.ArgumentMatchers.eq("prompt-results"),
-                        org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.eq(actionKey),
+                        org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.anyString(),
                         org.mockito.ArgumentMatchers.anyMap());
 
         assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status ->
@@ -106,7 +111,7 @@ class NotificationServiceTest {
                 Timestamp.class, jobId));
 
         org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("prompt-results"),
-                org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.eq(actionKey),
+                org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyMap());
         assertEquals(1, rabbitOutbox.publishPendingAdminReplies());
         assertNotNull(jdbc.queryForObject(
