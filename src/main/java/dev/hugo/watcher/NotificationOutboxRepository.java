@@ -157,6 +157,31 @@ public class NotificationOutboxRepository {
         return keys.size();
     }
 
+    /** Replays only jobs that never reached a broker confirm; normal delivery remains post-commit. */
+    public int recoverUnconfirmedActions() {
+        if (rabbitPublisher == null) return 0;
+        List<String> keys = jdbc.query("""
+                select action_key from outbox_actions
+                where rabbit_confirmed_at is null
+                  and sensitive_expires_at>clock_timestamp()
+                  and (status='PENDING' or (status='PROCESSING' and lease_expires_at<=clock_timestamp()
+                    and (action_type<>'intelligent_alert' or not exists (
+                        select 1 from decision_delivery_attempts attempt where attempt.channel='TELEGRAM'
+                          and attempt.status in ('DISPATCHED','UNKNOWN')
+                          and attempt.decision_id::text=right(outbox_actions.action_key,36)))))
+                order by available_at,created_at,id limit 500
+                """, (rs, row) -> rs.getString(1));
+        keys.forEach(key -> {
+            int reset = jdbc.update("""
+                    update outbox_actions set status='PENDING',lease_token=null,lease_expires_at=null
+                    where action_key=? and status='PROCESSING' and lease_expires_at<=clock_timestamp()
+                    """, key);
+            if (reset == 1) promptGenerationResults.sync(key);
+            publishAction(key);
+        });
+        return keys.size();
+    }
+
     /** Publishes only pending Telegram admin replies, keeping the admin path isolated from other outbox work. */
     public int publishPendingAdminReplies() {
         if (rabbitPublisher == null) return 0;

@@ -49,7 +49,7 @@ class NotificationServiceTest {
     private final AtomicReference<String> receivedBody = new AtomicReference<>();
     private MutableClock clock;
 
-    @Test void rabbitOutboxPublishesAfterCommitAndRepublishesUnconfirmedRowsOnReplay() {
+    @Test void rabbitOutboxPublishesAfterCommitAndRecoversUnconfirmedHandoffs() {
         var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
         var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
         var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
@@ -69,7 +69,7 @@ class NotificationServiceTest {
         org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
                 org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyMap());
-        assertEquals(1, rabbitOutbox.publishPendingActions());
+        assertEquals(1, rabbitOutbox.recoverUnconfirmedActions());
         var jobJson = org.mockito.ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(publisher, org.mockito.Mockito.times(2)).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
                 org.mockito.ArgumentMatchers.eq("rabbit-test"), jobJson.capture(), org.mockito.ArgumentMatchers.anyMap());
