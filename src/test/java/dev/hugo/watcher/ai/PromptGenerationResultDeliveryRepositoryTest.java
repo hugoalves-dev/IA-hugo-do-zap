@@ -111,11 +111,11 @@ class PromptGenerationResultDeliveryRepositoryTest {
         assertDelivery(jobId, "PENDING", 0, null);
         assertNotNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key=?",
                 java.sql.Timestamp.class, key));
-        verify(broker).publish(eq("prompt-results"), eq(key), eq(key), anyMap());
+        verify(broker).publish(eq("prompt-results"), eq(key), anyString(), anyMap());
 
         jdbc.update("update outbox_actions set updated_at=clock_timestamp()-interval '61 seconds' where action_key=?", key);
         assertEquals(1, durableOutbox.publishPendingActions());
-        verify(broker, times(2)).publish(eq("prompt-results"), eq(key), eq(key), anyMap());
+        verify(broker, times(2)).publish(eq("prompt-results"), eq(key), anyString(), anyMap());
         assertDelivery(jobId, "PENDING", 0, null);
         assertEquals(0, durableOutbox.publishPendingActions(),
                 "repeat recovery should wait for the next replay threshold");
@@ -125,7 +125,7 @@ class PromptGenerationResultDeliveryRepositoryTest {
         assertNotNull(claim);
         assertTrue(durableOutbox.acknowledge(claim, now));
         assertEquals(0, durableOutbox.publishPendingActions());
-        verify(broker, times(2)).publish(eq("prompt-results"), eq(key), eq(key), anyMap());
+        verify(broker, times(2)).publish(eq("prompt-results"), eq(key), anyString(), anyMap());
     }
 
     @Test void expiredBrokerConfirmedResultWithoutAnyAttemptHasActionableFailureReason() {

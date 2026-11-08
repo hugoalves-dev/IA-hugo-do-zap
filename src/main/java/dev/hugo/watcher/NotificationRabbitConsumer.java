@@ -29,16 +29,26 @@ public class NotificationRabbitConsumer {
         this.metrics = metrics;
     }
 
-    @RabbitListener(queues = RabbitMessagingConfiguration.NOTIFICATION_QUEUE,
+    @RabbitListener(id = "notificationDelivery", queues = RabbitMessagingConfiguration.NOTIFICATION_QUEUE,
             containerFactory = "rabbitListenerContainerFactory")
     public void receive(Message message, Channel channel) throws java.io.IOException {
-        String actionKey = new String(message.getBody(), StandardCharsets.UTF_8);
+        String body = new String(message.getBody(), StandardCharsets.UTF_8);
+        final RabbitDeliveryJob job;
+        try {
+            job = RabbitDeliveryJob.parse(body);
+        } catch (IllegalArgumentException malformed) {
+            channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
+            return;
+        }
+        String actionKey = job == null ? body : job.actionKey();
         String messageId = message.getMessageProperties().getMessageId();
         Instant ingressAt = ingressAt(message);
         RabbitDeliveryContext.set(ingressAt);
         try {
-            boolean delivered = notifications.deliverQueuedAction(actionKey, Instant.now());
-            if (delivered) metrics.record(isAdminAction(actionKey) ? "admin" : "whatsapp", ingressAt);
+            boolean delivered = job == null
+                    ? notifications.deliverQueuedAction(actionKey, Instant.now())
+                    : notifications.deliverQueuedAction(job, Instant.now());
+            if (delivered) metrics.record("notifications".equals(route(actionKey, message)) ? "whatsapp" : "admin", ingressAt);
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (NotificationDeferredException deferred) {
             String id = messageId == null ? actionKey : messageId;
@@ -46,35 +56,42 @@ public class NotificationRabbitConsumer {
                     || deferred.reason() == NotificationDeferredException.Reason.SCHEDULED) {
                 Instant availableAt = deferred.availableAt() == null
                         ? Instant.now().plusMillis(deferred.delayMillis()) : deferred.availableAt();
-                if ("prompt-results".equals(route(actionKey)))
-                    publisher.publishDeferred("prompt-results", availableAt, id, actionKey, deferredHeaders(message));
+                if ("notifications".equals(route(actionKey, message)))
+                    publisher.publishDeferred(availableAt, id, body, deferredHeaders(message));
                 else
-                    publisher.publishDeferred(availableAt, id, actionKey, deferredHeaders(message));
+                    publisher.publishDeferred(route(actionKey, message), availableAt, id, body, deferredHeaders(message));
             } else {
-                String deferredRoute = deferredRoute(actionKey, deferred.reason());
+                String deferredRoute = deferredRoute(actionKey, message, deferred.reason());
                 long delay = deferred.reason() == NotificationDeferredException.Reason.ACTIVE_LEASE
                         ? LEASE_RETRY_DELAY_MILLIS : deferred.delayMillis();
-                publisher.publishDelayed(deferredRoute, id, actionKey, deferredHeaders(message), delay);
+                publisher.publishDelayed(deferredRoute, id, body, deferredHeaders(message), delay);
             }
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
         } catch (NotificationRetryException retry) {
             int retries = retryCount(message);
             if (retry.rateLimited()) {
-                retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey,
-                        retry.delayMillis(), route(actionKey) + ".rate-limited");
+                retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, body,
+                        retry.delayMillis(), route(actionKey, message) + ".rate-limited");
             } else {
                 long delay = RETRY_DELAY_MILLIS[Math.min(retries, RETRY_DELAY_MILLIS.length - 1)];
-                retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, delay,
-                        retryRoute(actionKey, retries + 1));
+                retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, body, delay,
+                        retryRoute(actionKey, message, retries + 1));
             }
         } catch (RuntimeException failure) {
             int retries = retryCount(message);
             long delay = RETRY_DELAY_MILLIS[Math.min(retries, RETRY_DELAY_MILLIS.length - 1)];
-            retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, delay,
-                    retryRoute(actionKey, retries + 1));
+            retryOrDeadLetter(message, channel, messageId == null ? actionKey : messageId, actionKey, body, delay,
+                    retryRoute(actionKey, message, retries + 1));
         } finally {
             RabbitDeliveryContext.clear();
         }
+    }
+
+    /** Keeps administrator replies responsive when notification delivery is backlogged. */
+    @RabbitListener(id = "adminReplyDelivery", queues = RabbitMessagingConfiguration.ADMIN_REPLY_QUEUE,
+            containerFactory = "rabbitListenerContainerFactory")
+    public void receiveAdminReply(Message message, Channel channel) throws java.io.IOException {
+        receive(message, channel);
     }
 
     /** Dedicated consumer prevents unrelated notification backlogs from starving prompt results. */
@@ -95,23 +112,28 @@ public class NotificationRabbitConsumer {
 
     private static boolean isAdminAction(String actionKey) {
         return actionKey.startsWith("telegram_admin_reply:") || actionKey.startsWith("telegram_admin_edit:")
-                || actionKey.startsWith("prompt-generation-result:");
+                || actionKey.startsWith("prompt-generation-result:")
+                || actionKey.startsWith("prompt-calibration-result:");
     }
 
-    private static String deferredRoute(String actionKey, NotificationDeferredException.Reason reason) {
+    private static String deferredRoute(String actionKey, Message message, NotificationDeferredException.Reason reason) {
         return switch (reason) {
             case WORK_WINDOW, SCHEDULED -> throw new IllegalArgumentException("scheduled actions use a date-specific queue");
-            case RATE_LIMIT -> route(actionKey) + ".rate-limited";
-            case ACTIVE_LEASE -> route(actionKey) + ".lease";
+            case RATE_LIMIT -> route(actionKey, message) + ".rate-limited";
+            case ACTIVE_LEASE -> route(actionKey, message) + ".lease";
         };
     }
 
-    private static String route(String actionKey) {
-        return actionKey.startsWith("prompt-generation-result:") ? "prompt-results" : "notifications";
+    private static String route(String actionKey, Message message) {
+        String queue = message.getMessageProperties().getConsumerQueue();
+        if (actionKey.startsWith("prompt-generation-result:")
+                || RabbitMessagingConfiguration.PROMPT_RESULT_QUEUE.equals(queue)) return "prompt-results";
+        return isAdminAction(actionKey) || RabbitMessagingConfiguration.ADMIN_REPLY_QUEUE.equals(queue)
+                ? "admin-replies" : "notifications";
     }
 
-    private static String retryRoute(String actionKey, int attempt) {
-        return route(actionKey) + ".retry." + Math.min(3, attempt);
+    private static String retryRoute(String actionKey, Message message, int attempt) {
+        return route(actionKey, message) + ".retry." + Math.min(3, attempt);
     }
 
     private static Map<String, Object> deferredHeaders(Message message) {
@@ -123,12 +145,12 @@ public class NotificationRabbitConsumer {
         return headers;
     }
 
-    private void retryOrDeadLetter(Message message, Channel channel, String id, String body, long delayMillis,
+    private void retryOrDeadLetter(Message message, Channel channel, String id, String actionKey, String body, long delayMillis,
                                    String retryRoute) throws java.io.IOException {
         int retries = retryCount(message);
         if (retries >= MAX_RETRIES) {
-            if (body.startsWith("prompt-generation-result:"))
-                notifications.markPromptGenerationResultDeadLetter(body);
+            if (actionKey.startsWith("prompt-generation-result:"))
+                notifications.markPromptGenerationResultDeadLetter(actionKey);
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
             return;
         }

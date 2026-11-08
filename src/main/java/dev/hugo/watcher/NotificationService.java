@@ -105,13 +105,20 @@ public class NotificationService {
     }
 
     public void flush(Instant now) {
-        if (now == null || !flushing.compareAndSet(false, true)) return;
+        flush(now, false);
+    }
+
+    private void flush(Instant now, boolean requireCompletion) {
+        if (now == null) return;
+        if (!flushing.compareAndSet(false, true)) {
+            if (requireCompletion) throw new IllegalStateException("Notification flush already in progress");
+            return;
+        }
         try {
             transactions.executeWithoutResult(status -> enqueueArchivedBatch(now));
-            if (outbox.rabbitDispatchEnabled()) {
-                outbox.publishPendingActions();
-                return;
-            }
+            // Rabbit jobs are published from the outbox insert's after-commit hook. The
+            // scheduler generates due business work; it does not poll PostgreSQL to dispatch it.
+            if (outbox.rabbitDispatchEnabled()) return;
             for (int sent = 0; sent < 20; sent++) {
                 Instant claimTime = clock.instant();
                 OutboxAction action = outbox.claimNext(claimTime);
@@ -128,7 +135,7 @@ public class NotificationService {
 
     /** Generates due notification state, then republishes pending state after an upstream replay. */
     public void flushAfterInbound(Instant now) {
-        flush(now);
+        flush(now, true);
         outbox.publishPendingActions();
     }
 
@@ -141,6 +148,18 @@ public class NotificationService {
     public boolean deliverQueuedAction(String actionKey, Instant now) {
         OutboxAction action = outbox.claimByKey(actionKey, now);
         return action != null && deliverClaimed(action);
+    }
+
+    /** Delivers the broker-carried job after validating it against durable idempotency state. */
+    public boolean deliverQueuedAction(RabbitDeliveryJob job, Instant now) {
+        OutboxAction action = outbox.claimByKey(job.actionKey(), now);
+        if (action == null) return false;
+        if (!action.actionType().equals(job.actionType()) || !action.payload().equals(job.payload())
+                || !action.pendingSnapshot().equals(job.pendingSnapshot())) {
+            outbox.retry(action, now, "RabbitDeliveryPayloadMismatch");
+            throw new IllegalStateException("RabbitMQ delivery payload does not match its idempotency record");
+        }
+        return deliverClaimed(action);
     }
 
     /** Persists the transport-level DLQ outcome without opening or logging the result payload. */

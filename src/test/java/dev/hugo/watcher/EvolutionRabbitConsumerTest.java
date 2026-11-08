@@ -66,6 +66,42 @@ class EvolutionRabbitConsumerTest {
     }
 
     @Test
+    void duplicateInboundStillDispatchesPendingNotificationsBeforeAck() throws Exception {
+        var inbox = mock(InboxRepository.class);
+        when(inbox.accept(any())).thenReturn(Acceptance.DUPLICATE);
+        var jobs = mock(EvolutionJobProcessor.class);
+        var notifications = mock(NotificationService.class);
+        var consumer = new EvolutionRabbitConsumer(inbox, jobs, mock(RabbitEventPublisher.class), properties(),
+                mock(ConnectionService.class), notifications, mock(RabbitDeliveryMetrics.class));
+        Channel channel = mock(Channel.class);
+
+        consumer.receive(message("evt-7", 0), channel);
+
+        var order = inOrder(notifications, channel);
+        order.verify(notifications).flushAfterInbound(any());
+        order.verify(channel).basicAck(31L, false);
+    }
+
+    @Test
+    void failedDownstreamPublishRetainsInboundUntilRetryIsConfirmed() throws Exception {
+        var inbox = mock(InboxRepository.class);
+        when(inbox.accept(any())).thenReturn(Acceptance.DUPLICATE);
+        var notifications = mock(NotificationService.class);
+        doThrow(new IllegalStateException("publish failed")).when(notifications).flushAfterInbound(any());
+        var publisher = mock(RabbitEventPublisher.class);
+        doThrow(new IllegalStateException("retry publish failed")).when(publisher)
+                .publishDelayed(anyString(), anyString(), anyString(), anyMap(), anyLong());
+        var consumer = new EvolutionRabbitConsumer(inbox, mock(EvolutionJobProcessor.class), publisher, properties(),
+                mock(ConnectionService.class), notifications, mock(RabbitDeliveryMetrics.class));
+        Channel channel = mock(Channel.class);
+
+        assertThrows(IllegalStateException.class, () -> consumer.receive(message("evt-7", 0), channel));
+
+        verify(channel, never()).basicAck(anyLong(), anyBoolean());
+        verify(channel, never()).basicNack(anyLong(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
     void deadLettersAfterTheBoundedRetryCount() throws Exception {
         var inbox = mock(InboxRepository.class);
         when(inbox.accept(any())).thenThrow(new IllegalStateException("database unavailable"));

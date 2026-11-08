@@ -3,6 +3,8 @@ package dev.hugo.watcher;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Declarables;
+import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -25,6 +27,7 @@ class RabbitMessagingConfiguration {
     static final String INCOMING_QUEUE = "watcher.incoming";
     static final String ADMIN_QUEUE = "watcher.admin";
     static final String NOTIFICATION_QUEUE = "watcher.notifications";
+    static final String ADMIN_REPLY_QUEUE = "watcher.admin-replies";
     static final String PROMPT_RESULT_QUEUE = "watcher.prompt-results";
     static final String DEAD_LETTER_QUEUE = "watcher.dead-letter";
     static final String DEAD_LETTER_EXCHANGE = "watcher.dead-letter";
@@ -109,6 +112,45 @@ class RabbitMessagingConfiguration {
     }
     @Bean Queue adminLeaseQueue(RabbitMessagingProperties properties) {
         return retryQueue("watcher.admin.lease", "admin", 120_000, properties);
+    }
+
+    @Bean Declarables adminReplyTopology(@Qualifier("watcherEventExchange") DirectExchange exchange,
+                                         RabbitMessagingProperties properties) {
+        var declarations = new java.util.ArrayList<org.springframework.amqp.core.Declarable>();
+        Queue replies = durableQueue(ADMIN_REPLY_QUEUE);
+        declarations.add(replies);
+        declarations.add(BindingBuilder.bind(replies).to(exchange).with("admin-replies"));
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            int ttl = new int[] { 1_000, 5_000, 30_000 }[attempt - 1];
+            String route = "admin-replies.retry." + attempt;
+            Queue queue = retryQueue("watcher." + route, "admin-replies", ttl, properties);
+            declarations.add(queue);
+            declarations.add(BindingBuilder.bind(queue).to(exchange).with(route));
+        }
+        Queue rateLimited = retryQueue("watcher.admin-replies.rate-limited", "admin-replies", properties);
+        Queue lease = retryQueue("watcher.admin-replies.lease", "admin-replies", 120_000, properties);
+        declarations.add(rateLimited);
+        declarations.add(lease);
+        declarations.add(BindingBuilder.bind(rateLimited).to(exchange).with("admin-replies.rate-limited"));
+        declarations.add(BindingBuilder.bind(lease).to(exchange).with("admin-replies.lease"));
+        return new Declarables(declarations);
+    }
+
+    /** Optional staging topology; native ingress must not be enabled before producer recovery is validated. */
+    @Bean
+    @ConditionalOnProperty(prefix = "watcher.rabbitmq.native-evolution", name = "enabled", havingValue = "true")
+    Declarables nativeEvolutionBindings(@Qualifier("watcherIncomingQueue") Queue queue,
+            @org.springframework.beans.factory.annotation.Value("${watcher.rabbitmq.native-evolution.exchange:watcher.evolution}")
+            String exchangeName) {
+        if (exchangeName == null || exchangeName.isBlank())
+            throw new IllegalArgumentException("native Evolution exchange is required");
+        TopicExchange exchange = new TopicExchange(exchangeName, true, false);
+        var declarations = new java.util.ArrayList<org.springframework.amqp.core.Declarable>();
+        declarations.add(exchange);
+        for (String route : java.util.List.of("messages.upsert", "connection.update", "contacts.upsert",
+                "contacts.update", "chats.upsert", "chats.update", "chats.set"))
+            declarations.add(BindingBuilder.bind(queue).to(exchange).with(route));
+        return new Declarables(declarations);
     }
 
     @Bean Binding incomingBinding(@Qualifier("watcherIncomingQueue") Queue queue,

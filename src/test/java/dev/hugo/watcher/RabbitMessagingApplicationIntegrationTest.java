@@ -51,6 +51,7 @@ class RabbitMessagingApplicationIntegrationTest {
         registry.add("watcher.evolution.instance", () -> "watcher-evolution");
         registry.add("watcher.whatsapp-actions.owner-jid", () -> "15550000000@s.whatsapp.net");
         registry.add("watcher.runtime.scheduling-enabled", () -> "false");
+        registry.add("watcher.rabbitmq.native-evolution.enabled", () -> "true");
     }
 
     @Autowired RabbitAdmin admin;
@@ -83,12 +84,14 @@ class RabbitMessagingApplicationIntegrationTest {
         assertNotNull(admin.getQueueInfo("watcher.incoming"));
         assertNotNull(admin.getQueueInfo("watcher.admin"));
         assertNotNull(admin.getQueueInfo("watcher.notifications"));
+        assertNotNull(admin.getQueueInfo("watcher.admin-replies"));
+        assertNotNull(admin.getQueueInfo("watcher.admin-replies.retry.1"));
         assertNotNull(admin.getQueueInfo("watcher.prompt-results"));
         assertNotNull(admin.getQueueInfo("watcher.prompt-results.rate-limited"));
         assertNotNull(admin.getQueueInfo("watcher.prompt-results.retry.1"));
         assertNotNull(admin.getQueueInfo("watcher.dead-letter"));
         assertNotNull(publisher);
-        assertEquals(4, listeners.getListenerContainers().size());
+        assertEquals(5, listeners.getListenerContainers().size());
         assertTrue(listeners.getListenerContainers().stream().allMatch(
                 org.springframework.amqp.rabbit.listener.MessageListenerContainer::isRunning));
         try {
@@ -140,6 +143,55 @@ class RabbitMessagingApplicationIntegrationTest {
                 select count(*) from processing_jobs job join inbox_events inbox on inbox.id=job.inbox_event_id
                 where inbox.event_type='contacts.upsert' and job.status='COMPLETED'
                 """, Integer.class));
+    }
+
+    @Test
+    void nativeEvolutionContactEventCanReachTheExistingConsumer() throws Exception {
+        var template = new org.springframework.amqp.rabbit.core.RabbitTemplate(admin.getRabbitTemplate().getConnectionFactory());
+        String body = """
+                {"event":"contacts.update","instance":"watcher-evolution","data":[
+                  {"remoteJid":"5511888812345@s.whatsapp.net","pushName":"Native Loja"}]}
+                """;
+        template.convertAndSend("watcher.evolution", "contacts.update", body, message -> {
+            message.getMessageProperties().setMessageId("native-contact-42");
+            return message;
+        });
+        boolean processed = false;
+        for (int attempt = 0; attempt < 50; attempt++) {
+            Integer count = jdbc.queryForObject("""
+                    select count(*) from contact_identity
+                    where canonical_jid='5511888812345@s.whatsapp.net' and display_name='Native Loja'
+                    """, Integer.class);
+            if (count != null && count == 1) { processed = true; break; }
+            Thread.sleep(100);
+        }
+        assertTrue(processed, "native topic event should be routed into the watcher consumer");
+    }
+
+    @Test
+    void adminReplyIsDeliveredWhileNotificationConsumerIsStopped() throws Exception {
+        var notificationListener = listeners.getListenerContainer("notificationDelivery");
+        assertNotNull(notificationListener);
+        String key = "telegram_admin_reply:" + java.util.UUID.randomUUID();
+        java.time.Instant now = java.time.Instant.now();
+        notificationListener.stop();
+        try {
+            OUTCOMES.clear();
+            jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null where singleton_id=1");
+            outbox.enqueue(key, "telegram_admin_reply",
+                    "{\"eventType\":\"telegram_admin_reply\",\"text\":\"teste\"}", "[]",
+                    now, now.plusSeconds(600));
+            boolean delivered = false;
+            for (int attempt = 0; attempt < 100; attempt++) {
+                String status = jdbc.queryForObject("select status from outbox_actions where action_key=?",
+                        String.class, key);
+                if ("ACKNOWLEDGED".equals(status)) { delivered = true; break; }
+                Thread.sleep(100);
+            }
+            assertTrue(delivered, "administrator reply should not depend on the notification consumer");
+        } finally {
+            notificationListener.start();
+        }
     }
 
     @Test

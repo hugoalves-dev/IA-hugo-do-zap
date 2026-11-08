@@ -15,6 +15,28 @@ import static org.mockito.Mockito.*;
 
 class NotificationRabbitConsumerTest {
     @Test
+    void deliversTheFullRabbitJobAndCarriesItUnchangedAcrossRetry() throws Exception {
+        var job = new RabbitDeliveryJob("telegram_admin_reply:777", "telegram_admin_reply",
+                "{\"text\":\"reply body\"}", "[]");
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("temporary Telegram failure", 1_000))
+                .when(notifications).deliverQueuedAction(eq(job), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        NotificationRabbitConsumer consumer = new NotificationRabbitConsumer(notifications, publisher,
+                mock(RabbitDeliveryMetrics.class));
+        Channel channel = mock(Channel.class);
+        Message message = message(job.toJson(), 0);
+        message.getMessageProperties().setMessageId(job.actionKey());
+
+        consumer.receive(message, channel);
+
+        verify(notifications).deliverQueuedAction(eq(job), any());
+        verify(publisher).publishDelayed(eq("admin-replies.retry.1"), eq(job.actionKey()),
+                eq(job.toJson()), eq(Map.of("x-retry-count", 1)), eq(1_000L));
+        verify(channel).basicAck(17L, false);
+    }
+
+    @Test
     void acknowledgesOnlyAfterTheNamedNotificationIsDelivered() throws Exception {
         NotificationService notifications = mock(NotificationService.class);
         when(notifications.deliverQueuedAction(eq("archived_messages:abc"), any())).thenReturn(true);
@@ -48,7 +70,7 @@ class NotificationRabbitConsumerTest {
     }
 
     @Test
-    void retriesOutgoingTelegramAdminActionsThroughTheNotificationQueue() throws Exception {
+    void retriesOutgoingTelegramAdminActionsThroughTheDedicatedQueue() throws Exception {
         String actionKey = "telegram_admin_reply:42";
         NotificationService notifications = mock(NotificationService.class);
         doThrow(new NotificationRetryException("temporary Telegram failure", 4_250))
@@ -60,8 +82,43 @@ class NotificationRabbitConsumerTest {
 
         consumer.receive(message(actionKey, 0), channel);
 
-        verify(publisher).publishDelayed("notifications.retry.1", actionKey, actionKey,
+        verify(publisher).publishDelayed("admin-replies.retry.1", actionKey, actionKey,
                 Map.of("x-retry-count", 1), 1_000);
+        verify(channel).basicAck(17L, false);
+    }
+
+    @Test
+    void replyRouteSurvivesRetryForAnUnrecognizedActionKey() throws Exception {
+        String key = "custom-admin-action:42";
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("temporary failure", 1_000))
+                .when(notifications).deliverQueuedAction(eq(key), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        Channel channel = mock(Channel.class);
+        Message event = message(key, 0);
+        event.getMessageProperties().setConsumerQueue("watcher.admin-replies");
+
+        new NotificationRabbitConsumer(notifications, publisher, mock(RabbitDeliveryMetrics.class))
+                .receive(event, channel);
+
+        verify(publisher).publishDelayed("admin-replies.retry.1", key, key,
+                Map.of("x-retry-count", 1), 1_000);
+        verify(channel).basicAck(17L, false);
+    }
+
+    @Test
+    void calibrationResultRetryUsesAdminReplyQueue() throws Exception {
+        String key = "prompt-calibration-result:42";
+        NotificationService notifications = mock(NotificationService.class);
+        doThrow(new NotificationRetryException("temporary failure", 1_000))
+                .when(notifications).deliverQueuedAction(eq(key), any());
+        RabbitEventPublisher publisher = mock(RabbitEventPublisher.class);
+        RabbitDeliveryMetrics metrics = mock(RabbitDeliveryMetrics.class);
+        Channel channel = mock(Channel.class);
+
+        new NotificationRabbitConsumer(notifications, publisher, metrics).receive(message(key, 0), channel);
+
+        verify(publisher).publishDelayed("admin-replies.retry.1", key, key, Map.of("x-retry-count", 1), 1_000);
         verify(channel).basicAck(17L, false);
     }
 
@@ -121,7 +178,7 @@ class NotificationRabbitConsumerTest {
     }
 
     @Test
-    void defersRateLimitedTelegramAdminRepliesThroughTheNotificationQueue() throws Exception {
+    void defersRateLimitedTelegramAdminRepliesThroughTheDedicatedQueue() throws Exception {
         String actionKey = "telegram_admin_reply:429";
         NotificationService notifications = mock(NotificationService.class);
         doThrow(new NotificationRetryException("rate limited", 4_250, true))
@@ -133,7 +190,7 @@ class NotificationRabbitConsumerTest {
 
         consumer.receive(message(actionKey, 0), channel);
 
-        verify(publisher).publishDelayed("notifications.rate-limited", actionKey, actionKey,
+        verify(publisher).publishDelayed("admin-replies.rate-limited", actionKey, actionKey,
                 Map.of("x-retry-count", 1), 4_250);
         verify(channel).basicAck(17L, false);
     }
@@ -156,7 +213,7 @@ class NotificationRabbitConsumerTest {
     }
 
     @Test
-    void defersLeasedTelegramAdminRepliesThroughTheNotificationQueue() throws Exception {
+    void defersLeasedTelegramAdminRepliesThroughTheDedicatedQueue() throws Exception {
         String actionKey = "telegram_admin_reply:lease";
         NotificationService notifications = mock(NotificationService.class);
         doThrow(new NotificationDeferredException(1_000, NotificationDeferredException.Reason.ACTIVE_LEASE))
@@ -168,7 +225,7 @@ class NotificationRabbitConsumerTest {
 
         consumer.receive(message(actionKey, 0), channel);
 
-        verify(publisher).publishDelayed("notifications.lease", actionKey, actionKey,
+        verify(publisher).publishDelayed("admin-replies.lease", actionKey, actionKey,
                 Map.of("x-retry-count", 0), 120_000);
         verify(channel).basicAck(17L, false);
     }

@@ -157,6 +157,31 @@ public class NotificationOutboxRepository {
         return keys.size();
     }
 
+    /** Replays only jobs that never reached a broker confirm; normal delivery remains post-commit. */
+    public int recoverUnconfirmedActions() {
+        if (rabbitPublisher == null) return 0;
+        List<String> keys = jdbc.query("""
+                select action_key from outbox_actions
+                where rabbit_confirmed_at is null
+                  and sensitive_expires_at>clock_timestamp()
+                  and (status='PENDING' or (status='PROCESSING' and lease_expires_at<=clock_timestamp()
+                    and (action_type<>'intelligent_alert' or not exists (
+                        select 1 from decision_delivery_attempts attempt where attempt.channel='TELEGRAM'
+                          and attempt.status in ('DISPATCHED','UNKNOWN')
+                          and attempt.decision_id::text=right(outbox_actions.action_key,36)))))
+                order by available_at,created_at,id limit 500
+                """, (rs, row) -> rs.getString(1));
+        keys.forEach(key -> {
+            int reset = jdbc.update("""
+                    update outbox_actions set status='PENDING',lease_token=null,lease_expires_at=null
+                    where action_key=? and status='PROCESSING' and lease_expires_at<=clock_timestamp()
+                    """, key);
+            if (reset == 1) promptGenerationResults.sync(key);
+            publishAction(key);
+        });
+        return keys.size();
+    }
+
     /** Publishes only pending Telegram admin replies, keeping the admin path isolated from other outbox work. */
     public int publishPendingAdminReplies() {
         if (rabbitPublisher == null) return 0;
@@ -186,12 +211,17 @@ public class NotificationOutboxRepository {
 
     private void publishAction(String actionKey) {
         List<Object[]> publication = jdbc.query("""
-                select rabbit_ingress_at,available_at,action_type from outbox_actions where action_key=?
-                """, (rs, row) -> new Object[] {rs.getTimestamp(1), rs.getTimestamp(2), rs.getString(3)}, actionKey);
+                select rabbit_ingress_at,available_at,action_type,payload::text,pending_snapshot::text
+                from outbox_actions where action_key=?
+                """, (rs, row) -> new Object[] {rs.getTimestamp(1), rs.getTimestamp(2), rs.getString(3),
+                rs.getString(4), rs.getString(5)}, actionKey);
         java.util.Map<String, Object> headers = new java.util.HashMap<>();
         Timestamp ingress = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[0];
         Timestamp availableAt = publication.isEmpty() ? null : (Timestamp) publication.getFirst()[1];
         String actionType = publication.isEmpty() ? null : (String) publication.getFirst()[2];
+        String payload = publication.isEmpty() ? null : (String) publication.getFirst()[3];
+        String pendingSnapshot = publication.isEmpty() ? null : (String) publication.getFirst()[4];
+        if (actionType == null || payload == null) return;
         if (ingress != null) headers.put("x-ingress-at", ingress.toInstant().toString());
         Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
         long delayMillis = availableAt == null ? 0
@@ -199,11 +229,15 @@ public class NotificationOutboxRepository {
         // Prompt results have their own durable consumer so an unrelated Telegram backlog cannot starve them.
         // Confirmed-but-unclaimed results are replayed with the same idempotent action key.
         String destination = "telegram_admin_reply".equals(actionType)
-                && actionKey.startsWith("prompt-generation-result:") ? "prompt-results" : "notifications";
+                && actionKey.startsWith("prompt-generation-result:") ? "prompt-results"
+                : ("telegram_admin_reply".equals(actionType) || "telegram_admin_edit".equals(actionType))
+                ? "admin-replies" : "notifications";
         if (delayMillis > 0)
-            rabbitPublisher.publishDeferred(destination, availableAt.toInstant(), actionKey, actionKey, headers);
+            rabbitPublisher.publishDeferred(destination, availableAt.toInstant(), actionKey,
+                    new RabbitDeliveryJob(actionKey, actionType, payload, pendingSnapshot).toJson(), headers);
         else
-            rabbitPublisher.publish(destination, actionKey, actionKey, headers);
+            rabbitPublisher.publish(destination, actionKey,
+                    new RabbitDeliveryJob(actionKey, actionType, payload, pendingSnapshot).toJson(), headers);
         transactions.executeWithoutResult(status -> {
             int updated = jdbc.update("""
                     update outbox_actions set rabbit_confirmed_at=coalesce(rabbit_confirmed_at,clock_timestamp()),
