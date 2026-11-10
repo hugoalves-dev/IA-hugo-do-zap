@@ -289,7 +289,8 @@ class WhatsAppActionServiceTest {
         var decision = new dev.hugo.watcher.simulation.DecisionEngine().decide(
                 new dev.hugo.watcher.simulation.Batch(decisionId, "15551234567@s.whatsapp.net", "", java.util.List.of()),
                 dev.hugo.watcher.simulation.Classification.contactRequest(),
-                new dev.hugo.watcher.policy.EffectivePolicy(java.util.Map.of(), null, policy), now);
+                new dev.hugo.watcher.policy.EffectivePolicy(java.util.Map.of(), null, policy), now,
+                dev.hugo.watcher.simulation.OwnerConversationActivity.INACTIVE);
         assertTrue(decision.wouldReply());
         assertTrue(decision.realActionAllowed());
         jdbc.update("update simulation_decisions set template_id=?,would_reply=?,would_alert=?,real_action_allowed=?,decision_state=? where batch_id=?",

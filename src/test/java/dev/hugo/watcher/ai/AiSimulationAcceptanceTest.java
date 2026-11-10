@@ -956,7 +956,10 @@ class AiSimulationAcceptanceTest {
         jdbc.update("insert into whatsapp_owner_message_references(chat_jid,external_id,observed_at,expires_at) values (?,'owner-outbound',now(),now()+interval '1 day')",chat);
         var content=Map.<String,Object>of("extendedTextMessage",Map.of("text","request","contextInfo",Map.of("stanzaId","owner-outbound")));
         producingService(true,critical()).evaluate(batch(chat,content));
-        assertEquals(1,countActions()); assertEquals(1,countAlerts());
+        assertEquals(0,countActions(),"recent verified owner activity must suppress an automatic reply");
+        assertEquals(1,countAlerts(),"owner activity must not suppress the separately authorized Telegram alert");
+        assertEquals("owner_recently_active", jdbc.queryForObject(
+                "select blocked_reason from simulation_decisions", String.class));
     }
     @Test void fabricatedInMemoryMentionCannotReplacePersistedContext() {
         authorizeProducer(); var actual=batch();
