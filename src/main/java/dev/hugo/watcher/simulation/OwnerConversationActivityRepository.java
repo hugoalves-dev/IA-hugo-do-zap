@@ -33,7 +33,7 @@ public class OwnerConversationActivityRepository {
                     return value == null ? null : value.toInstant();
                 }, canonicalChat, canonicalChat, Timestamp.from(now));
         Instant last = latest.isEmpty() ? null : latest.getFirst();
-        return last == null || !last.isAfter(cutoff)
+        return last == null || last.isBefore(cutoff)
                 ? OwnerConversationActivity.INACTIVE : OwnerConversationActivity.ACTIVE;
     }
 }

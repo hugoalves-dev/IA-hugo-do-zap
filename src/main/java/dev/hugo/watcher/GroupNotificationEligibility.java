@@ -31,6 +31,7 @@ public final class GroupNotificationEligibility {
                                           java.util.function.Function<String, String> canonicalize) {
         if (content == null || ownerJid == null || ownerJid.isBlank()) return false;
         String canonicalOwner = canonicalize.apply(ownerJid);
+        if (canonicalOwner == null || canonicalOwner.isBlank()) return false;
         for (String variant : MESSAGE_VARIANTS) {
             Object value = content.get(variant);
             if (!(value instanceof Map<?, ?> message) || !(message.get("contextInfo") instanceof Map<?, ?> context)) continue;

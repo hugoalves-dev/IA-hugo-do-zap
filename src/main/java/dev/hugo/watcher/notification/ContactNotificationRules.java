@@ -51,7 +51,8 @@ public final class ContactNotificationRules {
             if ("CONTACT".equals(rule.selectorType())) contacts.add(rule);
             else if ("MARKER".equals(rule.selectorType()) && tokens.contains(rule.selector())) markers.add(rule);
         }
-        if (contacts.isEmpty() && markers.isEmpty() && !policies.hasExplicitChatOverride(canonicalJid)) return unchanged;
+        if (contacts.isEmpty() && markers.isEmpty()
+                && (!group || !policies.hasExplicitChatOverride(canonicalJid))) return unchanged;
 
         String markerProfile = profile(markers, fallback);
         String selectedProfile = profile(contacts, markerProfile);

@@ -55,7 +55,8 @@ public final class DecisionRuntimeGate {
     /** Compatibility constructor retained for existing standalone tests. */
     public DecisionRuntimeGate(JdbcTemplate jdbc, Clock clock, WatcherProperties watcher, String ownerJid) {
         this(new DecisionRuntimeQueryRepository(jdbc), clock, watcher, ownerJid,
-                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new HolidayService(jdbc));
+                new PersistedPolicyRepository(jdbc, new PolicyResolver()), new HolidayService(jdbc),
+                new OwnerConversationActivityRepository(jdbc), new WatcherSimulationProperties());
     }
     public boolean allows(UUID id, boolean alert) {
         if (operational == null || !operational.classification() || (alert ? !operational.alerts() : !operational.replies())) return false;
