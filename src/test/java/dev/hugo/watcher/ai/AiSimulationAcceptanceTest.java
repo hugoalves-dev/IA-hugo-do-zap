@@ -45,6 +45,7 @@ class AiSimulationAcceptanceTest {
         jdbc.update("delete from simulation_decisions");
         jdbc.update("delete from simulation_batches");
         jdbc.update("delete from simulation_owner_context");
+        jdbc.update("delete from whatsapp_owner_message_references");
         jdbc.update("delete from chat_automation_authorizations");
         jdbc.update("delete from decision_cooldowns");
         jdbc.update("delete from availability_overrides");
@@ -955,7 +956,10 @@ class AiSimulationAcceptanceTest {
         jdbc.update("insert into whatsapp_owner_message_references(chat_jid,external_id,observed_at,expires_at) values (?,'owner-outbound',now(),now()+interval '1 day')",chat);
         var content=Map.<String,Object>of("extendedTextMessage",Map.of("text","request","contextInfo",Map.of("stanzaId","owner-outbound")));
         producingService(true,critical()).evaluate(batch(chat,content));
-        assertEquals(1,countActions()); assertEquals(1,countAlerts());
+        assertEquals(0,countActions(),"recent verified owner activity must suppress an automatic reply");
+        assertEquals(1,countAlerts(),"owner activity must not suppress the separately authorized Telegram alert");
+        assertEquals("owner_recently_active", jdbc.queryForObject(
+                "select blocked_reason from simulation_decisions", String.class));
     }
     @Test void fabricatedInMemoryMentionCannotReplacePersistedContext() {
         authorizeProducer(); var actual=batch();
@@ -1199,7 +1203,11 @@ class AiSimulationAcceptanceTest {
         simulation.setEnabled(shadowEnabled);
         return new dev.hugo.watcher.OperationalState(jdbc,flags,config,simulation,true);
     }
-    private SimulationService prepared(SimulationService service) { service.configureOperationalState(state()); return service; }
+    private SimulationService prepared(SimulationService service) {
+        service.configureOperationalState(state());
+        service.configureOwnerConversationActivity(new dev.hugo.watcher.simulation.OwnerConversationActivityRepository(jdbc));
+        return service;
+    }
     private dev.hugo.watcher.notification.DecisionRuntimeGate gate() {
         var gate=new dev.hugo.watcher.notification.DecisionRuntimeGate(jdbc,clock,new WatcherProperties(),"owner@s.whatsapp.net");
         gate.configureOperationalState(state()); return gate;

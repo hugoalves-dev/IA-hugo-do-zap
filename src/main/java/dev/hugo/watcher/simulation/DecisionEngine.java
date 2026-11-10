@@ -15,29 +15,40 @@ import java.util.Objects;
 @Component
 public final class DecisionEngine {
     public Decision decide(Batch batch, Classification classification, EffectivePolicy policy, Instant now) {
+        // Missing activity evidence is never permission to recommend a reply.
+        return decide(batch, classification, policy, now, OwnerConversationActivity.UNKNOWN);
+    }
+
+    public Decision decide(Batch batch, Classification classification, EffectivePolicy policy, Instant now,
+                           OwnerConversationActivity ownerActivity) {
         Objects.requireNonNull(batch, "batch");
         Objects.requireNonNull(classification, "classification");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(now, "now");
         boolean notificationRecommended = classification.notificationRecommended();
-        boolean replyRecommended = classification.replyRecommended();
+        boolean replyRecommended = classification.replyRecommended()
+                && ownerActivity == OwnerConversationActivity.INACTIVE;
 
         if (policy.availability() != null
                 && policy.availability().source() == dev.hugo.watcher.policy.AvailabilitySource.NO_POLICY)
-            return undecided(classification, "availability_policy_incomplete", List.of("availability_policy_incomplete"));
+            return undecided(classification, "availability_policy_incomplete", List.of("availability_policy_incomplete"), ownerActivity);
         DecisionPolicy settings = policy.decisionPolicy();
         if (settings == null || !settings.aiClassificationEnabled())
-            return undecided(classification, "ai_classification_disabled", List.of("ai_classification_disabled"));
+            return undecided(classification, "ai_classification_disabled", List.of("ai_classification_disabled"), ownerActivity);
         if (!classification.available() || classification.status() != ClassificationResult.Status.CLASSIFIED) {
             String reason = classification.status() == ClassificationResult.Status.UNCERTAIN
                     ? "classification_uncertain" : "classification_unavailable";
-            return undecided(classification, reason, List.of(reason));
+            return undecided(classification, reason, List.of(reason), ownerActivity);
         }
 
         TriageOutcome triage = !notificationRecommended ? TriageOutcome.IGNORE
                 : replyRecommended ? TriageOutcome.NOTIFY_AND_REPLY : TriageOutcome.NOTIFY_ONLY;
         String triageReason = triageReason(classification, triage);
         List<String> blockers = new ArrayList<>();
+        if (classification.replyRecommended() && ownerActivity == OwnerConversationActivity.ACTIVE)
+            blockers.add("owner_recently_active");
+        else if (classification.replyRecommended() && ownerActivity != OwnerConversationActivity.INACTIVE)
+            blockers.add("owner_activity_unavailable");
         boolean critical = classification.situations().contains(Situation.CRITICAL_URGENCY)
                 || classification.urgency() == ClassificationResult.Urgency.CRITICAL;
         if (critical && !classification.explicitPersonalReference()) {
@@ -153,10 +164,18 @@ public final class DecisionEngine {
         return classification.diagnostic() == null ? "classification_unavailable" : classification.diagnostic();
     }
 
-    private static Decision undecided(Classification classification, String reason, List<String> blockers) {
+    private static Decision undecided(Classification classification, String reason, List<String> blockers,
+                                      OwnerConversationActivity ownerActivity) {
+        List<String> effectiveBlockers = new ArrayList<>(blockers);
+        if (classification.replyRecommended() && ownerActivity == OwnerConversationActivity.ACTIVE)
+            effectiveBlockers.add("owner_recently_active");
+        else if (classification.replyRecommended() && ownerActivity != OwnerConversationActivity.INACTIVE)
+            effectiveBlockers.add("owner_activity_unavailable");
         return decision(false, false, null, reason, reason, false, reason, TriageOutcome.UNDECIDED,
                 classification.available() && classification.notificationRecommended(),
-                classification.available() && classification.replyRecommended(), reason, blockers);
+                classification.available() && classification.replyRecommended()
+                        && ownerActivity == OwnerConversationActivity.INACTIVE,
+                reason, effectiveBlockers);
     }
 
     private static Decision decision(boolean alert, boolean reply, String template, String reason, String blocked,

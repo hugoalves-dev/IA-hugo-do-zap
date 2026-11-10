@@ -78,6 +78,17 @@ public class PersistedPolicyRepository {
                 explicit.isEmpty() ? ChatOverride.empty() : new ChatOverride(parse(explicit.getFirst().fields())));
     }
 
+    /** Whether exact chat/JID aliases have an explicit persisted policy override. */
+    public boolean hasExplicitChatOverride(String chat) {
+        if (chat == null || chat.isBlank()) return false;
+        if (overrides == null) return Boolean.TRUE.equals(legacyJdbc.queryForObject("""
+                select exists(select 1 from chat_policy_overrides
+                 where chat_jid=? or chat_jid in
+                       (select alias from identity_aliases where canonical_identity=?))
+                """, Boolean.class, chat, chat));
+        return !overrides.forCanonicalChat(chat, chat).isEmpty();
+    }
+
     private static Map<PolicyField,Object> parse(String raw) {
         JsonNode fields = JSON.readTree(raw);
         if (!fields.isObject()) throw new IllegalArgumentException("policy fields must be an object");

@@ -14,11 +14,54 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DecisionEngineTest {
-    private static final Instant NOW = Instant.parse("2026-10-27T12:00:00Z");
+    // Incident fixture: decision at 17:26:52 BRT; authenticated owner message at 17:21:32 BRT.
+    private static final Instant NOW = Instant.parse("2026-11-10T20:26:52Z");
     private final DecisionEngine engine = new DecisionEngine();
 
+    @Test void activeConversationSuppressesReplyRecommendationButKeepsNotification() {
+        var classification = Classification.classified(Set.of(Situation.CONTACT_REQUEST), true, true, true,
+                java.util.List.of(dev.hugo.watcher.ai.ClassificationResult.Evidence.EXPLICIT_REQUEST), false, false,
+                dev.hugo.watcher.ai.ClassificationResult.Urgency.NORMAL, 0.91, null);
+
+        Decision decision = decide(batch(false), classification, policy(true), NOW,
+                OwnerConversationActivity.ACTIVE);
+
+        assertTrue(decision.notificationRecommended());
+        assertEquals(TriageOutcome.NOTIFY_ONLY, decision.triageOutcome());
+        assertFalse(decision.replyRecommended());
+        assertFalse(decision.wouldReply());
+        assertTrue(decision.triageBlockers().contains("owner_recently_active"));
+    }
+
+    @Test void unknownOwnerActivityFailsClosedOnlyForReply() {
+        var classification = Classification.classified(Set.of(Situation.CONTACT_REQUEST), true, true, true,
+                java.util.List.of(dev.hugo.watcher.ai.ClassificationResult.Evidence.EXPLICIT_REQUEST), false, false,
+                dev.hugo.watcher.ai.ClassificationResult.Urgency.NORMAL, 0.91, null);
+
+        Decision decision = decide(batch(false), classification, policy(true), NOW,
+                OwnerConversationActivity.UNKNOWN);
+
+        assertTrue(decision.notificationRecommended());
+        assertEquals(TriageOutcome.NOTIFY_ONLY, decision.triageOutcome());
+        assertFalse(decision.replyRecommended());
+        assertFalse(decision.wouldReply());
+        assertTrue(decision.triageBlockers().contains("owner_activity_unavailable"));
+    }
+
+    @Test void missingActivityContextIsNotPermissionForReply() {
+        var classification = Classification.classified(Set.of(Situation.CONTACT_REQUEST), true, true, true,
+                java.util.List.of(dev.hugo.watcher.ai.ClassificationResult.Evidence.EXPLICIT_REQUEST), false, false,
+                dev.hugo.watcher.ai.ClassificationResult.Urgency.NORMAL, 0.91, null);
+
+        Decision decision = engine.decide(batch(false), classification, policy(true), NOW);
+
+        assertTrue(decision.notificationRecommended());
+        assertFalse(decision.replyRecommended());
+        assertFalse(decision.wouldReply());
+    }
+
     @Test void isolatedGreetingDoesNotAuthorizeReply() {
-        Decision decision = engine.decide(batch(false), Classification.greeting(), policy(true), NOW);
+        Decision decision = decide(batch(false), Classification.greeting(), policy(true), NOW);
         assertFalse(decision.wouldReply());
         assertEquals("no_request_detected", decision.reason());
         assertEquals(DecisionStatus.NO_ACTION, decision.status());
@@ -27,7 +70,7 @@ class DecisionEngineTest {
     }
 
     @Test void unavailableClassifierFailsClosedWithAuditableReason() {
-        Decision decision = engine.decide(batch(false), Classification.unavailable(), policy(true), NOW);
+        Decision decision = decide(batch(false), Classification.unavailable(), policy(true), NOW);
         assertFalse(decision.wouldAlert());
         assertFalse(decision.wouldReply());
         assertEquals("classification_unavailable", decision.blockedReason());
@@ -39,23 +82,23 @@ class DecisionEngineTest {
         var classification = new Classification(Set.of(), false, false, false, false,
                 dev.hugo.watcher.ai.ClassificationResult.Urgency.UNCERTAIN, 0.3,
                 dev.hugo.watcher.ai.ClassificationResult.Status.UNCERTAIN, null);
-        Decision decision = engine.decide(batch(false), classification, policy(true), NOW);
+        Decision decision = decide(batch(false), classification, policy(true), NOW);
         assertEquals("classification_uncertain", decision.blockedReason());
         assertFalse(decision.realActionAllowed());
     }
 
     @Test void contactRequestNeedsExplicitAuthorizationAndTemplate() {
         var classification = Classification.contactRequest();
-        Decision unauthorized = engine.decide(batch(false), classification, policy(true, Set.of(), true, true), NOW);
+        Decision unauthorized = decide(batch(false), classification, policy(true, Set.of(), true, true), NOW);
         assertFalse(unauthorized.wouldReply());
         assertEquals(TriageOutcome.NOTIFY_AND_REPLY, unauthorized.triageOutcome());
-        assertFalse(engine.decide(batch(false), classification, policy(true, Set.of(Situation.CONTACT_REQUEST), false, true), NOW).wouldReply());
-        assertTrue(engine.decide(batch(false), classification,
+        assertFalse(decide(batch(false), classification, policy(true, Set.of(Situation.CONTACT_REQUEST), false, true), NOW).wouldReply());
+        assertTrue(decide(batch(false), classification,
                 policy(true, Set.of(Situation.CONTACT_REQUEST), true, true), NOW).wouldReply());
     }
 
     @Test void groupTriggerAloneDoesNotCreateCriticalPersonalReference() {
-        Decision decision = engine.decide(batch(true), Classification.groupTriggerCritical(false),
+        Decision decision = decide(batch(true), Classification.groupTriggerCritical(false),
                 policy(true, Set.of(Situation.GROUP_TRIGGER, Situation.CRITICAL_URGENCY), true, true), NOW);
         assertFalse(decision.wouldAlert());
         assertEquals("critical_reference_required", decision.blockedReason());
@@ -64,21 +107,21 @@ class DecisionEngineTest {
 
     @Test void groupReplyNeedsGroupAuthorizationAndVersionedTemplate() {
         var classification = Classification.groupTriggerCritical(true);
-        assertFalse(engine.decide(batch(true), classification,
+        assertFalse(decide(batch(true), classification,
                 policy(true, Set.of(), true, true), NOW).wouldReply());
-        assertFalse(engine.decide(batch(true), classification,
+        assertFalse(decide(batch(true), classification,
                 policy(true, Set.of(Situation.GROUP_TRIGGER), false, true), NOW).wouldReply());
         var settings = new DecisionPolicy(true, true, true, true, Set.of(Situation.GROUP_TRIGGER),
                 Map.of(Situation.GROUP_TRIGGER, new ResponseTemplate("group_trigger_v1", 1,
                         Situation.GROUP_TRIGGER, "Resposta automática: Grupo autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), null, null);
-        Decision decision = engine.decide(batch(true), classification, new EffectivePolicy(Map.of(), null, settings), NOW);
+        Decision decision = decide(batch(true), classification, new EffectivePolicy(Map.of(), null, settings), NOW);
         assertTrue(decision.wouldReply());
         assertEquals("group_trigger_v1@v1", decision.templateReference());
     }
 
     @Test void criticalUrgencyRequiresExplicitPersonalReference() {
-        Decision decision = engine.decide(batch(false), Classification.criticalUrgency(false),
+        Decision decision = decide(batch(false), Classification.criticalUrgency(false),
                 policy(true, Set.of(Situation.CRITICAL_URGENCY), true, true), NOW);
         assertFalse(decision.wouldAlert());
         assertEquals("critical_reference_required", decision.blockedReason());
@@ -89,7 +132,7 @@ class DecisionEngineTest {
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
                 new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), NOW.minusSeconds(60), NOW.minusSeconds(3600));
-        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+        Decision decision = decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
         assertFalse(decision.wouldReply());
         assertEquals("simulation_cooldown", decision.blockedReason());
@@ -102,7 +145,7 @@ class DecisionEngineTest {
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
                 new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), null, NOW.minusSeconds(60));
-        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+        Decision decision = decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
         assertTrue(decision.wouldReply());
         assertFalse(decision.realActionAllowed());
@@ -114,7 +157,7 @@ class DecisionEngineTest {
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
                 new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), NOW.minusSeconds(60), null);
-        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+        Decision decision = decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
         assertFalse(decision.wouldAlert());
         assertFalse(decision.wouldReply());
@@ -122,7 +165,7 @@ class DecisionEngineTest {
     }
 
     @Test void killSwitchBlocksRealActionWithoutSuppressingShadowDecision() {
-        Decision decision = engine.decide(batch(false), Classification.contactRequest(), policy(true), NOW);
+        Decision decision = decide(batch(false), Classification.contactRequest(), policy(true), NOW);
         assertTrue(decision.wouldReply());
         assertFalse(decision.realActionAllowed());
         assertEquals("kill_switch_enabled", decision.realBlockedReason());
@@ -133,7 +176,7 @@ class DecisionEngineTest {
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
                 new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Oi", true)),
                 Duration.ZERO, Duration.ofMinutes(60), null, null);
-        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+        Decision decision = decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
         assertFalse(decision.wouldReply());
         assertEquals("template_disclosure_required", decision.blockedReason());
@@ -144,7 +187,7 @@ class DecisionEngineTest {
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
                 new ResponseTemplate("contact_request_v2", 2, Situation.CONTACT_REQUEST, "Resposta automática: Oi", false)),
                 Duration.ZERO, Duration.ofMinutes(60), null, null);
-        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+        Decision decision = decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
         assertFalse(decision.wouldReply());
         assertEquals("template_disclosure_required", decision.blockedReason());
@@ -155,7 +198,7 @@ class DecisionEngineTest {
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
                 new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), NOW.minusSeconds(60), null);
-        Decision decision = engine.decide(batch(false), Classification.contactRequest(),
+        Decision decision = decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
         assertFalse(decision.wouldReply());
         assertFalse(decision.wouldAlert());
@@ -168,18 +211,18 @@ class DecisionEngineTest {
         EffectivePolicy effective = new EffectivePolicy(Map.of(), null, DecisionPolicy.disabled(),
                 new dev.hugo.watcher.policy.Availability(dev.hugo.watcher.policy.AvailabilityState.UNAVAILABLE,
                         dev.hugo.watcher.policy.AvailabilitySource.NO_POLICY,"incomplete"));
-        assertEquals("availability_policy_incomplete", engine.decide(batch(false), Classification.unavailable(), effective, NOW).blockedReason());
+        assertEquals("availability_policy_incomplete", decide(batch(false), Classification.unavailable(), effective, NOW).blockedReason());
     }
 
     @Test void unavailableOwnerAllowsOnlyPersonallyReferencedCriticalAlert() {
         var unavailable = new dev.hugo.watcher.policy.Availability(dev.hugo.watcher.policy.AvailabilityState.UNAVAILABLE,
                 dev.hugo.watcher.policy.AvailabilitySource.TEMPORARY_OVERRIDE,"busy");
         var ordinary = new EffectivePolicy(Map.of(), null, policy(true).decisionPolicy(), unavailable);
-        assertFalse(engine.decide(batch(false), Classification.contactRequest(), ordinary, NOW).wouldAlert());
+        assertFalse(decide(batch(false), Classification.contactRequest(), ordinary, NOW).wouldAlert());
         var critical = new EffectivePolicy(Map.of(), null,
                 policy(true,Set.of(Situation.CRITICAL_URGENCY),true,true).decisionPolicy(), unavailable);
-        assertFalse(engine.decide(batch(false), Classification.criticalUrgency(false), critical, NOW).wouldAlert());
-        assertTrue(engine.decide(batch(false), Classification.criticalUrgency(true), critical, NOW).wouldAlert());
+        assertFalse(decide(batch(false), Classification.criticalUrgency(false), critical, NOW).wouldAlert());
+        assertTrue(decide(batch(false), Classification.criticalUrgency(true), critical, NOW).wouldAlert());
     }
 
     @Test void lowUrgencyRelevantRequestRemainsNotifyOnlyWhenAlertActionsAreDisabled() {
@@ -189,7 +232,7 @@ class DecisionEngineTest {
         var settings = new DecisionPolicy(true, false, false, true, Set.of(), Map.of(),
                 Duration.ZERO, Duration.ZERO, null, null);
 
-        Decision decision = engine.decide(batch(false), classification,
+        Decision decision = decide(batch(false), classification,
                 new EffectivePolicy(Map.of(), null, settings), NOW);
 
         assertEquals(TriageOutcome.NOTIFY_ONLY, decision.triageOutcome());
@@ -207,7 +250,7 @@ class DecisionEngineTest {
         var settings = new DecisionPolicy(true, false, false, true, Set.of(), Map.of(),
                 Duration.ZERO, Duration.ZERO, null, null);
 
-        Decision decision = engine.decide(batch(false), classification,
+        Decision decision = decide(batch(false), classification,
                 new EffectivePolicy(Map.of(), null, settings), NOW);
 
         assertEquals(TriageOutcome.NOTIFY_AND_REPLY, decision.triageOutcome());
@@ -231,7 +274,7 @@ class DecisionEngineTest {
                         "Resposta automática: Grupo autorizado.", true)),
                 Duration.ZERO, Duration.ZERO, null, null);
 
-        Decision decision = engine.decide(batch(true), classification,
+        Decision decision = decide(batch(true), classification,
                 new EffectivePolicy(Map.of(), null, settings), NOW);
 
         assertEquals(TriageOutcome.NOTIFY_AND_REPLY, decision.triageOutcome());
@@ -250,13 +293,22 @@ class DecisionEngineTest {
                         "Resposta automática: retorno autorizado.", true)),
                 Duration.ZERO, Duration.ZERO, null, null);
 
-        Decision decision = engine.decide(batch(false), classification,
+        Decision decision = decide(batch(false), classification,
                 new EffectivePolicy(Map.of(), null, settings), NOW);
 
         assertEquals(TriageOutcome.NOTIFY_ONLY, decision.triageOutcome());
         assertFalse(decision.wouldAlert());
         assertTrue(decision.triageBlockers().contains("critical_alert_template_required"));
         assertEquals("critical_alert_template_required", decision.realBlockedReason());
+    }
+
+    private Decision decide(Batch batch, Classification classification, EffectivePolicy policy, Instant now) {
+        return engine.decide(batch, classification, policy, now, OwnerConversationActivity.INACTIVE);
+    }
+
+    private Decision decide(Batch batch, Classification classification, EffectivePolicy policy, Instant now,
+                            OwnerConversationActivity activity) {
+        return engine.decide(batch, classification, policy, now, activity);
     }
 
     private static Batch batch(boolean group) {

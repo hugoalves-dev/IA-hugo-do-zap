@@ -15,6 +15,8 @@ public class WatcherSimulationProperties {
     @Min(1) @Max(300) private int maxWaitSeconds = 30;
     @Min(1) @Max(7) private int sensitiveRetentionDays = 7;
     @Min(1) @Max(365) private int auditRetentionDays = 90;
+    @Min(1) @Max(1440) private int activeConversationWindowMinutes = 60;
+    @Min(1) @Max(10080) private int groupNotificationMaxAgeMinutes = 60;
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean value) { enabled = value; }
     public int getMaxMessages() { return maxMessages; }
@@ -29,4 +31,8 @@ public class WatcherSimulationProperties {
     public void setSensitiveRetentionDays(int value) { sensitiveRetentionDays = value; }
     public int getAuditRetentionDays() { return auditRetentionDays; }
     public void setAuditRetentionDays(int value) { auditRetentionDays = value; }
+    public int getActiveConversationWindowMinutes() { return activeConversationWindowMinutes; }
+    public void setActiveConversationWindowMinutes(int value) { activeConversationWindowMinutes = value; }
+    public int getGroupNotificationMaxAgeMinutes() { return groupNotificationMaxAgeMinutes; }
+    public void setGroupNotificationMaxAgeMinutes(int value) { groupNotificationMaxAgeMinutes = value; }
 }

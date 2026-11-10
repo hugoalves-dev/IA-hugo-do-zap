@@ -164,9 +164,12 @@ class PersistenceBeansConfiguration {
                                   IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes,
                                   dev.hugo.watcher.simulation.DebounceService debounce,
                                   WatcherSimulationProperties simulationProperties,
+                                  @Value("${watcher.whatsapp-actions.owner-jid:}") String ownerJid,
                                   @Value("${watcher.decision-producer.real-mode-enabled:false}") boolean realModeEnabled) {
-        return new MessageService(persistence, transactions, identities, properties, archiveModes,
+        MessageService service = new MessageService(persistence, transactions, identities, properties, archiveModes,
                 debounce, simulationProperties, realModeEnabled);
+        service.configureOwnerJid(ownerJid);
+        return service;
     }
 
     @Bean
@@ -195,9 +198,11 @@ class PersistenceBeansConfiguration {
             dev.hugo.watcher.notification.DecisionRuntimeQueryRepository queries,
             Clock clock, WatcherProperties watcher,
             @Value("${watcher.whatsapp-actions.owner-jid:}") String ownerJid,
-            PersistedPolicyRepository policies, HolidayService holidays) {
+            PersistedPolicyRepository policies, HolidayService holidays,
+            dev.hugo.watcher.simulation.OwnerConversationActivityRepository ownerActivity,
+            dev.hugo.watcher.simulation.WatcherSimulationProperties simulationProperties) {
         return new dev.hugo.watcher.notification.DecisionRuntimeGate(
-                queries, clock, watcher, ownerJid, policies, holidays);
+                queries, clock, watcher, ownerJid, policies, holidays, ownerActivity, simulationProperties);
     }
 
     @Bean

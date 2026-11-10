@@ -34,6 +34,7 @@ public class NotificationService {
     public static final String ARCHIVED_MESSAGES = "archived_messages";
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final System.Logger LOG = System.getLogger(NotificationService.class.getName());
+    private static final org.slf4j.Logger SAFE_LOG = org.slf4j.LoggerFactory.getLogger(NotificationService.class);
     private static final long MAX_RETENTION_SECONDS = 7 * 86_400L;
     private static final DateTimeFormatter LOCAL_ISO = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ssXXX");
 
@@ -49,6 +50,8 @@ public class NotificationService {
     private final dev.hugo.watcher.notification.DecisionDeliveryCoordinator deliveries;
     private final boolean triageLegacyFilterEnabled;
     private ContactNotificationRules contactRules;
+    private dev.hugo.watcher.simulation.WatcherSimulationProperties simulationProperties =
+            new dev.hugo.watcher.simulation.WatcherSimulationProperties();
     private EvolutionPipelineMetrics pipeline;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void configurePipelineMetrics(EvolutionPipelineMetrics pipeline) { this.pipeline = pipeline; }
@@ -58,6 +61,10 @@ public class NotificationService {
     }
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void configureContactRules(ContactNotificationRules rules) { this.contactRules = rules; }
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void configureSimulationProperties(dev.hugo.watcher.simulation.WatcherSimulationProperties properties) {
+        this.simulationProperties = properties;
+    }
     private final AtomicBoolean flushing = new AtomicBoolean();
 
     public NotificationService(JdbcTemplate jdbc, PlatformTransactionManager manager,
@@ -334,6 +341,10 @@ public class NotificationService {
                 if (row.group() && !properties.isIncludeGroups()) continue;
                 String displayName = resolveDisplayName(row);
                 if (row.group() && isBlockedGroup(displayName)) continue;
+                if (row.group() && !groupNotificationEligible(row, now)) {
+                    queries.discardPendingIfCurrent(row.chatJid(), row.generation());
+                    continue;
+                }
                 var route = route(row, now, inWindow);
                 String policy = route.profile();
                 if (!route.allowed()) continue;
@@ -420,6 +431,10 @@ public class NotificationService {
             String displayName = resolveDisplayName(row);
             if (row.group() && isBlockedGroup(displayName)) {
                 queries.discardBlockedGroup(row.chatJid());
+                continue;
+            }
+            if (row.group() && !groupNotificationEligible(row, now)) {
+                queries.discardPendingIfCurrent(row.chatJid(), row.generation());
                 continue;
             }
             var route = routing.get(row.chatJid());
@@ -514,6 +529,8 @@ public class NotificationService {
             Instant first = parseInstant(payload.get("firstMessageAt"));
             if (last == null || first == null) return null;
             Instant previewExpiry = parseInstant(payload.get("previewExpiresAt"));
+            boolean groupTrigger = Boolean.TRUE.equals(payload.get("groupNotificationEligible"));
+            Instant groupTriggerAt = parseInstant(payload.get("groupNotificationEligibleAt"));
             String preview = payload.get("preview") instanceof String text ? text : null;
             if (previewExpiry == null || !previewExpiry.isAfter(now)) preview = null;
             String canonicalJid = rs.getString("canonical_jid");
@@ -530,7 +547,8 @@ public class NotificationService {
                     phoneJid, lidJid, username, integer(payload.get("messageCount")),
                     first, last, preview, previewExpiry, rs.getTimestamp("updated_at").toInstant(),
                 rs.getTimestamp("expires_at").toInstant(), rs.getString("pending_generation"),
-                (Boolean) rs.getObject("archived"), rs.getBoolean("synchronized_snapshot"));
+                (Boolean) rs.getObject("archived"), rs.getBoolean("synchronized_snapshot"),
+                groupTrigger, groupTriggerAt);
         });
         return rows.stream().filter(row -> mode.accepts(row.archived(), row.synchronizedSnapshot())).toList();
     }
@@ -568,6 +586,20 @@ public class NotificationService {
                     !legacyWorkOnly || inLegacyWindow, false);
         return contactRules.route(row.canonicalJid(), resolveDisplayName(row), row.group(), legacyWorkOnly,
                 inLegacyWindow, now);
+    }
+
+    private boolean groupNotificationEligible(PendingRow row, Instant now) {
+        var maxAge = java.time.Duration.ofMinutes(simulationProperties.getGroupNotificationMaxAgeMinutes());
+        if (!dev.hugo.watcher.GroupNotificationEligibility.isFresh(row.lastMessageAt(), now, maxAge)) return false;
+        boolean structural = row.groupNotificationEligible()
+                && dev.hugo.watcher.GroupNotificationEligibility.isFresh(row.groupNotificationEligibleAt(), now, maxAge);
+        if (structural) return true;
+        try {
+            return queries.hasExplicitGroupTrigger(row.canonicalJid());
+        } catch (DataAccessException unavailable) {
+            SAFE_LOG.warn("Per-group trigger lookup unavailable; group notification fails closed");
+            return false;
+        }
     }
 
     private boolean inWorkWindow(Instant now, ZoneId zone) {
@@ -697,6 +729,7 @@ public class NotificationService {
                               String previewSenderName, boolean group, String phoneJid, String lidJid, String username, int messageCount,
                               Instant firstMessageAt, Instant lastMessageAt, String preview, Instant previewExpiry,
                               Instant updatedAt, Instant expiresAt, String generation, Boolean archived,
-                              boolean synchronizedSnapshot) { }
+                              boolean synchronizedSnapshot, boolean groupNotificationEligible,
+                              Instant groupNotificationEligibleAt) { }
     private record LegacyChat(int messageCount, Map<String, Object> payload) { }
 }

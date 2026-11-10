@@ -428,7 +428,9 @@ class NotificationServiceTest {
 
     @Test void sendsAReadableTelegramSummaryAndAcknowledgesItsSnapshot() {
         seed("5511999999999@s.whatsapp.net", "Ana", false, 2, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "Oi, tudo bem?", NOW);
-        seed("120363000000000000@g.us", "Equipe", true, 3, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "[Image]", NOW);
+        seedAt("120363000000000000@g.us", "Equipe", true, 3, NOW.minus(Duration.ofMinutes(30)),
+                NOW.minus(Duration.ofMinutes(5)), "[Image]", NOW);
+        qualifyGroup("120363000000000000@g.us", NOW.minus(Duration.ofMinutes(5)));
 
         notifications.flush(NOW);
 
@@ -445,7 +447,9 @@ class NotificationServiceTest {
     @Test void groupMessageShowsGroupAndCanonicalParticipantNameSeparately() {
         String group = "120363000000000000@g.us";
         String participant = "5511999999999@s.whatsapp.net";
-        seed(group, "Equipe", true, 1, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "Olá", NOW);
+        seedAt(group, "Equipe", true, 1, NOW.minus(Duration.ofMinutes(30)),
+                NOW.minus(Duration.ofMinutes(5)), "Olá", NOW);
+        qualifyGroup(group, NOW.minus(Duration.ofMinutes(5)));
         jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?)", participant, participant);
         jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?,'CONTACT_NAME')",
                 participant, "João <Oficina> & Café");
@@ -538,6 +542,47 @@ class NotificationServiceTest {
         assertNull(receivedBody.get());
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions", Integer.class));
+    }
+
+    @Test void unrelatedAndStaleGroupBacklogAreSuppressedWithoutDeletingPrivatePending() {
+        String unrelatedGroup = "120363000000000099@g.us";
+        String staleGroup = "120363000000000098@g.us";
+        String privateChat = "5511888800000@s.whatsapp.net";
+        Instant staleAt = NOW.minus(Duration.ofHours(2));
+        seedAt(unrelatedGroup, "Equipe", true, 1, NOW.minus(Duration.ofMinutes(10)),
+                NOW.minus(Duration.ofMinutes(1)), "generic group question", NOW);
+        seedAt(staleGroup, "Equipe antiga", true, 356, staleAt, staleAt, "old activity", NOW);
+        qualifyGroup(staleGroup, staleAt);
+        seedAt(privateChat, "Contato", false, 2, NOW.minus(Duration.ofMinutes(10)),
+                NOW.minus(Duration.ofMinutes(1)), "private pending", NOW);
+        jdbc.update("update pending_notification set due_at=? where chat_jid=?",
+                java.sql.Timestamp.from(NOW.plus(Duration.ofMinutes(5))), privateChat);
+
+        notifications.flush(NOW);
+
+        assertNull(receivedBody.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid in (?,?)",
+                Integer.class, unrelatedGroup, staleGroup));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?",
+                Integer.class, privateChat));
+    }
+
+    @Test void explicitPerGroupTriggerCanAuthorizeConventionalNotification() {
+        String group = "120363000000000097@g.us";
+        seedAt(group, "Equipe autorizada", true, 1, NOW.minus(Duration.ofMinutes(10)),
+                NOW.minus(Duration.ofMinutes(1)), "explicit group trigger", NOW);
+        jdbc.update("""
+                insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version)
+                select ?, 'GROUP_TRIGGER', template_id, version from response_templates
+                 where situation='GROUP_TRIGGER' order by version desc limit 1
+                """, group);
+        assertEquals(1, jdbc.queryForObject("select count(*) from chat_automation_authorizations where chat_jid=? and situation='GROUP_TRIGGER'",
+                Integer.class, group));
+
+        notifications.flush(NOW);
+
+        assertNotNull(receivedBody.get());
+        assertTrue(receivedBody.get().contains("Equipe autorizada"));
     }
 
     @Test void preservesANewerMessageThatArrivesWhileTheOutboxActionIsBeingAcknowledged() {
@@ -927,7 +972,10 @@ class NotificationServiceTest {
         jdbc.update("update pending_notification set chat_jid='1001@lid' where chat_jid=?", phone);
         jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values ('1001@lid',true,?,null,false,true)", Timestamp.from(NOW));
         seed("123456789@lid", "123456789@lid", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
-        seed("111222333@g.us", "111222333@g.us", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "[Sticker]", NOW);
+        Instant groupAt = NOW.minus(Duration.ofMinutes(5));
+        seedAt("111222333@g.us", "111222333@g.us", true, 1, NOW.minus(Duration.ofMinutes(20)),
+                groupAt, "[Sticker]", NOW);
+        qualifyGroup("111222333@g.us", groupAt);
         notifications.flush(NOW);
         String text=receivedBody.get();
         assertTrue(text.contains("<a href=\"https://wa.me/5511999999999\">Ana</a>"));
@@ -960,7 +1008,7 @@ class NotificationServiceTest {
     @Test void modeChangeSuppressesRetryAndAllModeCanReleasePendingForUnknownArchiveState() throws Exception {
         String jid = "5511555555555@s.whatsapp.net";
         archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
-        seed(jid, "Contato", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
         responseStatus.set(503);
         notifications.flush(NOW);
         assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
@@ -985,7 +1033,7 @@ class NotificationServiceTest {
     @Test void modeChangeBetweenFailureAndRetrySuppressesPersistedAction() {
         String jid = "5511555555556@s.whatsapp.net";
         archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
-        seed(jid, "Contato", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
         responseStatus.set(503);
         notifications.flush(NOW);
         assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
@@ -1009,7 +1057,7 @@ class NotificationServiceTest {
     @Test void repeatedFlushReusesSuppressedGenerationWithoutCreatingDuplicateOutboxRows() {
         String jid = "5511555555557@s.whatsapp.net";
         archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
-        seed(jid, "Contato", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
         String generation = jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, jid);
         responseStatus.set(503);
         notifications.flush(NOW);
@@ -1131,7 +1179,10 @@ class NotificationServiceTest {
     }
 
     @Test void disablingGroupsDuringDeliveryStopsInternalRetry() {
-        seed("120363000000000092@g.us", "Grupo", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "group", NOW);
+        Instant triggerAt = NOW.minus(Duration.ofMinutes(5));
+        seedAt("120363000000000092@g.us", "Grupo", true, 1, NOW.minus(Duration.ofMinutes(20)),
+                triggerAt, "group", NOW);
+        qualifyGroup("120363000000000092@g.us", triggerAt);
         requestHook.set(ignored -> { properties.setIncludeGroups(false); responseStatus.set(503); });
         notifications.flush(NOW);
         assertEquals(1, requestCount.get());
@@ -1221,8 +1272,10 @@ class NotificationServiceTest {
     }
 
     private void seed(String jid, String name, boolean group, int count, String first, String last, String preview, Instant now) {
-        Instant firstAt = fixture(first);
-        Instant lastAt = fixture(last);
+        seedAt(jid, name, group, count, fixture(first), fixture(last), preview, now);
+    }
+
+    private void seedAt(String jid, String name, boolean group, int count, Instant firstAt, Instant lastAt, String preview, Instant now) {
         Instant updated = now.minusSeconds(3600);
         Instant expires = updated.plusSeconds(7 * 86400L);
         Instant previewExpires = expires;
@@ -1253,6 +1306,12 @@ class NotificationServiceTest {
                 insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
                 values (?, ?::jsonb, ?, ?, ?)
                 """, jid, payload, java.sql.Timestamp.from(lastAt), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
+    }
+
+    private void qualifyGroup(String jid, Instant triggerAt) {
+        jdbc.update("update pending_notification set payload=payload || jsonb_build_object(" +
+                        "'groupNotificationEligible',true,'groupNotificationEligibleAt',?) where chat_jid=?",
+                triggerAt.toString(), jid);
     }
 
     /** Use the previous business day at 08:00 São Paulo: inside TTL and behind the DB clock, even after advancing 5h. */

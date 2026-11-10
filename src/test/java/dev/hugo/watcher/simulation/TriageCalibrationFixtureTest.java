@@ -48,7 +48,7 @@ class TriageCalibrationFixtureTest {
                     chat.endsWith("@g.us") ? "participant@s.whatsapp.net" : "", List.of());
             TriageOutcome expected = TriageOutcome.valueOf(item.path("expectedOutcome").asString());
             TriageOutcome actual = engine.decide(batch, classification,
-                    new EffectivePolicy(Map.of(), null, policy), NOW).triageOutcome();
+                    new EffectivePolicy(Map.of(), null, policy), NOW, OwnerConversationActivity.INACTIVE).triageOutcome();
             assertEquals(expected, actual, item.path("id").asString());
 
             boolean expectedNotify = expected == TriageOutcome.NOTIFY_ONLY || expected == TriageOutcome.NOTIFY_AND_REPLY;
