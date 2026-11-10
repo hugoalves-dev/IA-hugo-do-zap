@@ -621,6 +621,26 @@ class AdminCommandServiceTest {
         assertFalse(detail.contains(chat));
     }
 
+    @Test void recentDecisionsIncludeProductionModeAndLabelItSeparatelyFromShadow() {
+        var id = java.util.UUID.randomUUID();
+        var now = java.sql.Timestamp.from(clock.instant());
+        var expires = java.sql.Timestamp.from(clock.instant().plusSeconds(3600));
+        String chat = "production-recent@s.whatsapp.net";
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,'','COMPLETED',?,?,?,?,?,?)", id, chat, now, now, now, now, expires, expires);
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,
+                    metadata_expires_at,production_mode,decision_state,classification_status,classification_urgency,
+                    classification_confidence)
+                values (?,false,false,'no_action_needed',?,?,true,'NO_ACTION','CLASSIFIED','LOW',0.9)
+                """, id, now, expires);
+
+        String recent = commands.execute(command("ultimas", List.of("5"), false)).message();
+
+        assertTrue(recent.contains(id.toString().substring(0, 8)));
+        assertTrue(recent.contains("Produção NO_ACTION"));
+        assertFalse(recent.contains(chat));
+    }
+
     @Test void diagnosticIsShownForNewDecisionsWithoutInventingOldReasons() {
         var id = java.util.UUID.randomUUID();
         var now = java.sql.Timestamp.from(clock.instant());
