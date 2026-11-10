@@ -248,13 +248,19 @@ public class NotificationOutboxRepository {
         });
     }
 
-    public boolean hasActiveAction(String actionType, Instant now) {
-        Integer count = jdbc.queryForObject("""
-                select count(*) from outbox_actions
-                where action_type=? and status in ('PENDING','PROCESSING')
-                  and available_at<=clock_timestamp() and sensitive_expires_at>clock_timestamp()
-                """, Integer.class, actionType);
-        return count != null && count > 0;
+    public boolean hasActiveActionForChat(String actionType, String chatJid, Instant now) {
+        Boolean active = jdbc.queryForObject("""
+                select exists (
+                    select 1 from outbox_actions o
+                 where o.action_type=? and o.status in ('PENDING','PROCESSING')
+                   and o.available_at<=clock_timestamp() and o.sensitive_expires_at>clock_timestamp()
+                  and exists (
+                      select 1 from jsonb_array_elements(o.pending_snapshot) as item(snapshot)
+                       where item.snapshot->>'chat_jid'=?
+                  )
+                )
+                """, Boolean.class, actionType, chatJid);
+        return Boolean.TRUE.equals(active);
     }
 
     public boolean hasActiveActionKey(String actionKey) {

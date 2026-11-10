@@ -157,6 +157,80 @@ class NotificationServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
     }
 
+    @Test void uncertainIncidentDecisionCannotSuppressItsConventionalNotification() {
+        String chat = "incident-fixture@s.whatsapp.net";
+        Instant firstMessageAt = NOW.minusSeconds(2);
+        Instant secondMessageAt = NOW.minusSeconds(1);
+        Instant expires = NOW.plus(Duration.ofDays(2));
+        UUID batchId = UUID.fromString("1ec245cc-9541-4d04-9568-bfe93f3e634e");
+        seed(chat, "Fixture", false, 2, "2026-10-26T10:59:00Z", "2026-10-26T10:59:00Z",
+                "fixture redacted", NOW);
+        jdbc.update("""
+                insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,
+                    due_at,created_at,expires_at,metadata_expires_at)
+                values (?,?,'','COMPLETED',?,?,?,?,?,?)
+                """, batchId, chat, Timestamp.from(firstMessageAt), Timestamp.from(secondMessageAt),
+                Timestamp.from(NOW), Timestamp.from(NOW), Timestamp.from(expires), Timestamp.from(expires));
+        for (int index = 0; index < 2; index++) {
+            Instant receivedAt = index == 0 ? firstMessageAt : secondMessageAt;
+            jdbc.update("""
+                    insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload)
+                    values (?,?,'',?,?,?::jsonb)
+                    """, batchId, chat, "incident-fixture-" + index, Timestamp.from(receivedAt),
+                    "{\"fromMe\":false,\"content\":{\"conversation\":\"redacted-fixture\"}}");
+        }
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,
+                    metadata_expires_at,classification_status,classification_urgency,classification_confidence,
+                    triage_outcome,notification_recommended,reply_recommended,real_action_allowed,production_mode,
+                    decision_state,triage_reason,triage_blockers)
+                values (?,false,false,'classification_uncertain',?,?,'UNCERTAIN','UNCERTAIN',0.60,
+                    'UNDECIDED',false,false,false,false,'BLOCKED','classification_uncertain','[\"classification_uncertain\"]'::jsonb)
+                """, batchId, Timestamp.from(NOW), Timestamp.from(expires));
+        jdbc.update("insert into triage_legacy_filter_opt_ins(chat_jid,enabled,updated_at) values (?,true,?)",
+                chat, Timestamp.from(NOW));
+
+        var filtering = triageFilteringNotifications(true);
+        assertFalse(new NotificationQueueQueryRepository(jdbc).hasUniqueTriageIgnore(chat, secondMessageAt, NOW));
+
+        filtering.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "UNCERTAIN must leave the conventional Telegram path eligible");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+    }
+
+    @Test void pendingNotificationForAnotherChatDoesNotBlockIncidentOutboxEnqueue() {
+        String chat = "incident-unblocked@s.whatsapp.net";
+        String otherChat = "older-outbox-chat@s.whatsapp.net";
+        seed(chat, "Fixture", false, 2, "2026-10-26T10:59:00Z", "2026-10-26T10:59:00Z",
+                "fixture redacted", NOW);
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        Instant expires = NOW.plus(Duration.ofDays(2));
+        String oldSnapshot = JSON.writeValueAsString(List.of(Map.of(
+                "chat_jid", otherChat, "pending_generation", UUID.randomUUID().toString())));
+        rabbitOutbox.enqueue("older-unrelated-action", NotificationService.ARCHIVED_MESSAGES,
+                "{}", oldSnapshot, NOW.minus(Duration.ofDays(2)), expires);
+        assertTrue(rabbitOutbox.hasActiveActionForChat(NotificationService.ARCHIVED_MESSAGES, otherChat, NOW));
+        assertFalse(rabbitOutbox.hasActiveActionForChat(NotificationService.ARCHIVED_MESSAGES, chat, NOW));
+        org.mockito.Mockito.clearInvocations(publisher);
+        var brokerNotifications = new NotificationService(new NotificationQueueQueryRepository(jdbc), manager,
+                rabbitOutbox, fakeTransport(), new TelegramMessageFormatter(), properties, clock, archiveModes,
+                configuredAlerts(), deliveries, false);
+
+        brokerNotifications.flush(NOW);
+
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from outbox_actions o
+                 where o.action_type='archived_messages' and o.action_key<>'older-unrelated-action'
+                   and exists (select 1 from jsonb_array_elements(o.pending_snapshot) p where p->>'chat_jid' = ?)
+                """, Integer.class, chat));
+        org.mockito.Mockito.verify(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                org.mockito.ArgumentMatchers.startsWith("archived_messages:"),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
     @Test void revalidatesQueuedLegacyActionBeforeSuppressingAnIgnore() {
         String chat = "legacy-queued-filter@s.whatsapp.net";
         String messageTime = "2026-10-26T10:59:00Z";
