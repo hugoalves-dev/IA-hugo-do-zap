@@ -1,1 +1,1342 @@
-YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛÎ½Ñ:-jZ.¶›­–)Ş³W6¶vRFWbæ‡VvòçvF6†W#° ¦–×÷'B÷&ræfÇ—v–F"æ6÷&RäfÇ—v“°¦–×÷'B÷&ræ§Væ—Bæ§W—FW"æ’ä&Vf÷&TV6ƒ°¦–×÷'B÷&ræ§Væ—Bæ§W—FW"æ’åFW7C°¦–×÷'B÷&rç7&–ævg&ÖWv÷&²æ¦F&2æ6÷&Rä¦F&5FV×ÆFS°¦–×÷'B÷&rç7&–ævg&ÖWv÷&²æ¦F&2æFF6÷W&6RäFF6÷W&6UG&ç67F–öäÖævW#°¦–×÷'B÷&rç7&–ævg&ÖWv÷&²æ¦F&2æFF6÷W&6RäG&—fW$ÖævW$FF6÷W&6S°¦–×÷'B÷&rçFW7F6öçF–æW'2æ6öçF–æW'2å÷7Fw&U5Ä6öçF–æW#°¦–×÷'B÷&rçFW7F6öçF–æW'2æ§Væ—Bæ§W—FW"ä6öçF–æW#°¦–×÷'B÷&rçFW7F6öçF–æW'2æ§Væ—Bæ§W—FW"åFW7F6öçF–æW'3°¦–×÷'BFööÇ2æ¦6·6öâæFF&–æBæ§6öâä§6öäÖW#°¦–×÷'BFWbæ‡VvòçvF6†W"ææ÷F–f–6F–öâä–çFVÆÆ–vVçDÆW'E6W'f–6S° ¦–×÷'B¦fçF–ÖRä6Æö6³°¦–×÷'B¦fçF–ÖRäGW&F–öã°¦–×÷'B¦fçF–ÖRä–ç7FçC°¦–×÷'B¦fçF–ÖRäÆö6ÄFFS°¦–×÷'B¦fçF–ÖRäÆö6ÅF–ÖS°¦–×÷'B¦fçF–ÖRå¦öæTöfg6WC°¦–×÷'B¦fçF–ÖRå¦öæT–C°¦–×÷'B¦fçWF–ÂåUT”C°¦–×÷'B¦fç7ÂåF–ÖW7F×°¦–×÷'B¦fçWF–ÂäÆ—7C°¦–×÷'B¦fçWF–ÂäÖ°¦–×÷'B¦fçWF–Âæ6öæ7W'&VçBæFöÖ–2äFöÖ–5&VfW&Væ6S°¦–×÷'B¦fçWF–Âæ6öæ7W'&VçBæFöÖ–2äFöÖ–4–çFVvW#° ¦–×÷'B7FF–2÷&ræ§Væ—Bæ§W—FW"æ’ä76W'F–öç2â£° ¤FW7F6öçF–æW'2†F—6&ÆVEv—F†÷WDFö6¶W"ÒG'VR¦6Æ72æ÷F–f–6F–öå6W'f–6UFW7B°¢&—fFR7FF–2f–æÂ§6öäÖW"¥4ôâÒ§6öäÖW"æ'V–ÆFW"‚’æ'V–ÆB‚“°¢&—fFR7FF–2f–æÂ–ç7FçBäõrÒ&V6VçEv÷&¶F•7F'B‚“° ¢6öçF–æW ¢7FF–2f–æÂ÷7Fw&U5Ä6öçF–æW#Ãóâ÷7Fw&W2ÒæWr÷7Fw&U5Ä6öçF–æW#Ãâ‚'÷7Fw&W3£rÖÇ–æR"“° ¢&—fFR¦F&5FV×ÆFR¦F&3°¢&—fFRFF6÷W&6UG&ç67F–öäÖævW"ÖævW#°¢&—fFRvF6†W%&÷W'F–W2&÷W'F–W3°¢&—fFRæ÷F–f–6F–öå6W'f–6Ræ÷F–f–6F–öç3°¢&—fFRæ÷F–f–6F–öä÷WF&÷…&W÷6—F÷'’÷WF&÷ƒ°¢&—fFR&6†—fTÖöFU6W'f–6R&6†—fTÖöFW3°¢&—fFRf–æÂFöÖ–5&VfW&Væ6SÄ–çFVvW#â&W7öç6U7FGW2ÒæWrFöÖ–5&VfW&Væ6SÃâƒ#“°¢&—fFRf–æÂFöÖ–5&VfW&Væ6SÄGW&F–öãâ&WG'”gFW"ÒæWrFöÖ–5&VfW&Væ6SÃâ‚“°¢&—fFRf–æÂFöÖ–4–çFVvW"&WVW7D6÷VçBÒæWrFöÖ–4–çFVvW"‚“°¢&—fFRf–æÂFöÖ–5&VfW&Væ6SÆ¦fçWF–ÂægVæ7F–öâä6öç7VÖW#Å7G&–æsãâ&WVW7D†öö²ÒæWrFöÖ–5&VfW&Væ6SÃâ†–væ÷&VBÓâ²Ò“°¢&—fFRf–æÂFöÖ–5&VfW&Væ6SÅ7G&–æsâ&V6V—fVD&öG’ÒæWrFöÖ–5&VfW&Væ6SÃâ‚“°¢&—fFR×WF&ÆT6Æö6²6Æö6³° ¢FW7Bfö–B&&&—D÷WF&÷…V&Æ—6†W4gFW$6öÖÖ—DæE&V6÷fW'5Væ6öæf—&ÖVD†æFöfg2‚’°¢f"V&Æ—6†W"Ò÷&ræÖö6¶—FòäÖö6¶—FòæÖö6²…&&&—DWfVçEV&Æ—6†W"æ6Æ72“°¢f"FVÆ—fW&–W2ÒæWrFWbæ‡VvòçvF6†W"ææ÷F–f–6F–öâäFV6—6–öäFVÆ—fW'”6ö÷&F–æF÷"†¦F&2ÂÖævW"“°¢f"&&&—D÷WF&÷‚ÒæWræ÷F–f–6F–öä÷WF&÷…&W÷6—F÷'’†¦F&2ÂÖævW"ÂFVÆ—fW&–W2ÂV&Æ—6†W"“°¢f"G‚ÒæWr÷&rç7&–ævg&ÖWv÷&²çG&ç67F–öâç7W÷'BåG&ç67F–öåFV×ÆFR†ÖævW"“°¢–ç7FçB7&VFVDBÒ–ç7FçBææ÷r‚“°¢–ç7FçBW‡—'’Ò7&VFVDBçÇW56V6öæG2ƒƒeóC“° ¢÷&ræÖö6¶—FòäÖö6¶—FòæFõF‡&÷r†æWr–ÆÆVvÅ7FFTW†6WF–öâ‚&'&ö¶W"Væf–Æ&ÆR"’¢çv†Vâ‡V&Æ—6†W"’çV&Æ—6‚†÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚&FÖ–â×&WÆ–W2"’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚'&&&—B×FW7B"’Â÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç•7G&–ær‚’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç”Ö‚’“°¢76W'EF‡&÷w2„–ÆÆVvÅ7FFTW†6WF–öâæ6Æ72Â‚’ÓâG‚æW†V7WFUv—F†÷WE&W7VÇB‡7FGW2Óà¢&&&—D÷WF&÷‚æVçVWVR‚'&&&—B×FW7B"Â'FVÆVw&ÕöFÖ–å÷&WÇ’"Â'·Ò"Â%µÒ"Â7&VFVDBÂW‡—'’’’“°¢76W'DçVÆÂ†¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B&&&—Eö6öæf—&ÖVEöBg&öÒ÷WF&÷…ö7F–öç2v†W&R7F–öåö¶W“Òw&&&—B×FW7Br"À¢¦fç7ÂåF–ÖW7F×æ6Æ72’“° ¢÷&ræÖö6¶—FòäÖö6¶—FòæFôæ÷F†–ær‚’çv†Vâ‡V&Æ—6†W"’çV&Æ—6‚†÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚&FÖ–â×&WÆ–W2"’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚'&&&—B×FW7B"’Â÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç•7G&–ær‚’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç”Ö‚’“°¢76W'DWVÇ2ƒÂ&&&—D÷WF&÷‚ç&V6÷fW%Væ6öæf—&ÖVD7F–öç2‚’“°¢f"¦ö$§6öâÒ÷&ræÖö6¶—Fòä&wVÖVçD6F÷"æf÷$6Æ72…7G&–æræ6Æ72“°¢÷&ræÖö6¶—FòäÖö6¶—FòçfW&–g’‡V&Æ—6†W"Â÷&ræÖö6¶—FòäÖö6¶—FòçF–ÖW2ƒ"’’çV&Æ—6‚†÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚&FÖ–â×&WÆ–W2"’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚'&&&—B×FW7B"’Â¦ö$§6öâæ6GW&R‚’Â÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç”Ö‚’“°¢76W'DWVÇ2†æWr&&&—DFVÆ—fW'”¦ö"‚'&&&—B×FW7B"Â'FVÆVw&ÕöFÖ–å÷&WÇ’"Â'·Ò"Â%µÒ"’À¢&&&—DFVÆ—fW'”¦ö"ç'6R†¦ö$§6öâævWEfÇVR‚’’“°¢76W'Dæ÷DçVÆÂ†¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B&&&—Eö6öæf—&ÖVEöBg&öÒ÷WF&÷…ö7F–öç2v†W&R7F–öåö¶W“Òw&&&—B×FW7Br"À¢¦fç7ÂåF–ÖW7F×æ6Æ72’“°¢Ğ ¢FW7Bfö–B&&&—D6öæf—&Ôf–ÇW&TÆVfW46ö×ÆWFVE&W7VÇD7F–öå&WÆ–&ÆR‚’°¢UT”B¦ö$–BÒUT”Bç&æFöÕUT”B‚“°¢–ç7FçB7&VFVDBÒ–ç7FçBææ÷r‚“°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò&ö×EövVæW&F–öåö¦ö'0¢†¦ö%ö–BÆG&gEö–BÆW‡V7FVEöG&gE÷fW'6–öâÆ7F÷%÷W6W%ö–BÆ6†Eö–BÆ÷W&F–öâÆ–ç7G'V7F–öç2Ç7FGW2À¢7&VFVEöBÇ7F'FVEöBÆ6ö×ÆWFVEöB¢fÇVW2ƒòÂòÂ"ÂÂ#"Âu$Td”äRrÂrrÂt4ôÕÄUDRrÂòÂòÂò¢"""Â¦ö$–BÂUT”Bç&æFöÕUT”B‚’ÂF–ÖW7F×æg&öÒ†7&VFVDB’ÂF–ÖW7F×æg&öÒ†7&VFVDB’ÂF–ÖW7F×æg&öÒ†7&VFVDB’“°¢7G&–ær7F–öä¶W’Ò'&ö×BÖvVæW&F–öâ×&W7VÇC¢"²¦ö$–C°¢f"V&Æ—6†W"Ò÷&ræÖö6¶—FòäÖö6¶—FòæÖö6²…&&&—DWfVçEV&Æ—6†W"æ6Æ72“°¢f"FVÆ—fW&–W2ÒæWrFWbæ‡VvòçvF6†W"ææ÷F–f–6F–öâäFV6—6–öäFVÆ—fW'”6ö÷&F–æF÷"†¦F&2ÂÖævW"“°¢f"&&&—D÷WF&÷‚ÒæWræ÷F–f–6F–öä÷WF&÷…&W÷6—F÷'’†¦F&2ÂÖævW"ÂFVÆ—fW&–W2ÂV&Æ—6†W"“°¢f"G‚ÒæWr÷&rç7&–ævg&ÖWv÷&²çG&ç67F–öâç7W÷'BåG&ç67F–öåFV×ÆFR†ÖævW"“°¢–ç7FçBW‡—'’Ò7&VFVDBçÇW2„GW&F–öâæödF—2ƒ’“°¢÷&ræÖö6¶—FòäÖö6¶—FòæFõF‡&÷r†æWr–ÆÆVvÅ7FFTW†6WF–öâ‚&'&ö¶W"Væf–Æ&ÆR"’¢çv†Vâ‡V&Æ—6†W"’çV&Æ—6‚†÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚'&ö×B×&W7VÇG2"’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW†7F–öä¶W’’Â÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç•7G&–ær‚’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç”Ö‚’“° ¢76W'EF‡&÷w2„–ÆÆVvÅ7FFTW†6WF–öâæ6Æ72Â‚’ÓâG‚æW†V7WFUv—F†÷WE&W7VÇB‡7FGW2Óà¢&&&—D÷WF&÷‚æVçVWVR†7F–öä¶W’Â'FVÆVw&ÕöFÖ–å÷&WÇ’"Â'µÂ'FW‡EÂ#¥Â'6fR&W7VÇEÂ'Ò"Â%µÒ"Â7&VFVDBÂW‡—'’’’“° ¢76W'DWVÇ2‚$4ôÕÄUDR"Â¦F&2çVW'”f÷$ö&¦V7B€¢'6VÆV7B7FGW2g&öÒ&ö×EövVæW&F–öåö¦ö'2v†W&R¦ö%ö–CÓò"Â7G&–æræ6Æ72Â¦ö$–B’“°¢76W'DWVÇ2‚%TäD”är"Â¦F&2çVW'”f÷$ö&¦V7B€¢'6VÆV7B&W7VÇEöFVÆ—fW'•÷7FGW2g&öÒ&ö×EövVæW&F–öåö¦ö'2v†W&R¦ö%ö–CÓò"Â7G&–æræ6Æ72Â¦ö$–B’“°¢76W'DçVÆÂ†¦F&2çVW'”f÷$ö&¦V7B€¢'6VÆV7B&W7VÇEöFVÆ—fW'•÷&&&—Eö6öæf—&ÖVEöBg&öÒ&ö×EövVæW&F–öåö¦ö'2v†W&R¦ö%ö–CÓò"À¢F–ÖW7F×æ6Æ72Â¦ö$–B’“° ¢÷&ræÖö6¶—FòäÖö6¶—FòæFôæ÷F†–ær‚’çv†Vâ‡V&Æ—6†W"’çV&Æ—6‚†÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚'&ö×B×&W7VÇG2"’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW†7F–öä¶W’’Â÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç•7G&–ær‚’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç”Ö‚’“°¢76W'DWVÇ2ƒÂ&&&—D÷WF&÷‚çV&Æ—6…VæF–ætFÖ–å&WÆ–W2‚’“°¢76W'Dæ÷DçVÆÂ†¦F&2çVW'”f÷$ö&¦V7B€¢'6VÆV7B&W7VÇEöFVÆ—fW'•÷&&&—Eö6öæf—&ÖVEöBg&öÒ&ö×EövVæW&F–öåö¦ö'2v†W&R¦ö%ö–CÓò"À¢F–ÖW7F×æ6Æ72Â¦ö$–B’“°¢Ğ ¢FW7Bfö–BÆVv7”æ÷F–f–6F–öäf–ÇFW$æVVG4vÆö&ÄfÆtæD6öçfW'6F–öä÷D–â‚’°¢7G&–ærÖW76vUF–ÖRÒ###bÓÓ#eC£S“£¢#°¢7G&–ærF—6&ÆVD6†BÒ&ÆVv7’ÖF—6&ÆVD2çv†G6ææWB#°¢6VVD–væ÷&TFV6—6–öâ†F—6&ÆVD6†BÂÖW76vUF–ÖRÂG'VR“° ¢æ÷F–f–6F–öç2æfÇW6‚„äõr“° ¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’Â&6öçfW'6F–öâ÷BÖ–âÆöæR×W7BÆVfRÆVv7’FVÆ—fW'’Væ6†ævVB"“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â–çFVvW"æ6Æ72ÂF—6&ÆVD6†B’“° ¢&WVW7D6÷VçBç6WBƒ“°¢7G&–ærf–ÇFW&VD6†BÒ&ÆVv7’Öf–ÇFW&VD2çv†G6ææWB#°¢6VVD–væ÷&TFV6—6–öâ†f–ÇFW&VD6†BÂÖW76vUF–ÖRÂG'VR“°¢f"f–ÇFW&–ærÒG&–vTf–ÇFW&–ætæ÷F–f–6F–öç2‡G'VR“° ¢f–ÇFW&–æræfÇW6‚„äõr“° ¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â–çFVvW"æ6Æ72Âf–ÇFW&VD6†B’“° ¢7G&–ær÷FVD÷WD6†BÒ&ÆVv7’Ö÷FVBÖ÷WD2çv†G6ææWB#°¢6VVD–væ÷&TFV6—6–öâ†÷FVD÷WD6†BÂÖW76vUF–ÖRÂfÇ6R“°¢f–ÇFW&–æræfÇW6‚„äõr“° ¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’Â&vÆö&ÂfÆrÆöæR×W7Bæ÷Bf–ÇFW"6öçfW'6F–öâ"“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â–çFVvW"æ6Æ72Â÷FVD÷WD6†B’“°¢Ğ ¢FW7Bfö–BÆVv7”f–ÇFW$FöW4æ÷E7W&W74vw&VvFVDÖW76vW2‚’°¢7G&–ær6†BÒ&ÆVv7’Övw&VvFT2çv†G6ææWB#°¢6VVD–væ÷&TFV6—6–öâ†6†BÂ###bÓÓ#eC£S“£¢"ÂG'VRÂ"“° ¢G&–vTf–ÇFW&–ætæ÷F–f–6F–öç2‡G'VR’æfÇW6‚„äõr“° ¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â–çFVvW"æ6Æ72Â6†B’“°¢Ğ ¢FW7Bfö–BVæ6W'F–ä–æ6–FVçDFV6—6–öä6ææ÷E7W&W74—G46öçfVçF–öæÄæ÷F–f–6F–öâ‚’°¢7G&–ær6†BÒ&–æ6–FVçBÖf—‡GW&T2çv†G6ææWB#°¢–ç7FçBf—'7DÖW76vTBÒäõræÖ–çW56V6öæG2ƒ"“°¢–ç7FçB6V6öæDÖW76vTBÒäõræÖ–çW56V6öæG2ƒ“°¢–ç7FçBW‡—&W2ÒäõrçÇW2„GW&F–öâæödF—2ƒ"’“°¢UT”B&F6„–BÒUT”Bæg&öÕ7G&–ær‚#V3#CV62Ó“SCÓFCBÓ“Sc‚Ö&fS“6c6Sc3FR"“°¢6VVB†6†BÂ$f—‡GW&R"ÂfÇ6RÂ"Â###bÓÓ#eC£S“£¢"Â###bÓÓ#eC£S“£¢"À¢&f—‡GW&R&VF7FVB"Âäõr“°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6–×VÆF–öåö&F6†W2†&F6…ö–BÆ6†Eö¦–BÇ'F–6—çEö¦–BÇ7FGW2Æf—'7EöÖW76vUöBÆÆ7EöÖW76vUöBÀ¢GVUöBÆ7&VFVEöBÆW‡—&W5öBÆÖWFFFöW‡—&W5öB¢fÇVW2ƒòÃòÂrrÂt4ôÕÄUDTBrÃòÃòÃòÃòÃòÃò¢"""Â&F6„–BÂ6†BÂF–ÖW7F×æg&öÒ†f—'7DÖW76vTB’ÂF–ÖW7F×æg&öÒ‡6V6öæDÖW76vTB’À¢F–ÖW7F×æg&öÒ„äõr’ÂF–ÖW7F×æg&öÒ„äõr’ÂF–ÖW7F×æg&öÒ†W‡—&W2’ÂF–ÖW7F×æg&öÒ†W‡—&W2’“°¢f÷"†–çB–æFW‚Ò²–æFW‚Â#²–æFW‚²²’°¢–ç7FçB&V6V—fVDBÒ–æFW‚ÓÒòf—'7DÖW76vTB¢6V6öæDÖW76vTC°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6–×VÆF–öåö&F6…öÖW76vW2†&F6…ö–BÆ6†Eö¦–BÇ'F–6—çEö¦–BÆW‡FW&æÅö–BÇ&V6V—fVEöBÇ–ÆöB¢fÇVW2ƒòÃòÂrrÃòÃòÃó£¦§6öæ"¢"""Â&F6„–BÂ6†BÂ&–æ6–FVçBÖf—‡GW&RÒ"²–æFW‚ÂF–ÖW7F×æg&öÒ‡&V6V—fVDB’À¢'µÂ&g&öÔÖUÂ#¦fÇ6RÅÂ&6öçFVçEÂ#§µÂ&6öçfW'6F–öåÂ#¥Â'&VF7FVBÖf—‡GW&UÂ'×Ò"“°¢Ğ¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6–×VÆF–öåöFV6—6–öç2†&F6…ö–BÇv÷VÆEöÆW'BÇv÷VÆE÷&WÇ’ÆFV6—6–öå÷&V6öâÆFV6–FVEöBÀ¢ÖWFFFöW‡—&W5öBÆ6Æ76–f–6F–öå÷7FGW2Æ6Æ76–f–6F–öå÷W&vVæ7’Æ6Æ76–f–6F–öåö6öæf–FVæ6RÀ¢G&–vUö÷WF6öÖRÆæ÷F–f–6F–öå÷&V6öÖÖVæFVBÇ&WÇ•÷&V6öÖÖVæFVBÇ&VÅö7F–öåöÆÆ÷vVBÇ&öGV7F–öåöÖöFRÀ¢FV6—6–öå÷7FFRÇG&–vU÷&V6öâÇG&–vUö&Æö6¶W'2¢fÇVW2ƒòÆfÇ6RÆfÇ6RÂv6Æ76–f–6F–öå÷Væ6W'F–ârÃòÃòÂuTä4U%D”ârÂuTä4U%D”ârÃãcÀ¢uTäDT4”DTBrÆfÇ6RÆfÇ6RÆfÇ6RÆfÇ6RÂt$Äô4´TBrÂv6Æ76–f–6F–öå÷Væ6W'F–ârÂuµÂ&6Æ76–f–6F–öå÷Væ6W'F–åÂ%Òs£¦§6öæ"¢"""Â&F6„–BÂF–ÖW7F×æg&öÒ„äõr’ÂF–ÖW7F×æg&öÒ†W‡—&W2’“°¢¦F&2çWFFR‚&–ç6W'B–çFòG&–vUöÆVv7•öf–ÇFW%ö÷Eö–ç2†6†Eö¦–BÆVæ&ÆVBÇWFFVEöB’fÇVW2ƒòÇG'VRÃò’"À¢6†BÂF–ÖW7F×æg&öÒ„äõr’“° ¢f"f–ÇFW&–ærÒG&–vTf–ÇFW&–ætæ÷F–f–6F–öç2‡G'VR“°¢76W'DfÇ6R†æWræ÷F–f–6F–öåVWVUVW'•&W÷6—F÷'’†¦F&2’æ†5Væ—VUG&–vT–væ÷&R†6†BÂ6V6öæDÖW76vTBÂäõr’“° ¢f–ÇFW&–æræfÇW6‚„äõr“° ¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’Â%Tä4U%D”â×W7BÆVfRF†R6öçfVçF–öæÂFVÆVw&ÒF‚VÆ–v–&ÆR"“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â–çFVvW"æ6Æ72Â6†B’“°¢Ğ ¢FW7Bfö–BVæF–ætæ÷F–f–6F–öäf÷$æ÷F†W$6†DFöW4æ÷D&Æö6´–æ6–FVçD÷WF&÷„VçVWVR‚’°¢7G&–ær6†BÒ&–æ6–FVçB×Væ&Æö6¶VD2çv†G6ææWB#°¢7G&–ær÷F†W$6†BÒ&öÆFW"Ö÷WF&÷‚Ö6†D2çv†G6ææWB#°¢6VVB†6†BÂ$f—‡GW&R"ÂfÇ6RÂ"Â###bÓÓ#eC£S“£¢"Â###bÓÓ#eC£S“£¢"À¢&f—‡GW&R&VF7FVB"Âäõr“°¢f"V&Æ—6†W"Ò÷&ræÖö6¶—FòäÖö6¶—FòæÖö6²…&&&—DWfVçEV&Æ—6†W"æ6Æ72“°¢f"FVÆ—fW&–W2ÒæWrFWbæ‡VvòçvF6†W"ææ÷F–f–6F–öâäFV6—6–öäFVÆ—fW'”6ö÷&F–æF÷"†¦F&2ÂÖævW"“°¢f"&&&—D÷WF&÷‚ÒæWræ÷F–f–6F–öä÷WF&÷…&W÷6—F÷'’†¦F&2ÂÖævW"ÂFVÆ—fW&–W2ÂV&Æ—6†W"“°¢–ç7FçBW‡—&W2ÒäõrçÇW2„GW&F–öâæödF—2ƒ"’“°¢7G&–æröÆE6æ6†÷BÒ¥4ôâçw&—FUfÇVT57G&–ær„Æ—7Bæöb„Öæöb€¢&6†Eö¦–B"Â÷F†W$6†BÂ'VæF–æuövVæW&F–öâ"ÂUT”Bç&æFöÕUT”B‚’çFõ7G&–ær‚’’’“°¢&&&—D÷WF&÷‚æVçVWVR‚&öÆFW"×Vç&VÆFVBÖ7F–öâ"Âæ÷F–f–6F–öå6W'f–6Rä$4„•dTEôÔU54tU2À¢'·Ò"ÂöÆE6æ6†÷BÂäõræÖ–çW2„GW&F–öâæödF—2ƒ"’’ÂW‡—&W2“°¢76W'EG'VR‡&&&—D÷WF&÷‚æ†47F—fT7F–öäf÷$6†B„æ÷F–f–6F–öå6W'f–6Rä$4„•dTEôÔU54tU2Â÷F†W$6†BÂäõr’“°¢76W'DfÇ6R‡&&&—D÷WF&÷‚æ†47F—fT7F–öäf÷$6†B„æ÷F–f–6F–öå6W'f–6Rä$4„•dTEôÔU54tU2Â6†BÂäõr’“°¢÷&ræÖö6¶—FòäÖö6¶—Fòæ6ÆV$–çfö6F–öç2‡V&Æ—6†W"“°¢f"'&ö¶W$æ÷F–f–6F–öç2ÒæWræ÷F–f–6F–öå6W'f–6R†æWræ÷F–f–6F–öåVWVUVW'•&W÷6—F÷'’†¦F&2’ÂÖævW"À¢&&&—D÷WF&÷‚Âf¶UG&ç7÷'B‚’ÂæWrFVÆVw&ÔÖW76vTf÷&ÖGFW"‚’Â&÷W'F–W2Â6Æö6²Â&6†—fTÖöFW2À¢6öæf–wW&VDÆW'G2‚’ÂFVÆ—fW&–W2ÂfÇ6R“° ¢'&ö¶W$æ÷F–f–6F–öç2æfÇW6‚„äõr“° ¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚"" ¢6VÆV7B6÷VçB‚¢’g&öÒ÷WF&÷…ö7F–öç2ğ¢v†W&Ròæ7F–öå÷G—SÒv&6†—fVEöÖW76vW2ræBòæ7F–öåö¶W“ÃâvöÆFW"×Vç&VÆFVBÖ7F–öâp¢æBW†—7G2‡6VÆV7Bg&öÒ§6öæ%ö'&•öVÆVÖVçG2†òçVæF–æu÷6æ6†÷B’v†W&RÓãâv6†Eö¦–BrÒò¢"""Â–çFVvW"æ6Æ72Â6†B’“°¢÷&ræÖö6¶—FòäÖö6¶—FòçfW&–g’‡V&Æ—6†W"’çV&Æ—6‚†÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æW‚&æ÷F–f–6F–öç2"’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2ç7F'G5v—F‚‚&&6†—fVEöÖW76vW3¢"’À¢÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç•7G&–ær‚’Â÷&ræÖö6¶—Fòä&wVÖVçDÖF6†W'2æç”Ö‚’“°¢Ğ ¢FW7Bfö–B&WfÆ–FFW5VWVVDÆVv7”7F–öä&Vf÷&U7W&W76–ætä–væ÷&R‚’°¢7G&–ær6†BÒ&ÆVv7’×VWVVBÖf–ÇFW$2çv†G6ææWB#°¢7G&–ærÖW76vUF–ÖRÒ###bÓÓ#eC£S“£¢#°¢–ç7FçBÖW76vTBÒf—‡GW&R†ÖW76vUF–ÖR“°¢6VVB†6†BÂ$6Æ–VçFR"ÂfÇ6RÂÂÖW76vUF–ÖRÂÖW76vUF–ÖRÂ&ÖVç6vVÒ6–çL:—F–6"Âäõr“°¢7G&–ærvVæW&F–öâÒ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7BvVæW&F–öã£§FW‡Bg&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â7G&–æræ6Æ72Â6†B“°¢–ç7FçBW‡—&W2Ò–ç7FçBææ÷r‚’çÇW56V6öæG2ƒƒeóC“°¢7G&–ær–ÆöBÒ¥4ôâçw&—FUfÇVT57G&–ær„Öæöb‚&WfVçEG—R"Âæ÷F–f–6F–öå6W'f–6Rä$4„•dTEôÔU54tU2À¢&&6†—fTÖöFR"Â$ÄÂ"Â'F÷FÄ6†G2"ÂÂ'F÷FÄÖW76vW2"ÂÀ¢&6†G2"ÂÆ—7Bæöb„Öæöb‚&F—7Æ”æÖR"Â$6Æ–VçFR"Â&ÖW76vT6÷VçB"ÂÂ&—4w&÷W"ÂfÇ6RÂ'öÆ–7’"Â$å•D”ÔR"’’’“°¢7G&–ær6æ6†÷BÒ¥4ôâçw&—FUfÇVT57G&–ær„Æ—7Bæöb„Öæöb‚&6†Eö¦–B"Â6†BÂ'VæF–æuövVæW&F–öâ"ÂvVæW&M|ëİ-¢G§²ÚîÆ­yÒ6öææV7F–öç2ÒæWr6öææV7F–öå6W'f–6R†¦F&2ÂÖævW"Â÷WF&÷‚Â&÷W'F–W2ÂGW&F–öâæöe6V6öæG2ƒc’“°¢6öææV7F–öç2æöå7FFR†æWr6öææV7F–öäWfVçB„6öææV7F–öäWfVçBå7FFRäD•44ôääT5DTBÂäõrÂ&6öææV7F–öåöÆ÷7B"ÂC‚’“°¢7G&–ær¶W’Ò¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7Bwv†G6ö6öææV7F–öåöÆ÷7C¢rÇÂ÷WFvUövVæW&F–öâg&öÒvF6†W%ö6öææV7F–öå÷7FFRv†W&R6–ævÆWFöåö–CÓ"Â7G&–æræ6Æ72“°¢÷WF&÷‚æVçVWVR†¶W’Â'v†G6ö6öææV7F–öåöÆ÷7B"Â'·Ò"Â%µÒ"ÂäõrÂäõrçÇW56V6öæG2ƒR¢ƒcCÂ’“°¢–b†gFW%FVÆVw&Õ6VæB’°¢&W7öç6U7FGW2ç6WBƒS2“°¢&WVW7D†öö²ç6WB†–væ÷&VBÓâ¦F&2æW†V7WFR‚&ÇFW"F&ÆRvF6†W%ö6öææV7F–öå÷7FFR&VæÖRFòVæf–Æ&ÆUö6öææV7F–öå÷7FFR"’“°¢ÒVÇ6R¦F&2æW†V7WFR‚&ÇFW"F&ÆRvF6†W%ö6öææV7F–öå÷7FFR&VæÖRFòVæf–Æ&ÆUö6öææV7F–öå÷7FFR"“°¢G'’°¢æ÷F–f–6F–öç2æfÇW6‚„äõr“°¢76W'DWVÇ2†gFW%FVÆVw&Õ6VæBò¢Â&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2‚%TäD”är"Â¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B7FGW2g&öÒ÷WF&÷…ö7F–öç2v†W&R7F–öåö¶W“Óò"Â7G&–æræ6Æ72Â¶W’’“°¢Òf–æÆÇ’°¢¦F&2æW†V7WFR‚&ÇFW"F&ÆRVæf–Æ&ÆUö6öææV7F–öå÷7FFR&VæÖRFòvF6†W%ö6öææV7F–öå÷7FFR"“°¢Ğ¢&W7öç6U7FGW2ç6WBƒ#“°¢&WVW7D†öö²ç6WB†–væ÷&VBÓâ²Ò“°¢6Æö6²æGfæ6R„GW&F–öâæöe6V6öæG2ƒ’“°¢Ö¶UVæF–æt÷WF&÷„GVR‚“°¢æ÷F–f–6F–öç2æfÇW6‚†6Æö6²æ–ç7FçB‚’“°¢76W'DWVÇ2†gFW%FVÆVw&Õ6VæBò"¢Â&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2‚$4´äõtÄTDtTB"Â¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B7FGW2g&öÒ÷WF&÷…ö7F–öç2v†W&R7F–öåö¶W“Óò"Â7G&–æræ6Æ72Â¶W’’“°¢Ğ ¢FW7Bfö–BÆFW$7F–öä6Æ–Õ&V6V—fW4g&W6„ÆV6TgFW$ÆöætV&Æ–W$FVÆ—fW'’‚’°¢÷WF&÷‚æVçVWVR‚&f—'7B"Â&÷F†W""Â'·Ò"Â%µÒ"ÂäõrÂäõrçÇW56V6öæG2ƒR¢ƒcCÂ’“°¢÷WF&÷‚æVçVWVR‚'6V6öæB"Â&÷F†W""Â'·Ò"Â%µÒ"ÂäõrÂäõrçÇW56V6öæG2ƒR¢ƒcCÂ’“°¢FöÖ–5&VfW&Væ6SÄ÷WF&÷„7F–öãâ7FöÆVâÒæWrFöÖ–5&VfW&Væ6SÃâ‚“°¢&WVW7D†öö²ç6WB†–væ÷&VBÓâ°¢–b‡&WVW7D6÷VçBævWB‚’ÓÒ’6Æö6²æGfæ6R„GW&F–öâæöe6V6öæG2ƒ3’“°¢VÇ6R7FöÆVâç6WB†÷WF&÷‚æ6Æ–ÔæW‡B†6Æö6²æ–ç7FçB‚’’“°¢Ò“°¢æ÷F–f–6F–öç2æfÇW6‚„äõr“°¢76W'DçVÆÂ‡7FöÆVâævWB‚’Â&æ÷F†W"v÷&¶W"×W7Bæ÷B7FVÂF†RÆFW"7F–öâw2g&W6‚ÆV6R"“°¢76W'DWVÇ2ƒ"Â&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2ƒ"Â¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒ÷WF&÷…ö7F–öç2v†W&R7FGW3Òt4´äõtÄTDtTBr"Â–çFVvW"æ6Æ72’“°¢Ğ ¢FW7Bfö–B&VEF†Vå&V7&VFVEVæF–ætFöW4æ÷E&W6VæDö'6öÆWFU&Wf–WtöäGW&&ÆU&WG'’‚’°¢7G&–ær¦–BÒ#SS“2çv†G6ææWB#°¢6VVB†¦–BÂ$6öçFFò"ÂfÇ6RÂÂ###bÓÓ#eC“££¢"Â###bÓÓ#eC££¢"Â&öÆB6Vç6—F—fR&Wf–Wr"Âäõr“°¢&WVW7D†öö²ç6WB†–væ÷&VBÓâ°¢–b‡&WVW7D6÷VçBævWB‚’ÓÒ’°¢æWr6†E7FFU6W'f–6R†¦F&2ÂÖævW"ÂæWr&6†—fTÖöFU6W'f–6R†¦F&2ÂÖævW"’’æ6ÆV%&VB†¦–BÂäõrÂ¦fçWF–Âä÷F–öæÂæöbƒ’Â¦fçWF–Âä÷F–öæÂæV×G’‚’Â¦fçWF–Âä÷F–öæÂæV×G’‚’“°¢¦F&2çWFFR‚&–ç6W'B–çFòVæF–æuöæ÷F–f–6F–öâ†6†Eö¦–BÇ–ÆöBÆGVUöBÇWFFVEöBÆW‡—&W5öB’fÇVW2ƒòÃó£¦§6öæ"ÃòÃòÃò’"À¢¦–BÂ¥4ôâçw&—FUfÇVT57G&–ær„Öæöb‚&ÖW76vT6÷VçB"ÂÀ¢&f—'7DÖW76vTB"ÂäõrçÇW56V6öæG2ƒ’çFõ7G&–ær‚’À¢&Æ7DÖW76vTB"ÂäõrçÇW56V6öæG2ƒ’çFõ7G&–ær‚’Â'&Wf–Wr"Â&æWr&Wf–Wr"’’À¢¦fç7ÂåF–ÖW7F×æg&öÒ„äõr’Â¦fç7ÂåF–ÖW7F×æg&öÒ„äõr’Â¦fç7ÂåF–ÖW7F×æg&öÒ„äõrçÇW56V6öæG2ƒƒcC’’“°¢Ğ¢&W7öç6U7FGW2ç6WBƒS2“°¢Ò“°¢æ÷F–f–6F–öç2æfÇW6‚„äõr“°¢6Æö6²æGfæ6R„GW&F–öâæöe6V6öæG2ƒ’“°¢Ö¶UVæF–æt÷WF&÷„GVR‚“°¢¦F&2çWFFR‚'WFFR÷WF&÷…ö7F–öç26WBf–Æ&ÆUöCÓò"Â¦fç7ÂåF–ÖW7F×æg&öÒ†6Æö6²æ–ç7FçB‚’æÖ–çW56V6öæG2ƒ’’“°¢æ÷F–f–6F–öç2æfÇW6‚†6Æö6²æ–ç7FçB‚’“°¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’Â%$TBFW&Ö–æFW2F†RöÆBVæF–ærvVæW&F–öâ&Vf÷&R&WG'’"“°¢76W'DWVÇ2‚#"Â¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B–ÆöBÓãâvÖW76vT6÷VçBrg&öÒVæF–æuöæ÷F–f–6F–öâ"Â7G&–æræ6Æ72’“°¢76W'DWVÇ2‚$4´äõtÄTDtTB"Â¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B7FGW2g&öÒ÷WF&÷…ö7F–öç2"Â7G&–æræ6Æ72’“°¢Ğ ¢FW7Bfö–Bf–æG4ç—F–ÖTgFW$FVfW'&VEv÷&´öæÇ•&÷w4&Vf÷&TÇ––æt&F6„Æ–Ö—B‚’F‡&÷w2W†6WF–öâ°¢&÷W'F–W2ç6WDÖ„&F6…6—¦Rƒ“°¢6VVB‚#SS“$2çv†G6ææWB"Â$WV—R¤2"ÂfÇ6RÂÂ###bÓÓ#eC“££¢"Â###bÓÓ#eC££¢"Â'v÷&²"Âäõr“°¢6VVB‚#SS“42çv†G6ææWB"Â$Ö–vò"ÂfÇ6RÂÂ###bÓÓ#eC“££¢"Â###bÓÓ#eC££¢"Â&ç—F–ÖR"Âäõr“°¢6Æö6²æGfæ6R„GW&F–öâæöd†÷W'2ƒR’“°¢æ÷F–f–6F–öç2æfÇW6‚†6Æö6²æ–ç7FçB‚’“°¢76W'Dæ÷DçVÆÂ‡&V6V—fVD&öG’ævWB‚’Â&FVfW'&VBf—'7B&÷r×W7Bæ÷B7F'fRVÆ–v–&ÆRÆFW"&÷r"“°¢76W'EG'VR‡&V6V—fVD&öG’ævWB‚’æ6öçF–ç2‚$Ö–vò"’“°¢Ğ ¢FW7Bfö–BW†6ÇVFW4W†—7F–ætw&÷WVæF–æuv†Väw&÷W4F—6&ÆVB‚’°¢&÷W'F–W2ç6WD–æ6ÇVFTw&÷W2†fÇ6R“°¢6VVB‚##3c3“rçW2"Â$w'Wò"ÂG'VRÂÂ###bÓÓ#eC“££¢"Â###bÓÓ#eC££¢"Â&w&÷W"Âäõr“°¢æ÷F–f–6F–öç2æfÇW6‚„äõr“°¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâ"Â–çFVvW"æ6Æ72’“°¢Ğ ¢FW7Bfö–BF—6&Æ–ætw&÷W4GW&–ætFVÆ—fW'•7F÷4–çFW&æÅ&WG'’‚’°¢–ç7FçBG&–vvW$BÒäõræÖ–çW2„GW&F–öâæödÖ–çWFW2ƒR’“°¢6VVDB‚##3c3“$rçW2"Â$w'Wò"ÂG'VRÂÂäõræÖ–çW2„GW&F–öâæödÖ–çWFW2ƒ#’’À¢G&–vvW$BÂ&w&÷W"Âäõr“°¢VÆ–g”w&÷W‚##3c3“$rçW2"ÂG&–vvW$B“°¢&WVW7D†öö²ç6WB†–væ÷&VBÓâ²&÷W'F–W2ç6WD–æ6ÇVFTw&÷W2†fÇ6R“²&W7öç6U7FGW2ç6WBƒS2“²Ò“°¢æ÷F–f–6F–öç2æfÇW6‚„äõr“°¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâ"Â–çFVvW"æ6Æ72’“°¢Ğ ¢FW7Bfö–B6¶æ÷vÆVFvÖVçDFöW4æ÷DFVÆWFU&V7&VFVEVæF–æuv—F„–FVçF–6ÅvFW&Ö&·2‚’°¢7G&–ær¦–BÒ#SS“D2çv†G6ææWB#°¢6VVB†¦–BÂ$6öçFFò"ÂfÇ6RÂÂ###bÓÓ#eC“££¢"Â###bÓÓ#eC££¢"Â'&Wf–Wr"Âäõr“°¢&WVW7D†öö²ç6WB†–væ÷&VBÓâ&V7&VFUVæF–æt–FVçF–6ÆÇ’†¦–B’“°¢æ÷F–f–6F–öç2æfÇW6‚„äõr“°¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâ"Â–çFVvW"æ6Æ72’À¢$4²×W7B6ö×&RvVæW&F–öâWfVâv†VâWfW'’–ÆöBvFW&Ö&²—2–FVçF–6Â"“°¢Ğ ¢FW7Bfö–BGW&&ÆU&WG'”FöW4æ÷E&W6VæE&Wf–÷W4&6†—fTvVæW&F–öâ‚’°¢7G&–ær¦–BÒ#SS“T2çv†G6ææWB#°¢6VVB†¦–BÂ$6öçFFò"ÂfÇ6RÂÂ###bÓÓ#eC“££¢"Â###bÓÓ#eC££¢"Â&ö'6öÆWFR&Wf–Wr"Âäõr“°¢&W7öç6U7FGW2ç6WBƒS2“°¢æ÷F–f–6F–öç2æfÇW6‚„äõr“°¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’“°¢¦F&2çWFFR‚'WFFR6†E÷6æ6†÷B6WB&6†—fVCÖfÇ6Rv†W&R6†Eö¦–CÓò"Â¦–B“°¢&V7&VFUVæF–æt–FVçF–6ÆÇ’†¦–B“°¢¦F&2çWFFR‚'WFFR6†E÷6æ6†÷B6WB&6†—fVC×G'VRv†W&R6†Eö¦–CÓò"Â¦–B“°¢&W7öç6U7FGW2ç6WBƒ#“°¢6Æö6²æGfæ6R„GW&F–öâæöe6V6öæG2ƒ’“°¢Ö¶UVæF–æt÷WF&÷„GVR‚“°¢æ÷F–f–6F–öç2æfÇW6‚†6Æö6²æ–ç7FçB‚’“°¢76W'DWVÇ2ƒÂ&WVW7D6÷VçBævWB‚’Â'&V&6†—fR×W7Bæ÷BWF†÷&—¦RF†R&Wf–÷W2–æ6&æF–öâ"“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâ"Â–çFVvW"æ6Æ72’“°¢æ÷F–f–6F–öç2æfÇW6‚†6Æö6²æ–ç7FçB‚’“°¢76W'DWVÇ2ƒ"Â&WVW7D6÷VçBævWB‚’Â&æWrvVæW&F–öâ&VÖ–ç2FVÆ—fW&&ÆRöâF†RæW‡B&F6‚"“°¢76W'DWVÇ2ƒÂ¦F&2çVW'”f÷$ö&¦V7B‚'6VÆV7B6÷VçB‚¢’g&öÒVæF–æuöæ÷F–f–6F–öâ"Â–çFVvW"æ6Æ72’“°¢Ğ ¢&—fFRfö–B&V7&VFUVæF–æt–FVçF–6ÆÇ’…7G&–ær¦–B’°¢f"&÷rÒ¦F&2çVW'”f÷$Ö‚'6VÆV7B–ÆöC£§FW‡BÆGVUöBÇWFFVEöBÆW‡—&W5öBg&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â¦–B“°¢¦F&2çWFFR‚&FVÆWFRg&öÒVæF–æuöæ÷F–f–6F–öâv†W&R6†Eö¦–CÓò"Â¦–B“°¢¦F&2çWFFR‚&–ç6W'B–çFòVæF–æuöæ÷F–f–6F–öâ†6†Eö¦–BÇ–ÆöBÆGVUöBÇWFFVEöBÆW‡—&W5öB’fÇVW2ƒòÃó£¦§6öæ"ÃòÃòÃò’"À¢¦–BÂ&÷rævWB‚'–ÆöB"’Â&÷rævWB‚&GVUöB"’Â&÷rævWB‚'WFFVEöB"’Â&÷rævWB‚&W‡—&W5öB"’“°¢Ğ ¢&—fFRfö–BÖ¶UVæF–æt÷WF&÷„GVR‚’°¢¦F&2çWFFR‚'WFFR÷WF&÷…ö7F–öç26WBf–Æ&ÆUöCÖ6Æö6µ÷F–ÖW7F×‚’Ö–çFW'fÂs6V6öæBrv†W&R7FGW3ÒuTäD”ärr"“°¢Ğ ¢&—fFRæ÷F–f–6F–öå6W'f–6RG&–vTf–ÇFW&–ætæ÷F–f–6F–öç2†&ööÆVâVæ&ÆVB’°¢&WGW&âæWræ÷F–f–6F–öå6W'f–6R†æWræ÷F–f–6F–öåVWVUVW'•&W÷6—F÷'’†¦F&2’ÂÖævW"Â÷WF&÷‚Âf¶UG&ç7÷'B‚’À¢æWrFVÆVw&ÔÖW76vTf÷&ÖGFW"‚’Â&÷W'F–W2Â6Æö6²Â&6†—fTÖöFW2Â6öæf–wW&VDÆW'G2‚’À¢æWrFWbæ‡VvòçvF6†W"ææ÷F–f–6F–öâäFV6—6–öäFVÆ—fW'”6ö÷&F–æF÷"†¦F&2ÂÖævW"’ÂVæ&ÆVB“°¢Ğ ¢&—fFRfö–B6VVD–væ÷&TFV6—6–öâ…7G&–ær6†BÂ7G&–ærÖW76vUF–ÖRÂ&ööÆVâ÷D–â’°¢6VVD–væ÷&TFV6—6–öâ†6†BÂÖW76vUF–ÖRÂ÷D–âÂ“°¢Ğ ¢&—fFRfö–B6VVD–væ÷&TFV6—6–öâ…7G&–ær6†BÂ7G&–ærÖW76vUF–ÖRÂ&ööÆVâ÷D–âÂ–çBVæF–æt6÷VçB’°¢–ç7FçBÖW76vTBÒf—‡GW&R†ÖW76vUF–ÖR“°¢6VVB†6†BÂ$6Æ–VçFR"ÂfÇ6RÂVæF–æt6÷VçBÂÖW76vUF–ÖRÂÖW76vUF–ÖRÂ&ÖVç6vVÒ6–çL:—F–6"Âäõr“°¢W'6—7D–væ÷&TFV6—6–öâ†6†BÂÖW76vTBÂ÷D–â“°¢Ğ ¢&—fFRfö–BW'6—7D–væ÷&TFV6—6–öâ…7G&–ær6†BÂ–ç7FçBÖW76vTBÂ&ööÆVâ÷D–â’°¢f"–BÒUT”Bç&æFöÕUT”B‚“°¢–ç7FçBW‡—&W2ÒäõrçÇW56V6öæG2ƒƒeóC“°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6–×VÆF–öåö&F6†W2†&F6…ö–BÆ6†Eö¦–BÇ'F–6—çEö¦–BÇ7FGW2Æf—'7EöÖW76vUöBÆÆ7EöÖW76vUöBÀ¢GVUöBÆ7&VFVEöBÆW‡—&W5öBÆÖWFFFöW‡—&W5öB¢fÇVW2ƒòÃòÂrrÂt4ôÕÄUDTBrÃòÃòÃòÃòÃòÃò¢"""Â–BÂ6†BÂ¦fç7ÂåF–ÖW7F×æg&öÒ†ÖW76vTB’Â¦fç7ÂåF–ÖW7F×æg&öÒ†ÖW76vTB’À¢¦fç7ÂåF–ÖW7F×æg&öÒ„äõr’Â¦fç7ÂåF–ÖW7F×æg&öÒ„äõr’Â¦fç7ÂåF–ÖW7F×æg&öÒ†W‡—&W2’À¢¦fç7ÂåF–ÖW7F×æg&öÒ†W‡—&W2’“°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6–×VÆF–öåö&F6…öÖW76vW2†&F6…ö–BÆ6†Eö¦–BÇ'F–6—çEö¦–BÆW‡FW&æÅö–BÇ&V6V—fVEöBÇ–ÆöB¢fÇVW2ƒòÃòÂrrÃòÃòÃó£¦§6öæ"¢"""Â–BÂ6†BÂ'7–çF†WF–2Ò"²–BÂ¦fç7ÂåF–ÖW7F×æg&öÒ†ÖW76vTB’À¢'µÂ&g&öÔÖUÂ#¦fÇ6RÅÂ&6öçFVçEÂ#§µÂ&6öçfW'6F–öåÂ#¥Â'7–çF†WF–5Â'×Ò"“°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6–×VÆF–öåöFV6—6–öç2†&F6…ö–BÇv÷VÆEöÆW'BÇv÷VÆE÷&WÇ’ÆFV6—6–öå÷&V6öâÆFV6–FVEöBÀ¢ÖWFFFöW‡—&W5öBÆ6Æ76–f–6F–öå÷7FGW2ÇG&–vUö÷WF6öÖRÆæ÷F–f–6F–öå÷&V6öÖÖVæFVBÀ¢&WÇ•÷&V6öÖÖVæFVBÇ&VÅö7F–öåöÆÆ÷vVBÇ&öGV7F–öåöÖöFR¢fÇVW2ƒòÆfÇ6RÆfÇ6RÂvæõöæ÷F–f–6F–öå÷&V6öÖÖVæFVBrÃòÃòÂt4Ä54”d”TBrÂt”täõ$RrÆfÇ6RÆfÇ6RÆfÇ6RÆfÇ6R¢"""Â–BÂ¦fç7ÂåF–ÖW7F×æg&öÒ„äõr’Â¦fç7ÂåF–ÖW7F×æg&öÒ†W‡—&W2’“°¢–b†÷D–â’¦F&2çWFFR‚&–ç6W'B–çFòG&–vUöÆVv7•öf–ÇFW%ö÷Eö–ç2†6†Eö¦–BÆVæ&ÆVBÇWFFVEöB’fÇVW2ƒòÇG'VRÃò’"À¢6†BÂ¦fç7ÂåF–ÖW7F×æg&öÒ„äõr’“°¢Ğ ¢&—fFRfö–B6VVB…7G&–ær¦–BÂ7G&–æræÖRÂ&ööÆVâw&÷WÂ–çB6÷VçBÂ7G&–ærf—'7BÂ7G&–ærÆ7BÂ7G&–ær&Wf–WrÂ–ç7FçBæ÷r’°¢6VVDB†¦–BÂæÖRÂw&÷WÂ6÷VçBÂf—‡GW&R†f—'7B’Âf—‡GW&R†Æ7B’Â&Wf–WrÂæ÷r“°¢Ğ ¢&—fFRfö–B6VVDB…7G&–ær¦–BÂ7G&–æræÖRÂ&ööÆVâw&÷WÂ–çB6÷VçBÂ–ç7FçBf—'7DBÂ–ç7FçBÆ7DBÂ7G&–ær&Wf–WrÂ–ç7FçBæ÷r’°¢–ç7FçBWFFVBÒæ÷ræÖ–çW56V6öæG2ƒ3c“°¢–ç7FçBW‡—&W2ÒWFFVBçÇW56V6öæG2ƒr¢ƒcCÂ“°¢–ç7FçB&Wf–WtW‡—&W2ÒW‡—&W3°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6†E÷6æ6†÷B†6†Eö¦–BÂ&6†—fVBÂ6æ6†÷EöBÂF—7Æ•öæÖRÂ—5öw&÷WÂ7–æ6‡&öæ—¦VE÷6æ6†÷B¢fÇVW2ƒòÂG'VRÂòÂòÂòÂG'VR¢"""Â¦–BÂ¦fç7ÂåF–ÖW7F×æg&öÒ‡WFFVB’ÂæÖRÂw&÷W“°¢–b‚w&÷W’°¢7G&–ær†öæT¦–BÒ¦–BæVæG5v—F‚‚$2çv†G6ææWB"’ò¦–B¢çVÆÃ°¢7G&–ærÆ–D¦–BÒ$æ"æWVÇ2†æÖR’ò#Æ–B"¢çVÆÃ°¢7G&–ærW6W&æÖRÒ$æ"æWVÇ2†æÖR’ò&æ"¢çVÆÃ°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFò6öçF7Eö–FVçF—G’†6æöæ–6Åö¦–BÂ†öæUö¦–BÂÆ–Eö¦–BÂW6W&æÖRÂF—7Æ•öæÖRÂF—7Æ•öæÖU÷6÷W&6RÂWFFVEöB¢fÇVW2ƒòÂòÂòÂòÂòÂt4ôåD5EôäÔRrÂò¢"""Â¦–BÂ†öæT¦–BÂÆ–D¦–BÂW6W&æÖRÂæÖRÂ¦fç7ÂåF–ÖW7F×æg&öÒ‡WFFVB’“°¢¦F&2çWFFR‚&–ç6W'B–çFò–FVçF—G•öÆ–6W2†Æ–2Â6æöæ–6Åö–FVçF—G’’fÇVW2ƒòÂò’"Â¦–BÂ¦–B“°¢–b†Æ–D¦–BÒçVÆÂ’¦F&2çWFFR‚&–ç6W'B–çFò–FVçF—G•öÆ–6W2†Æ–2Â6æöæ–6Åö–FVçF—G’’fÇVW2ƒòÂò’"ÂÆ–D¦–BÂ¦–B“°¢Ğ¢7G&–ær–ÆöBÒ¥4ôâçw&—FUfÇVT57G&–ær„Öæöb€¢&ÖW76vT6÷VçB"Â6÷VçBÀ¢&f—'7DÖW76vTB"Âf—'7DBçFõ7G&–ær‚’À¢&Æ7DÖW76vTB"ÂÆ7DBçFõ7G&–ær‚’À¢'&Wf–Wr"Â&Wf–WrÀ¢'&Wf–WtW‡—&W4B"Â&Wf–WtW‡—&W2çFõ7G&–ær‚’À¢&—4w&÷W"Âw&÷WÀ¢&æ÷F–f–6F–öåöÆ–7’"ÂæÖRæ6öçF–ç2‚$¤2"’ò%tõ$µôôäÅ’"¢$å•D”ÔR"’“°¢¦F&2çWFFR‚"" ¢–ç6W'B–çFòVæF–æuöæ÷F–f–6F–öâ†6†Eö¦–BÂ–ÆöBÂGVUöBÂWFFVEöBÂW‡—&W5öB¢fÇVW2ƒòÂó£¦§6öæ"ÂòÂòÂò¢"""Â¦–BÂ–ÆöBÂ¦fç7ÂåF–ÖW7F×æg&öÒ†Æ7DB’Â¦fç7ÂåF–ÖW7F×æg&öÒ‡WFFVB’Â¦fç7ÂåF–ÖW7F×æg&öÒ†W‡—&W2’“°¢Ğ ¢&—fFRfö–BVÆ–g”w&÷W…7G&–ær¦–BÂ–ç7FçBG&–vvW$B’°¢¦F&2çWFFR‚'WFFRVæF–æuöæ÷F–f–6F–öâ6WB–ÆöC×–ÆöBÇÂ§6öæ%ö'V–ÆEöö&¦V7B‚"°¢"vw&÷Wæ÷F–f–6F–öäVÆ–v–&ÆRrÇG'VRÂvw&÷Wæ÷F–f–6F–öäVÆ–v–&ÆTBrÃò’v†W&R6†Eö¦–CÓò"À¢G&–vvW$BçFõ7G&–ær‚’Â¦–B“°¢Ğ ¢ò¢¢W6RF†R&Wf–÷W2'W6–æW72F’Bƒ£<:6òVÆó¢–ç6–FREDÂæB&V†–æBF†RD"6Æö6²ÂWfVâgFW"Gfæ6–ærV‚â¢ğ¢&—fFR7FF–2–ç7FçB&V6VçEv÷&¶F•7F'B‚’°¢Æö6ÄFFRF’ÒÆö6ÄFFRææ÷r…¦öæTöfg6WBåUD2“°¢f÷"†–çBF—4&6²Ò²F—4&6²ÃÒs²F—4&6²²²’°¢Æö6ÄFFR6æF–FFTF’ÒF’æÖ–çW4F—2†F—4&6²“°¢–b†6æF–FFTF’ævWDF”öevVV²‚’ævWEfÇVR‚’âR’6öçF–çVS°¢&WGW&â6æF–FFTF’æEF–ÖRƒÂ’çFô–ç7FçB…¦öæTöfg6WBåUD2“°¢Ğ¢F‡&÷ræWr–ÆÆVvÅ7FFTW†6WF–öâ‚%Væ&ÆRFòf–æB&V6VçB'W6–æW72ÖF’f—‡GW&R"“°¢Ğ ¢&—fFR7FF–2–ç7FçBf—‡GW&R…7G&–ær÷&–v–æÂ’°¢&WGW&âäõrçÇW2„GW&F–öâæ&WGvVVâ„–ç7FçBç'6R‚###bÓÓ#eC££¢"’Â–ç7FçBç'6R†÷&–v–æÂ’’“°¢Ğ ¢&—fFR7FF–2f–æÂ6Æ72×WF&ÆT6Æö6²W‡FVæG26Æö6²°¢&—fFRf–æÂFöÖ–5&VfW&Væ6SÄ–ç7FçCâæ÷s° ¢&—fFR×WF&ÆT6Æö6²„–ç7FçB–æ—F–Â’²æ÷rÒæWrFöÖ–5&VfW&Væ6SÃâ†–æ—F–Â“²Ğ¢&—fFRfö–BGfæ6R„GW&F–öâGW&F–öâ’²æ÷rçWFFTæDvWB‡fÇVRÓâfÇVRçÇW2†GW&F–öâ’“²Ğ¢&—fFRfö–B6WB„–ç7FçBfÇVR’²æ÷rç6WB‡fÇVR“²Ğ¢÷fW'&–FRV&Æ–2¦öæT–BvWE¦öæR‚’²&WGW&â¦öæT–Bæöb‚%UD2"“²Ğ¢÷fW'&–FRV&Æ–26Æö6²v—F…¦öæR…¦öæT–B¦öæR’²&WGW&âF†—3²Ğ¢÷fW'&–FRV&Æ–2–ç7FçB–ç7FçB‚’²&WGW&âæ÷rævWB‚“²Ğ¢Ğ§Ğ
+package dev.hugo.watcher;
+
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
+import dev.hugo.watcher.notification.IntelligentAlertService;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
+import java.time.ZoneId;
+import java.util.UUID;
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+@Testcontainers(disabledWithoutDocker = true)
+class NotificationServiceTest {
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final Instant NOW = recentWorkdayStart();
+
+    @Container
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+
+    private JdbcTemplate jdbc;
+    private DataSourceTransactionManager manager;
+    private WatcherProperties properties;
+    private NotificationService notifications;
+    private NotificationOutboxRepository outbox;
+    private ArchiveModeService archiveModes;
+    private final AtomicReference<Integer> responseStatus = new AtomicReference<>(200);
+    private final AtomicReference<Duration> retryAfter = new AtomicReference<>();
+    private final AtomicInteger requestCount = new AtomicInteger();
+    private final AtomicReference<java.util.function.Consumer<String>> requestHook = new AtomicReference<>(ignored -> { });
+    private final AtomicReference<String> receivedBody = new AtomicReference<>();
+    private MutableClock clock;
+
+    @Test void rabbitOutboxPublishesAfterCommitAndRecoversUnconfirmedHandoffs() {
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(manager);
+        Instant createdAt = Instant.now();
+        Instant expiry = createdAt.plusSeconds(86_400);
+
+        org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
+                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
+                        org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyMap());
+        assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status ->
+                rabbitOutbox.enqueue("rabbit-test", "telegram_admin_reply", "{}", "[]", createdAt, expiry)));
+        assertNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key='rabbit-test'",
+                java.sql.Timestamp.class));
+
+        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
+                org.mockito.ArgumentMatchers.eq("rabbit-test"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(1, rabbitOutbox.recoverUnconfirmedActions());
+        var jobJson = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(publisher, org.mockito.Mockito.times(2)).publish(org.mockito.ArgumentMatchers.eq("admin-replies"),
+                org.mockito.ArgumentMatchers.eq("rabbit-test"), jobJson.capture(), org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(new RabbitDeliveryJob("rabbit-test", "telegram_admin_reply", "{}", "[]"),
+                RabbitDeliveryJob.parse(jobJson.getValue()));
+        assertNotNull(jdbc.queryForObject("select rabbit_confirmed_at from outbox_actions where action_key='rabbit-test'",
+                java.sql.Timestamp.class));
+    }
+
+    @Test void rabbitConfirmFailureLeavesCompletedResultActionReplayable() {
+        UUID jobId = UUID.randomUUID();
+        Instant createdAt = Instant.now();
+        jdbc.update("""
+                insert into prompt_generation_jobs
+                    (job_id,draft_id,expected_draft_version,actor_user_id,chat_id,operation,instructions,status,
+                     created_at,started_at,completed_at)
+                values (?, ?, 2, 1001, 2002, 'REFINE', '', 'COMPLETE', ?, ?, ?)
+                """, jobId, UUID.randomUUID(), Timestamp.from(createdAt), Timestamp.from(createdAt), Timestamp.from(createdAt));
+        String actionKey = "prompt-generation-result:" + jobId;
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(manager);
+        Instant expiry = createdAt.plus(Duration.ofDays(1));
+        org.mockito.Mockito.doThrow(new IllegalStateException("broker unavailable"))
+                .when(publisher).publish(org.mockito.ArgumentMatchers.eq("prompt-results"),
+                        org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyMap());
+
+        assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status ->
+                rabbitOutbox.enqueue(actionKey, "telegram_admin_reply", "{\"text\":\"safe result\"}", "[]", createdAt, expiry)));
+
+        assertEquals("COMPLETE", jdbc.queryForObject(
+                "select status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertEquals("PENDING", jdbc.queryForObject(
+                "select result_delivery_status from prompt_generation_jobs where job_id=?", String.class, jobId));
+        assertNull(jdbc.queryForObject(
+                "select result_delivery_rabbit_confirmed_at from prompt_generation_jobs where job_id=?",
+                Timestamp.class, jobId));
+
+        org.mockito.Mockito.doNothing().when(publisher).publish(org.mockito.ArgumentMatchers.eq("prompt-results"),
+                org.mockito.ArgumentMatchers.eq(actionKey), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(1, rabbitOutbox.publishPendingAdminReplies());
+        assertNotNull(jdbc.queryForObject(
+                "select result_delivery_rabbit_confirmed_at from prompt_generation_jobs where job_id=?",
+                Timestamp.class, jobId));
+    }
+
+    @Test void legacyNotificationFilterNeedsGlobalFlagAndConversationOptIn() {
+        String messageTime = "2026-10-26T10:59:00Z";
+        String disabledChat = "legacy-disabled@s.whatsapp.net";
+        seedIgnoreDecision(disabledChat, messageTime, true);
+
+        notifications.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "conversation opt-in alone must leave legacy delivery unchanged");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, disabledChat));
+
+        requestCount.set(0);
+        String filteredChat = "legacy-filtered@s.whatsapp.net";
+        seedIgnoreDecision(filteredChat, messageTime, true);
+        var filtering = triageFilteringNotifications(true);
+
+        filtering.flush(NOW);
+
+        assertEquals(0, requestCount.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, filteredChat));
+
+        String optedOutChat = "legacy-opted-out@s.whatsapp.net";
+        seedIgnoreDecision(optedOutChat, messageTime, false);
+        filtering.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "global flag alone must not filter a conversation");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, optedOutChat));
+    }
+
+    @Test void legacyFilterDoesNotSuppressAggregatedMessages() {
+        String chat = "legacy-aggregate@s.whatsapp.net";
+        seedIgnoreDecision(chat, "2026-10-26T10:59:00Z", true, 2);
+
+        triageFilteringNotifications(true).flush(NOW);
+
+        assertEquals(1, requestCount.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+    }
+
+    @Test void uncertainIncidentDecisionCannotSuppressItsConventionalNotification() {
+        String chat = "incident-fixture@s.whatsapp.net";
+        Instant firstMessageAt = NOW.minusSeconds(2);
+        Instant secondMessageAt = NOW.minusSeconds(1);
+        Instant expires = NOW.plus(Duration.ofDays(2));
+        UUID batchId = UUID.fromString("1ec245cc-9541-4d04-9568-bfe93f3e634e");
+        seed(chat, "Fixture", false, 2, "2026-10-26T10:59:00Z", "2026-10-26T10:59:00Z",
+                "fixture redacted", NOW);
+        jdbc.update("""
+                insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,
+                    due_at,created_at,expires_at,metadata_expires_at)
+                values (?,?,'','COMPLETED',?,?,?,?,?,?)
+                """, batchId, chat, Timestamp.from(firstMessageAt), Timestamp.from(secondMessageAt),
+                Timestamp.from(NOW), Timestamp.from(NOW), Timestamp.from(expires), Timestamp.from(expires));
+        for (int index = 0; index < 2; index++) {
+            Instant receivedAt = index == 0 ? firstMessageAt : secondMessageAt;
+            jdbc.update("""
+                    insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload)
+                    values (?,?,'',?,?,?::jsonb)
+                    """, batchId, chat, "incident-fixture-" + index, Timestamp.from(receivedAt),
+                    "{\"fromMe\":false,\"content\":{\"conversation\":\"redacted-fixture\"}}");
+        }
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,
+                    metadata_expires_at,classification_status,classification_urgency,classification_confidence,
+                    triage_outcome,notification_recommended,reply_recommended,real_action_allowed,production_mode,
+                    decision_state,triage_reason,triage_blockers)
+                values (?,false,false,'classification_uncertain',?,?,'UNCERTAIN','UNCERTAIN',0.60,
+                    'UNDECIDED',false,false,false,false,'BLOCKED','classification_uncertain','[\"classification_uncertain\"]'::jsonb)
+                """, batchId, Timestamp.from(NOW), Timestamp.from(expires));
+        jdbc.update("insert into triage_legacy_filter_opt_ins(chat_jid,enabled,updated_at) values (?,true,?)",
+                chat, Timestamp.from(NOW));
+
+        var filtering = triageFilteringNotifications(true);
+        assertFalse(new NotificationQueueQueryRepository(jdbc).hasUniqueTriageIgnore(chat, secondMessageAt, NOW));
+
+        filtering.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "UNCERTAIN must leave the conventional Telegram path eligible");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+    }
+
+    @Test void pendingNotificationForAnotherChatDoesNotBlockIncidentOutboxEnqueue() {
+        String chat = "incident-unblocked@s.whatsapp.net";
+        String otherChat = "older-outbox-chat@s.whatsapp.net";
+        seed(chat, "Fixture", false, 2, "2026-10-26T10:59:00Z", "2026-10-26T10:59:00Z",
+                "fixture redacted", NOW);
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        Instant expires = NOW.plus(Duration.ofDays(2));
+        String oldSnapshot = JSON.writeValueAsString(List.of(Map.of(
+                "chat_jid", otherChat, "pending_generation", UUID.randomUUID().toString())));
+        rabbitOutbox.enqueue("older-unrelated-action", NotificationService.ARCHIVED_MESSAGES,
+                "{}", oldSnapshot, NOW.minus(Duration.ofDays(2)), expires);
+        assertTrue(rabbitOutbox.hasActiveActionForChat(NotificationService.ARCHIVED_MESSAGES, otherChat, NOW));
+        assertFalse(rabbitOutbox.hasActiveActionForChat(NotificationService.ARCHIVED_MESSAGES, chat, NOW));
+        org.mockito.Mockito.clearInvocations(publisher);
+        var brokerNotifications = new NotificationService(new NotificationQueueQueryRepository(jdbc), manager,
+                rabbitOutbox, fakeTransport(), new TelegramMessageFormatter(), properties, clock, archiveModes,
+                configuredAlerts(), deliveries, false);
+
+        brokerNotifications.flush(NOW);
+
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from outbox_actions o
+                 where o.action_type='archived_messages' and o.action_key<>'older-unrelated-action'
+                   and exists (select 1 from jsonb_array_elements(o.pending_snapshot) p where p->>'chat_jid' = ?)
+                """, Integer.class, chat));
+        org.mockito.Mockito.verify(publisher).publish(org.mockito.ArgumentMatchers.eq("notifications"),
+                org.mockito.ArgumentMatchers.startsWith("archived_messages:"),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test void revalidatesQueuedLegacyActionBeforeSuppressingAnIgnore() {
+        String chat = "legacy-queued-filter@s.whatsapp.net";
+        String messageTime = "2026-10-26T10:59:00Z";
+        Instant messageAt = fixture(messageTime);
+        seed(chat, "Cliente", false, 1, messageTime, messageTime, "mensagem sintÃ©tica", NOW);
+        String generation = jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, chat);
+        Instant expires = Instant.now().plusSeconds(86_400);
+        String payload = JSON.writeValueAsString(Map.of("eventType", NotificationService.ARCHIVED_MESSAGES,
+                "archiveMode", "ALL", "totalChats", 1, "totalMessages", 1,
+                "chats", List.of(Map.of("displayName", "Cliente", "messageCount", 1, "isGroup", false, "policy", "ANYTIME"))));
+        String snapshot = JSON.writeValueAsString(List.of(Map.of("chat_jid", chat, "pending_generation", generation,
+                "message_count", 1, "first_message_at", messageAt.toString(), "last_message_at", messageAt.toString(),
+                "updated_at", NOW.minusSeconds(3600).toString())));
+        outbox.enqueue("queued-legacy-triage", NotificationService.ARCHIVED_MESSAGES, payload, snapshot, NOW, expires);
+        persistIgnoreDecision(chat, messageAt, true);
+        assertTrue(new NotificationQueueQueryRepository(jdbc).hasUniqueTriageIgnore(chat, messageAt, NOW));
+
+        boolean delivered = triageFilteringNotifications(true).deliverQueuedAction("queued-legacy-triage", NOW);
+
+        assertFalse(delivered);
+        assertEquals(0, requestCount.get());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key='queued-legacy-triage'", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+    }
+
+    @Test void triageFilterCompareAndSwapKeepsAConcurrentlyAggregatedMessage() {
+        String chat = "legacy-cas@s.whatsapp.net";
+        String messageTime = "2026-10-26T10:59:00Z";
+        Instant originalLast = fixture(messageTime);
+        seed(chat, "Cliente", false, 1, messageTime, messageTime, "primeira", NOW);
+        var original = jdbc.queryForMap("select generation::text,updated_at,payload->>'lastMessageAt' as last_message_at from pending_notification where chat_jid=?", chat);
+        Instant concurrentLast = originalLast.plusSeconds(1);
+        jdbc.update("""
+                update pending_notification
+                   set payload=payload || jsonb_build_object('messageCount',2,'lastMessageAt',?),
+                       updated_at=?,generation=gen_random_uuid()
+                 where chat_jid=?
+                """, concurrentLast.toString(), java.sql.Timestamp.from(NOW), chat);
+
+        int deleted = new NotificationQueueQueryRepository(jdbc).discardPendingIfCurrent(chat,
+                (String) original.get("generation"));
+
+        assertEquals(0, deleted);
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, chat));
+        assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, chat));
+    }
+
+    @Test void rabbitDefersWorkOnlyNotificationsUntilTheNextAllowedWindow() {
+        var publisher = org.mockito.Mockito.mock(RabbitEventPublisher.class);
+        var deliveries = new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager);
+        var rabbitOutbox = new NotificationOutboxRepository(jdbc, manager, deliveries, publisher);
+        Instant outsideWindow = java.time.LocalDate.now(ZoneId.of("America/Sao_Paulo"))
+                .atTime(LocalTime.of(23, 0)).atZone(ZoneId.of("America/Sao_Paulo")).toInstant();
+        if (!outsideWindow.isAfter(Instant.now())) outsideWindow = outsideWindow.plus(Duration.ofDays(1));
+        seed("5511888877777@s.whatsapp.net", "Equipe JC", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "sensivel", outsideWindow);
+        MutableClock deferredClock = new MutableClock(outsideWindow);
+        TelegramTransport neverSendBeforeWindow = text -> {
+            requestCount.incrementAndGet();
+            return TelegramDeliveryResult.success();
+        };
+        var brokerNotifications = new NotificationService(jdbc, manager, rabbitOutbox, neverSendBeforeWindow,
+                new TelegramMessageFormatter(), properties, deferredClock, archiveModes, null);
+
+        brokerNotifications.flush(outsideWindow);
+
+        var availableAt = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        org.mockito.Mockito.verify(publisher).publishDeferred(org.mockito.ArgumentMatchers.eq("notifications"), availableAt.capture(),
+                org.mockito.ArgumentMatchers.startsWith("archived_messages:deferred:"),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyMap());
+        assertTrue(availableAt.getValue().isAfter(outsideWindow));
+        assertEquals(0, requestCount.get(), "work-only content must not be sent outside its configured window");
+        assertTrue(jdbc.queryForObject("select available_at>clock_timestamp() from outbox_actions where action_type='archived_messages'",
+                Boolean.class));
+    }
+
+    @Test void rabbitActionRemainsScheduledWhenGlobalTelegramRateLimitIsActive() {
+        var repository = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        repository.enqueue("rate-limited", "telegram_admin_reply", "{}", "[]",
+                databaseNow, databaseNow.plusSeconds(86_400));
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=clock_timestamp()+interval '5 seconds' where singleton_id=1");
+
+        NotificationDeferredException deferred = assertThrows(NotificationDeferredException.class,
+                () -> repository.claimByKey("rate-limited", databaseNow));
+
+        assertEquals(NotificationDeferredException.Reason.RATE_LIMIT, deferred.reason());
+        assertTrue(deferred.delayMillis() > 4_000);
+        assertEquals("PENDING", jdbc.queryForObject(
+                "select status from outbox_actions where action_key='rate-limited'", String.class));
+    }
+
+    @Test void redeliveredRabbitActionWaitsForAnActiveDatabaseLeaseInsteadOfBeingDropped() {
+        var repository = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        repository.enqueue("active-lease", "telegram_admin_reply", "{}", "[]",
+                databaseNow, databaseNow.plusSeconds(86_400));
+        assertNotNull(repository.claimByKey("active-lease", databaseNow));
+
+        NotificationDeferredException deferred = assertThrows(NotificationDeferredException.class,
+                () -> repository.claimByKey("active-lease", databaseNow));
+
+        assertEquals(NotificationDeferredException.Reason.ACTIVE_LEASE, deferred.reason());
+        assertTrue(deferred.delayMillis() > 0);
+    }
+
+    @BeforeEach void setup() {
+        var dataSource = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        jdbc = new JdbcTemplate(dataSource);
+        Flyway.configure().dataSource(dataSource).load().migrate();
+        jdbc.update("update operational_restrictions set emergency_latched=false,simulation_paused=false");
+        jdbc.update("delete from decision_delivery_attempts");
+        jdbc.update("delete from decision_delivery_claims");
+        jdbc.update("delete from outbox_actions");
+        jdbc.update("delete from prompt_generation_jobs");
+        jdbc.update("delete from prompt_generation_jobs");
+        jdbc.update("delete from triage_legacy_filter_opt_ins");
+        jdbc.update("delete from pending_notification");
+        jdbc.update("delete from processed_message");
+        jdbc.update("delete from quarantined_events");
+        jdbc.update("delete from chat_snapshot");
+        jdbc.update("delete from contact_identity");
+        jdbc.update("delete from identity_aliases");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=null where singleton_id=1");
+
+        properties = new WatcherProperties();
+        properties.setTelegramBotToken("synthetic-test-token");
+        properties.setTelegramChatId(123456789L);
+        clock = new MutableClock(NOW);
+        manager = new DataSourceTransactionManager(dataSource);
+        archiveModes = new ArchiveModeService(jdbc, manager);
+        archiveModes.setMode(ArchiveMode.ALL);
+        outbox = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        TelegramTransport fakeTelegram = text -> {
+            requestCount.incrementAndGet();
+            receivedBody.set(text);
+            requestHook.get().accept(text);
+            return responseStatus.get() == 200
+                    ? TelegramDeliveryResult.success()
+                    : TelegramDeliveryResult.failure(retryAfter.get());
+        };
+        notifications = new NotificationService(jdbc, manager, outbox, fakeTelegram,
+                new TelegramMessageFormatter(), properties, clock, archiveModes,
+                configuredAlerts());
+    }
+
+    private IntelligentAlertService configuredAlerts() {
+        var alerts=new IntelligentAlertService(jdbc,manager,outbox,clock,true,"15550000000@s.whatsapp.net");
+        alerts.configureRuntimeGate(TestOperational.gate(jdbc,clock,"15550000000@s.whatsapp.net")); return alerts;
+    }
+
+    @Test void routesDigestAndMenuHtmlButPreservesLiteralAdminRepliesAndOutboxAck() throws Exception {
+        List<String> routes = new java.util.ArrayList<>();
+        TelegramTransport transport = new TelegramTransport() {
+            @Override public TelegramDeliveryResult send(String text) {
+                routes.add("plain:" + text); return TelegramDeliveryResult.success();
+            }
+            @Override public TelegramDeliveryResult sendHtml(String html) {
+                routes.add("html:" + html); return TelegramDeliveryResult.success();
+            }
+            @Override public TelegramDeliveryResult sendAdmin(String text, String payload) {
+                routes.add("admin:" + text); return TelegramDeliveryResult.success();
+            }
+            @Override public TelegramDeliveryResult editAdminHtml(String html, String payload) {
+                routes.add("admin-edit-html:" + html); return TelegramDeliveryResult.success();
+            }
+        };
+        notifications = new NotificationService(jdbc, manager, outbox, transport,
+                new TelegramMessageFormatter(), properties, clock, archiveModes, configuredAlerts());
+        clock.set(Instant.now());
+        Instant deliveryTime = clock.instant();
+        Instant expires = deliveryTime.plus(Duration.ofDays(1));
+        outbox.enqueue("html:daily", "simulation_daily_summary",
+                "{\"eventType\":\"simulation_daily_summary\",\"decisionCount\":4}", "[]", deliveryTime, expires);
+        outbox.enqueue("admin:literal", "telegram_admin_reply",
+                "{\"eventType\":\"telegram_admin_reply\",\"text\":\"<b>literal</b>\"}", "[]", deliveryTime, expires);
+        outbox.enqueue("admin:menu", "telegram_admin_edit",
+                JSON.writeValueAsString(Map.of("eventType", "telegram_admin_edit",
+                        "text", "âš™ï¸ AdministraÃ§Ã£o Hugo do Zap\nEscolha <uma> & opÃ§Ã£o:",
+                        "messageId", 10, "keyboard", List.of(List.of(Map.of("text", "Status", "data", "status"))))),
+                "[]", deliveryTime, expires);
+
+        notifications.flush(deliveryTime);
+
+        assertEquals(3, routes.size());
+        assertTrue(routes.stream().anyMatch(route ->
+                route.startsWith("html:<b>ğŸ“Š Resumo diÃ¡rio de simulaÃ§Ã£o</b>")));
+        assertTrue(routes.contains("admin:[ğŸ¤– HUGO ZAP BOT]: <b>literal</b>"));
+        assertTrue(routes.stream().anyMatch(route ->
+                route.startsWith("admin-edit-html:[ğŸ¤– HUGO ZAP BOT]: <b>âš™ï¸ AdministraÃ§Ã£o Hugo do Zap</b>")
+                        && route.contains("Escolha &lt;uma&gt; &amp; opÃ§Ã£o:")));
+        assertEquals(3, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'",
+                Integer.class));
+    }
+
+    @Test void sendsAReadableTelegramSummaryAndAcknowledgesItsSnapshot() {
+        seed("5511999999999@s.whatsapp.net", "Ana", false, 2, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "Oi, tudo bem?", NOW);
+        seedAt("120363000000000000@g.us", "Equipe", true, 3, NOW.minus(Duration.ofMinutes(30)),
+                NOW.minus(Duration.ofMinutes(5)), "[Image]", NOW);
+        qualifyGroup("120363000000000000@g.us", NOW.minus(Duration.ofMinutes(5)));
+
+        notifications.flush(NOW);
+
+        assertTrue(receivedBody.get().contains("Novas mensagens"));
+        assertTrue(receivedBody.get().contains("2 conversas Â· 5 mensagens"));
+        assertTrue(receivedBody.get().contains("Ana"));
+        assertTrue(receivedBody.get().contains("Oi, tudo bem?"));
+        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class).contains("synthetic-test-token"));
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'", Integer.class));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void groupMessageShowsGroupAndCanonicalParticipantNameSeparately() {
+        String group = "120363000000000000@g.us";
+        String participant = "5511999999999@s.whatsapp.net";
+        seedAt(group, "Equipe", true, 1, NOW.minus(Duration.ofMinutes(30)),
+                NOW.minus(Duration.ofMinutes(5)), "OlÃ¡", NOW);
+        qualifyGroup(group, NOW.minus(Duration.ofMinutes(5)));
+        jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?)", participant, participant);
+        jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?,'CONTACT_NAME')",
+                participant, "JoÃ£o <Oficina> & CafÃ©");
+        jdbc.update("update pending_notification set payload=jsonb_set(payload,'{previewSenderJid}',to_jsonb(?::text),true) where chat_jid=?",
+                participant, group);
+
+        notifications.flush(NOW);
+
+        assertTrue(receivedBody.get().contains("Equipe"));
+        assertTrue(receivedBody.get().contains("<b>JoÃ£o &lt;Oficina&gt; &amp; CafÃ©</b>: OlÃ¡"));
+        assertFalse(receivedBody.get().contains("5511999999999@s.whatsapp.net"));
+    }
+
+    @Test void emergencyKillSwitchDoesNotBlockQueuedTelegramAdminReply() {
+        Instant now = Instant.now();
+        jdbc.update("update automation_settings set kill_switch_enabled=true,intelligent_alerts_enabled=false,auto_reply_enabled=false where singleton_id=1");
+        outbox.enqueue("telegram_admin_reply:kill-switch", "telegram_admin_reply",
+                "{\"eventType\":\"telegram_admin_reply\",\"text\":\"Admin response\"}", "[]", now, now.plus(Duration.ofMinutes(5)));
+
+        notifications.flush(now);
+
+        assertEquals(1, requestCount.get());
+        assertEquals("[ğŸ¤– HUGO ZAP BOT]: Admin response", receivedBody.get());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='telegram_admin_reply'", String.class));
+    }
+
+    @Test void revalidatesIntelligentAlertAfterEnqueueAndSuppressesRevokedAuthorization() {
+        clock.set(Instant.now());
+        Instant now = clock.instant();
+        UUID decisionId = UUID.randomUUID();
+        Instant expires = now.plus(Duration.ofDays(1));
+        jdbc.update("update automation_settings set ai_classification_enabled=true,intelligent_alerts_enabled=true,kill_switch_enabled=false where singleton_id=1");
+        jdbc.update("insert into response_templates(template_id,version,situation,body,identifies_automation,enabled) values ('notify_alert_test',1,'CRITICAL_URGENCY','Resposta automÃ¡tica: alerta crÃ­tico.',true,true)");
+        jdbc.update("insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,due_at,created_at,expires_at,metadata_expires_at) values (?,?,?,'COMPLETED',?,?,?,?,?,?)",
+                decisionId, "15551234567@s.whatsapp.net", "", Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(now), Timestamp.from(expires), Timestamp.from(expires));
+        jdbc.update("insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload) values (?,?,?,?,?,?::jsonb)",
+                decisionId, "15551234567@s.whatsapp.net", "", "notify-source", Timestamp.from(now),
+                "{\"fromMe\":false,\"content\":{\"extendedTextMessage\":{\"text\":\"RAW_TEST_SECRET\",\"contextInfo\":{\"mentionedJid\":[\"15550000000@s.whatsapp.net\"]}}}}");
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,metadata_expires_at,
+                    real_action_allowed,decision_state,template_id,classification_status,classification_urgency,
+                    classification_confidence,intelligent_alert_reference_hash,notification_recommended,triage_outcome)
+                values (?,true,false,'synthetic_audit',?,?,true,'WOULD_ACT','notify_alert_test','CLASSIFIED','HIGH',0.9,?,true,'NOTIFY_ONLY')
+                """, decisionId, Timestamp.from(now), Timestamp.from(expires), hash("notify-source"));
+        jdbc.update("insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version) values (?,'CRITICAL_URGENCY','notify_alert_test',1)", "15551234567@s.whatsapp.net");
+        jdbc.update("update simulation_decisions set production_mode=true,alert_template_reference='notify_alert_test@v1' where batch_id=?",decisionId);
+        jdbc.update("insert into ai_data_consents(chat_jid,situation,provider,privacy_approved,expires_at) values (?,'CONTACT_REQUEST','gemini',true,?)", "15551234567@s.whatsapp.net",Timestamp.from(expires));
+        jdbc.update("insert into simulation_ai_evaluations(batch_id,lease_token,expires_at,result) values (?,?,?,?::jsonb)",decisionId,UUID.randomUUID(),Timestamp.from(expires),
+                "{\"provider\":\"gemini\",\"purposes\":[\"CONTACT_REQUEST\"],\"situations\":[\"CONTACT_REQUEST\",\"CRITICAL_URGENCY\"],\"available\":true,\"requestDetected\":true,\"notificationRecommended\":true,\"replyRecommended\":false,\"status\":\"CLASSIFIED\",\"urgency\":\"HIGH\",\"confidence\":0.9}");
+        var alerts = new IntelligentAlertService(jdbc, manager, outbox, clock, true, "15550000000@s.whatsapp.net");
+        alerts.configureRuntimeGate(TestOperational.gate(jdbc,clock,"15550000000@s.whatsapp.net"));
+        var queued = alerts.enqueue(decisionId);
+        assertTrue(queued.accepted());
+        assertFalse(queued.action().payload().contains("RAW_TEST_SECRET"));
+        jdbc.update("update outbox_actions set available_at=? where action_key=?",
+                Timestamp.from(now.minusSeconds(1)), "intelligent_alert:" + decisionId);
+
+        jdbc.update("update operational_restrictions set emergency_latched=true where singleton_id=1");
+        notifications.flush(now);
+
+        assertEquals(0, requestCount.get());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key=?", String.class,
+                "intelligent_alert:" + decisionId));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_key=?", String.class,
+                "intelligent_alert:" + decisionId));
+    }
+
+    private static String hash(String value) {
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))); }
+        catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+    }
+
+    @Test void defersWorkOnlyNotificationsOutsideTheLegacyWorkWindow() {
+        seed("5511888888888@s.whatsapp.net", "Equipe JC", false, 1, "2026-10-26T14:00:00Z", "2026-10-26T15:00:00Z", "mensagem", NOW);
+
+        clock.advance(Duration.ofHours(5));
+        notifications.flush(clock.instant());
+
+        assertNull(receivedBody.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions", Integer.class));
+    }
+
+    @Test void dropsNeverNotifyGroupsWithoutSendingTheirPendingContent() {
+        seed("120363000000000001@g.us", "233/234", true, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "sensitive", NOW);
+
+        notifications.flush(NOW);
+
+        assertNull(receivedBody.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions", Integer.class));
+    }
+
+    @Test void unrelatedAndStaleGroupBacklogAreSuppressedWithoutDeletingPrivatePending() {
+        String unrelatedGroup = "120363000000000099@g.us";
+        String staleGroup = "120363000000000098@g.us";
+        String privateChat = "5511888800000@s.whatsapp.net";
+        Instant staleAt = NOW.minus(Duration.ofHours(2));
+        seedAt(unrelatedGroup, "Equipe", true, 1, NOW.minus(Duration.ofMinutes(10)),
+                NOW.minus(Duration.ofMinutes(1)), "generic group question", NOW);
+        seedAt(staleGroup, "Equipe antiga", true, 356, staleAt, staleAt, "old activity", NOW);
+        qualifyGroup(staleGroup, staleAt);
+        seedAt(privateChat, "Contato", false, 2, NOW.minus(Duration.ofMinutes(10)),
+                NOW.minus(Duration.ofMinutes(1)), "private pending", NOW);
+        jdbc.update("update pending_notification set due_at=? where chat_jid=?",
+                java.sql.Timestamp.from(NOW.plus(Duration.ofMinutes(5))), privateChat);
+
+        notifications.flush(NOW);
+
+        assertNull(receivedBody.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid in (?,?)",
+                Integer.class, unrelatedGroup, staleGroup));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?",
+                Integer.class, privateChat));
+    }
+
+    @Test void explicitPerGroupTriggerCanAuthorizeConventionalNotification() {
+        String group = "120363000000000097@g.us";
+        seedAt(group, "Equipe autorizada", true, 1, NOW.minus(Duration.ofMinutes(10)),
+                NOW.minus(Duration.ofMinutes(1)), "explicit group trigger", NOW);
+        jdbc.update("""
+                insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version)
+                select ?, 'GROUP_TRIGGER', template_id, version from response_templates
+                 where situation='GROUP_TRIGGER' order by version desc limit 1
+                """, group);
+        assertEquals(1, jdbc.queryForObject("select count(*) from chat_automation_authorizations where chat_jid=? and situation='GROUP_TRIGGER'",
+                Integer.class, group));
+
+        notifications.flush(NOW);
+
+        assertNotNull(receivedBody.get());
+        assertTrue(receivedBody.get().contains("Equipe autorizada"));
+    }
+
+    @Test void preservesANewerMessageThatArrivesWhileTheOutboxActionIsBeingAcknowledged() {
+        String jid = "5511777777777@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "primeira", NOW);
+        requestHook.set(ignored -> jdbc.update("""
+                update pending_notification set payload=jsonb_set(jsonb_set(payload, '{messageCount}', '2'::jsonb),
+                    '{lastMessageAt}', to_jsonb(?::text)), updated_at=? where chat_jid=?
+                """, fixture("2026-10-26T10:01:00Z").toString(), java.sql.Timestamp.from(NOW.plusSeconds(1)), jid));
+
+        notifications.flush(NOW);
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+        assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, jid));
+    }
+
+    @Test void leavesTheOutboxAndPendingSnapshotForDurableRetryWhenTelegramRejectsDelivery() {
+        responseStatus.set(503);
+        seed("5511666666666@s.whatsapp.net", "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+
+        notifications.flush(NOW);
+
+        assertNotNull(receivedBody.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where status='PENDING'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertFalse(jdbc.queryForObject("select payload::text from outbox_actions where status='PENDING'", String.class).contains("synthetic-test-token"));
+    }
+
+    @Test void schedulesDurableRetryBackoffAfterTelegramRejectsDelivery() {
+        responseStatus.set(503);
+        requestHook.set(ignored -> clock.advance(Duration.ofSeconds(15)));
+        seed("5511111111111@s.whatsapp.net", "Contato", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        notifications.flush(NOW);
+
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where status='PENDING'",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertEquals(NOW.plusSeconds(15), clock.instant(), "fake transport advances the injected clock once");
+        assertTrue(!availableAt.isBefore(databaseBefore.plusSeconds(10))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(11)),
+                "durable retry backoff must start from PostgreSQL time");
+    }
+
+    @Test void TelegramRetryAfterBlocksEveryOutboxMessageUntilServerDelayExpires() {
+        outbox = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        notifications = new NotificationService(jdbc, manager, outbox, fakeTransport(),
+                new TelegramMessageFormatter(), properties, clock, archiveModes);
+        outbox.enqueue("first", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        outbox.enqueue("second", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        responseStatus.set(429);
+        retryAfter.set(Duration.ofSeconds(30));
+
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        notifications.flush(NOW);
+
+        assertEquals(1, requestCount.get(), "a 429 must stop this flush from sending the next queued message");
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where action_key='first'",
+                java.sql.Timestamp.class).toInstant();
+        Instant nextAllowedAt = jdbc.queryForObject("select next_allowed_at from telegram_delivery_rate_limit where singleton_id=1",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!availableAt.isBefore(databaseBefore.plusSeconds(30).plusMillis(250))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(31)),
+                "retry_after deadline must use PostgreSQL time");
+        assertEquals(availableAt, nextAllowedAt);
+        clock.advance(Duration.ofDays(2));
+        notifications.flush(clock.instant());
+        assertEquals(1, requestCount.get(), "an ahead client clock must not bypass retry_after cooldown");
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=clock_timestamp()-interval '1 second' where singleton_id=1");
+        jdbc.update("update outbox_actions set available_at=clock_timestamp()-interval '1 second' where status='PENDING'");
+        responseStatus.set(200);
+        notifications.flush(clock.instant());
+        jdbc.update("update telegram_delivery_rate_limit set next_allowed_at=clock_timestamp()-interval '1 second' where singleton_id=1");
+        notifications.flush(clock.instant());
+        assertEquals(3, requestCount.get());
+    }
+
+    @Test void Telegram429WithoutRetryAfterUsesSharedConservativeCooldown() {
+        outbox = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        notifications = new NotificationService(jdbc, manager, outbox, fakeTransport(),
+                new TelegramMessageFormatter(), properties, clock, archiveModes);
+        outbox.enqueue("limited", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        outbox.enqueue("queued", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        responseStatus.set(429);
+        retryAfter.set(null);
+
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        notifications.flush(NOW);
+
+        assertEquals(1, requestCount.get());
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where action_key='limited'",
+                java.sql.Timestamp.class).toInstant();
+        Instant nextAllowedAt = jdbc.queryForObject("select next_allowed_at from telegram_delivery_rate_limit where singleton_id=1",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!availableAt.isBefore(databaseBefore.plusSeconds(60))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(61)),
+                "missing retry_after must schedule a conservative durable action delay");
+        assertEquals(availableAt, nextAllowedAt, "global cooldown must match retry deadline");
+
+        clock.advance(Duration.ofDays(2));
+        notifications.flush(clock.instant());
+        assertEquals(1, requestCount.get(), "other queued messages must remain blocked during the global cooldown");
+    }
+
+    @Test void PostgreSqlRateLimitCoordinatesIndependentOutboxRepositoryInstances() {
+        var firstWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        var secondWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ofSeconds(1));
+        Instant createdAt = Instant.now().minusSeconds(1);
+        Instant expiresAt = createdAt.plus(Duration.ofDays(6));
+        firstWorker.enqueue("worker-a", "other", "{}", "[]", createdAt, expiresAt);
+        firstWorker.enqueue("worker-b", "other", "{}", "[]", createdAt, expiresAt);
+
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant clientNow = Instant.now();
+        assertEquals("worker-a", firstWorker.claimNext(clientNow).actionKey());
+        Instant nextAllowedAt = jdbc.queryForObject("select next_allowed_at from telegram_delivery_rate_limit where singleton_id=1",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!nextAllowedAt.isBefore(databaseBefore.plusSeconds(1))
+                        && !nextAllowedAt.isAfter(databaseAfter.plusSeconds(1)),
+                "rate reservation must use PostgreSQL time, not the worker clock");
+        assertNull(secondWorker.claimNext(clientNow.plus(Duration.ofDays(1))),
+                "a worker clock ahead of PostgreSQL must not bypass the shared cooldown");
+    }
+
+    @Test void genericRetryDeadlineUsesDatabaseClockAndCannotBeClaimedByAnAheadWorker() {
+        var worker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant createdAt = databaseNow.minusSeconds(5);
+        worker.enqueue("generic-retry", "other", "{}", "[]", createdAt, databaseNow.plus(Duration.ofDays(5)));
+        OutboxAction action = worker.claimNext(databaseNow);
+
+        worker.retry(action, databaseNow.plus(Duration.ofDays(1)), "TemporaryFailure");
+
+        Instant availableAt = jdbc.queryForObject("select available_at from outbox_actions where action_key='generic-retry'",
+                java.sql.Timestamp.class).toInstant();
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        assertTrue(!availableAt.isBefore(databaseNow.plusSeconds(10))
+                        && !availableAt.isAfter(databaseAfter.plusSeconds(11)),
+                "generic retry backoff must start from PostgreSQL time");
+        assertNull(worker.claimNext(databaseNow.plus(Duration.ofDays(1))),
+                "a worker clock ahead of PostgreSQL must not make a durable retry eligible early");
+    }
+
+    @Test void activeLeaseCannotBeReclaimedByAnAheadWorkerButExpiredLeaseCan() {
+        var firstWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        var secondWorker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        firstWorker.enqueue("leased", "other", "{}", "[]", databaseNow.minusSeconds(1),
+                databaseNow.plus(Duration.ofDays(5)));
+
+        assertEquals("leased", firstWorker.claimNext(databaseNow).actionKey());
+        assertNull(secondWorker.claimNext(databaseNow.plus(Duration.ofMinutes(3))),
+                "a worker clock ahead must not reclaim an unexpired lease");
+
+        jdbc.update("update outbox_actions set lease_expires_at=clock_timestamp()-interval '1 second' where action_key='leased'");
+        assertEquals("leased", secondWorker.claimNext(databaseNow).actionKey(),
+                "a lease that expired by PostgreSQL time must remain reclaimable");
+    }
+
+    @Test void databaseExpiredSensitivePayloadIsNotClaimedByABehindWorkerClock() {
+        var worker = new NotificationOutboxRepository(jdbc, manager, Duration.ZERO);
+        Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        worker.enqueue("expired", "other", "{}", "[]", databaseNow.minusSeconds(10), databaseNow.minusSeconds(1));
+
+        assertNull(worker.claimNext(databaseNow.minusSeconds(2)),
+                "database expiry must not be extended by a worker clock that is behind");
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_key='expired'", String.class));
+    }
+
+    @Test void enqueueCapsSensitiveTtlAtSevenDaysFromDatabaseTimeButKeepsEarlierContentDeadline() {
+        Instant databaseBefore = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant workerCreatedAt = databaseBefore.plus(Duration.ofDays(2));
+        Instant workerMaximumExpiry = workerCreatedAt.plus(Duration.ofDays(7));
+        Instant shortContentExpiry = databaseBefore.plus(Duration.ofDays(2));
+
+        outbox.enqueue("worker-clock-ahead", "other", "{}", "[]", workerCreatedAt, workerMaximumExpiry);
+        outbox.enqueue("short-content-deadline", "other", "{}", "[]", workerCreatedAt, shortContentExpiry);
+
+        Instant databaseAfter = jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class).toInstant();
+        Instant maxExpiry = jdbc.queryForObject("select sensitive_expires_at from outbox_actions where action_key='worker-clock-ahead'",
+                java.sql.Timestamp.class).toInstant();
+        Instant retainedShortExpiry = jdbc.queryForObject("select sensitive_expires_at from outbox_actions where action_key='short-content-deadline'",
+                java.sql.Timestamp.class).toInstant();
+
+        assertTrue(!maxExpiry.isAfter(databaseAfter.plus(Duration.ofDays(7))),
+                "a worker clock ahead must not extend sensitive retention beyond seven days from database insert time");
+        assertEquals(shortContentExpiry, retainedShortExpiry,
+                "database cap must preserve a shorter content-specific deadline");
+    }
+
+    private TelegramTransport fakeTransport() {
+        return text -> {
+            requestCount.incrementAndGet();
+            receivedBody.set(text);
+            requestHook.get().accept(text);
+            if (responseStatus.get() == 200) return TelegramDeliveryResult.success();
+            if (responseStatus.get() == 429) return TelegramDeliveryResult.rateLimited(retryAfter.get());
+            return TelegramDeliveryResult.failure(retryAfter.get());
+        };
+    }
+
+    @Test void connectionAlertRetryStopsAndIsCancelledWhenReconnectOccursDuringHttpFailure() {
+        var connections = new ConnectionService(jdbc, manager, outbox, properties, Duration.ofSeconds(60));
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, NOW, "connection_lost", 408));
+        outbox.enqueue("whatsapp_connection_lost:1", "whatsapp_connection_lost",
+                "{\"eventType\":\"whatsapp_connection_lost\",\"manualPairingRequired\":false}",
+                "[]", NOW, NOW.plusSeconds(7 * 86_400L));
+        responseStatus.set(503);
+        requestHook.set(ignored -> connections.onState(new ConnectionEvent(ConnectionEvent.State.CONNECTED, clock.instant(), "open", 200)));
+
+        notifications.flush(NOW);
+
+        assertEquals("CONNECTED", jdbc.queryForObject("select connection_state from watcher_connection_state where singleton_id=1", String.class));
+        assertEquals(1, requestCount.get(), "one direct Telegram attempt is made");
+        assertEquals("CANCELLED", jdbc.queryForObject("select status from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+        assertEquals("{}", jdbc.queryForObject("select payload::text from outbox_actions where action_type='whatsapp_connection_lost'", String.class));
+
+        responseStatus.set(200);
+        requestHook.set(ignored -> { });
+        clock.advance(Duration.ofSeconds(20));
+        notifications.flush(clock.instant());
+
+        assertEquals(1, requestCount.get(), "a cancelled alert must not be delivered by a later outbox retry");
+    }
+
+    @Test void revalidatesAQueuedGroupAgainstItsCurrentBlockedNameBeforeRetrying() {
+        String jid = "5511555555555@s.whatsapp.net";
+        responseStatus.set(503);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "sensivel", NOW);
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get(), "a rejected Telegram send is retried through the durable outbox");
+
+        jdbc.update("update chat_snapshot set display_name='233/234',is_group=true where chat_jid=?", jid);
+        jdbc.update("update contact_identity set display_name='233/234' where canonical_jid=?", jid);
+        responseStatus.set(200);
+
+        clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
+        notifications.flush(clock.instant());
+
+        assertEquals(1, requestCount.get(), "a now-blocked group must not reach Telegram");
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid),
+                "suppression must not clear a pending snapshot that was not sent");
+    }
+
+    @Test void revalidatesWorkOnlyWindowAtRetryDeliveryTime() {
+        responseStatus.set(503);
+        seed("5511444444444@s.whatsapp.net", "Equipe JC", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get());
+        responseStatus.set(200);
+
+        clock.advance(Duration.ofHours(5));
+        makePendingOutboxDue();
+        notifications.flush(clock.instant());
+
+        assertEquals(1, requestCount.get(), "a WORK_ONLY retry outside the work window must not be sent");
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void filtersUnarchivedChatsAndKeepsConcurrentPendingSnapshotsOnRetry() throws Exception {
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        String unarchived = "5511333333333@s.whatsapp.net";
+        String concurrentlyUpdated = "5511222222222@s.whatsapp.net";
+        responseStatus.set(503);
+        seed(unarchived, "Contato antigo", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "nÃ£o enviar", NOW);
+        seed(concurrentlyUpdated, "Contato atual", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem antiga", NOW);
+        notifications.flush(NOW);
+
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", unarchived);
+        jdbc.update("update pending_notification set payload=jsonb_set(payload, '{messageCount}', '2'::jsonb), updated_at=? where chat_jid=?",
+                java.sql.Timestamp.from(NOW.plusSeconds(1)), concurrentlyUpdated);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(20));
+        makePendingOutboxDue();
+        notifications.flush(clock.instant());
+
+        assertTrue(receivedBody.get().contains("Contato atual"));
+        assertFalse(receivedBody.get().contains("Contato antigo"));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, unarchived));
+        assertEquals("2", jdbc.queryForObject("select payload->>'messageCount' from pending_notification where chat_jid=?", String.class, concurrentlyUpdated));
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+    }
+
+    @Test void purgesOutboxPayloadAtItsSensitiveRetentionDeadline() {
+        outbox.enqueue("expired-preview", "archived_messages", "{\"preview\":\"synthetic\"}", "[]",
+                NOW.minusSeconds(7 * 86_400L), NOW);
+
+        new SensitiveDataRetentionService(jdbc).purge(NOW);
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions where action_key='expired-preview'", Integer.class));
+    }
+
+    @Test void durableRetryFiltersUnarchivedChatAndAcknowledgesOnlyDeliveredSnapshot() {
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        String removed = "5511000000001@s.whatsapp.net";
+        String eligible = "5511000000002@s.whatsapp.net";
+        seed(removed, "Antigo", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);
+        seed(eligible, "Atual", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "ok", NOW);
+        requestHook.set(ignored -> {
+            if (requestCount.get() == 1) {
+                jdbc.update("update chat_snapshot set archived=false where chat_jid=?", removed);
+                responseStatus.set(503);
+            } else responseStatus.set(200);
+        });
+        notifications.flush(NOW);
+        clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
+        notifications.flush(clock.instant());
+        assertEquals(2, requestCount.get());
+        assertTrue(receivedBody.get().contains("Atual"));
+        assertFalse(receivedBody.get().contains("Antigo"));
+        assertEquals(List.of(removed), jdbc.queryForList("select chat_jid from pending_notification", String.class));
+    }
+
+    @Test void oversizedTelegramBatchOnlyAcknowledgesConversationsActuallyShown() {
+        for (int i=0; i<8; i++) {
+            String jid="55119999999" + String.format("%02d",i) + "@s.whatsapp.net";
+            seed(jid, "Contato"+i+"<".repeat(200), false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "&".repeat(180), NOW);
+        }
+        notifications.flush(NOW);
+        String body=receivedBody.get();
+        int remaining=jdbc.queryForObject("select count(*) from pending_notification",Integer.class);
+        assertTrue(remaining > 0, "an oversized batch must leave unshown conversations pending");
+        for (int i=0; i<8; i++) {
+            String jid="55119999999" + String.format("%02d",i) + "@s.whatsapp.net";
+            int pending=jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?",Integer.class,jid);
+            assertEquals(body.contains("Contato"+i) ? 0 : 1, pending, "only visible conversations may be acknowledged");
+        }
+        for (int i=0; i<8 && remaining>0; i++) {
+            clock.advance(Duration.ofSeconds(2)); notifications.flush(clock.instant());
+            remaining=jdbc.queryForObject("select count(*) from pending_notification",Integer.class);
+        }
+        assertEquals(0,remaining);
+    }
+
+    @Test void archivedNotificationsSelectHtmlWhileOtherMessagesStayPlain() {
+        var selected = new AtomicReference<String>();
+        TelegramTransport fake = new TelegramTransport() {
+            public TelegramDeliveryResult send(String text) { selected.set("plain"); return TelegramDeliveryResult.success(); }
+            public TelegramDeliveryResult sendHtml(String text) { selected.set("html"); return TelegramDeliveryResult.success(); }
+        };
+        var service = new NotificationService(jdbc, manager, outbox, fake,
+                new TelegramMessageFormatter(properties), properties, clock, archiveModes);
+        outbox.enqueue("admin:format", "telegram_admin_reply", "{\"eventType\":\"telegram_admin_reply\",\"text\":\"<texto>\"}", "[]", NOW, NOW.plusSeconds(7 * 86400));
+        service.flush(NOW); assertEquals("plain", selected.get());
+        seed("5511999999999@s.whatsapp.net", "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        service.flush(NOW); assertEquals("html", selected.get());
+    }
+
+    @Test void retryRemovesStalePhoneWhenLidAssociationIsRevoked() {
+        String phone="5511999999999@s.whatsapp.net";
+        seed(phone, "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        jdbc.update("update pending_notification set chat_jid='1001@lid' where chat_jid=?", phone);
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values ('1001@lid',true,?,null,false,true)", Timestamp.from(NOW));
+        responseStatus.set(503); notifications.flush(NOW);
+        assertTrue(receivedBody.get().contains("https://wa.me/5511999999999"));
+        jdbc.update("delete from identity_aliases where alias='1001@lid'");
+        responseStatus.set(200); clock.advance(Duration.ofSeconds(20)); makePendingOutboxDue(); notifications.flush(clock.instant());
+        assertFalse(receivedBody.get().contains("wa.me")); assertTrue(receivedBody.get().contains("Conversa"));
+    }
+
+    @Test void retryUsesCurrentScopeForTitleWithoutChangingEligibility() {
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        responseStatus.set(503);
+        seed("5511999999999@s.whatsapp.net", "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        notifications.flush(NOW);
+        assertTrue(receivedBody.get().contains("Mensagens arquivadas"));
+        archiveModes.setMode(ArchiveMode.ALL); responseStatus.set(200); clock.advance(Duration.ofSeconds(20));
+        makePendingOutboxDue(); notifications.flush(clock.instant());
+        assertTrue(receivedBody.get().contains("Novas mensagens"));
+        assertTrue(receivedBody.get().contains("1 conversa Â· 1 mensagem"));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void verifiedLidUsesLinkedPhoneAndUnlinkedLidAndGroupsNeverBecomeLinks() {
+        String phone="5511999999999@s.whatsapp.net";
+        seed(phone, "Ana", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "<oi & vocÃª>", NOW);
+        jdbc.update("update pending_notification set chat_jid='1001@lid' where chat_jid=?", phone);
+        jdbc.update("insert into chat_snapshot(chat_jid,archived,snapshot_at,display_name,is_group,synchronized_snapshot) values ('1001@lid',true,?,null,false,true)", Timestamp.from(NOW));
+        seed("123456789@lid", "123456789@lid", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        Instant groupAt = NOW.minus(Duration.ofMinutes(5));
+        seedAt("111222333@g.us", "111222333@g.us", true, 1, NOW.minus(Duration.ofMinutes(20)),
+                groupAt, "[Sticker]", NOW);
+        qualifyGroup("111222333@g.us", groupAt);
+        notifications.flush(NOW);
+        String text=receivedBody.get();
+        assertTrue(text.contains("<a href=\"https://wa.me/5511999999999\">Ana</a>"));
+        assertTrue(text.contains("&lt;oi &amp; vocÃª&gt;"));
+        assertTrue(text.contains("â€¢ Conversa â€”")); assertTrue(text.contains("â€¢ Grupo â€”"));
+        assertFalse(text.contains("@lid")); assertFalse(text.contains("@g.us"));
+        assertEquals(1, text.split("<a href=", -1).length - 1);
+    }
+
+    @Test void identityWithoutNameFallsBackToVerifiedPhone() {
+        seed("5511999999999@s.whatsapp.net", "5511999999999@s.whatsapp.net", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "oi", NOW);
+        notifications.flush(NOW);
+        assertTrue(receivedBody.get().contains("<a href=\"https://wa.me/5511999999999\">+5511999999999</a>"));
+    }
+
+    @Test void unarchivedOnlyModeDeliversOnlySynchronizedUnarchivedChats() throws Exception {
+        String jid = "5511444444444@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", jid);
+        archiveModes.setMode(ArchiveMode.UNARCHIVED_ONLY);
+
+        notifications.flush(NOW);
+
+        assertNotNull(receivedBody.get());
+        assertTrue(receivedBody.get().contains("Contato"));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void modeChangeSuppressesRetryAndAllModeCanReleasePendingForUnknownArchiveState() throws Exception {
+        String jid = "5511555555555@s.whatsapp.net";
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+
+        jdbc.update("update chat_snapshot set archived=null,synchronized_snapshot=false where chat_jid=?", jid);
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(20));
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
+
+        assertEquals(1, requestCount.get(), "filtered retry must not issue another Telegram message");
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+
+        archiveModes.setMode(ArchiveMode.ALL);
+        notifications.flush(clock.instant());
+        assertEquals(2, requestCount.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
+    @Test void modeChangeBetweenFailureAndRetrySuppressesPersistedAction() {
+        String jid = "5511555555556@s.whatsapp.net";
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        var retryAt = jdbc.queryForObject("select available_at from outbox_actions where action_type='archived_messages'", java.sql.Timestamp.class);
+        notifications.flush(clock.instant());
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='archived_messages'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select attempts from outbox_actions where action_type='archived_messages'", Integer.class));
+        assertEquals(retryAt, jdbc.queryForObject("select available_at from outbox_actions where action_type='archived_messages'", java.sql.Timestamp.class));
+
+        archiveModes.setMode(ArchiveMode.UNARCHIVED_ONLY);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(20));
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
+
+        assertEquals(1, requestCount.get(), "retry must revalidate the persisted action against the current mode");
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
+    @Test void repeatedFlushReusesSuppressedGenerationWithoutCreatingDuplicateOutboxRows() {
+        String jid = "5511555555557@s.whatsapp.net";
+        archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "mensagem", NOW);
+        String generation = jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, jid);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", jid);
+        clock.advance(Duration.ofSeconds(20));
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_type='archived_messages'", String.class));
+        assertEquals(generation, jdbc.queryForObject("select generation::text from pending_notification where chat_jid=?", String.class, jid));
+
+        jdbc.update("update chat_snapshot set archived=true where chat_jid=?", jid);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(1));
+        notifications.flush(clock.instant());
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from outbox_actions where action_type='archived_messages'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?", Integer.class, jid));
+    }
+
+    @Test void failedTelegramSendKeepsOutboxForRetryWhenWorkWindowEnds() {
+        seed("5511000000003@s.whatsapp.net", "Equipe JC", false, 1,
+                "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "privado", NOW);
+        responseStatus.set(503);
+        requestHook.set(ignored -> clock.advance(Duration.ofHours(5)));
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions", String.class));
+    }
+
+    @Test void transientConnectionStateReadFailureRetriesWithoutCancellingValidAlert() {
+        assertConnectionReadFailureIsRetryable(false);
+    }
+
+    @Test void transientConnectionStateReadFailureAfterTelegramAttemptRetries() {
+        assertConnectionReadFailureIsRetryable(true);
+    }
+
+    private void assertConnectionReadFailureIsRetryable(boolean afterTelegramSend) {
+        var connections = new ConnectionService(jdbc, manager, outbox, properties, Duration.ofSeconds(60));
+        connections.onState(new ConnectionEvent(ConnectionEvent.State.DISCONNECTED, NOW, "connection_lost", 408));
+        String key = jdbc.queryForObject("select 'whatsapp_connection_lost:' || outage_generation from watcher_connection_state where singleton_id=1", String.class);
+        outbox.enqueue(key, "whatsapp_connection_lost", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        if (afterTelegramSend) {
+            responseStatus.set(503);
+            requestHook.set(ignored -> jdbc.execute("alter table watcher_connection_state rename to unavailable_connection_state"));
+        } else jdbc.execute("alter table watcher_connection_state rename to unavailable_connection_state");
+        try {
+            notifications.flush(NOW);
+            assertEquals(afterTelegramSend ? 1 : 0, requestCount.get());
+            assertEquals("PENDING", jdbc.queryForObject("select status from outbox_actions where action_key=?", String.class, key));
+        } finally {
+            jdbc.execute("alter table unavailable_connection_state rename to watcher_connection_state");
+        }
+        responseStatus.set(200);
+        requestHook.set(ignored -> { });
+        clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
+        notifications.flush(clock.instant());
+        assertEquals(afterTelegramSend ? 2 : 1, requestCount.get());
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions where action_key=?", String.class, key));
+    }
+
+    @Test void laterActionClaimReceivesFreshLeaseAfterLongEarlierDelivery() {
+        outbox.enqueue("first", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        outbox.enqueue("second", "other", "{}", "[]", NOW, NOW.plusSeconds(5 * 86400L));
+        AtomicReference<OutboxAction> stolen = new AtomicReference<>();
+        requestHook.set(ignored -> {
+            if (requestCount.get() == 1) clock.advance(Duration.ofSeconds(130));
+            else stolen.set(outbox.claimNext(clock.instant()));
+        });
+        notifications.flush(NOW);
+        assertNull(stolen.get(), "another worker must not steal the later action's fresh lease");
+        assertEquals(2, requestCount.get());
+        assertEquals(2, jdbc.queryForObject("select count(*) from outbox_actions where status='ACKNOWLEDGED'", Integer.class));
+    }
+
+    @Test void readThenRecreatedPendingDoesNotResendObsoletePreviewOnDurableRetry() {
+        String jid = "5511000000091@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "old sensitive preview", NOW);
+        requestHook.set(ignored -> {
+            if (requestCount.get() == 1) {
+                new ChatStateService(jdbc, manager, new ArchiveModeService(jdbc, manager)).clearRead(jid, NOW, java.util.Optional.of(0), java.util.Optional.empty(), java.util.Optional.empty());
+                jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
+                        jid, JSON.writeValueAsString(Map.of("messageCount", 1,
+                                "firstMessageAt", NOW.plusSeconds(1).toString(),
+                                "lastMessageAt", NOW.plusSeconds(1).toString(), "preview", "new preview")),
+                        java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW.plusSeconds(86400)));
+            }
+            responseStatus.set(503);
+        });
+        notifications.flush(NOW);
+        clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
+        jdbc.update("update outbox_actions set available_at=?", java.sql.Timestamp.from(clock.instant().minusSeconds(1)));
+        notifications.flush(clock.instant());
+        assertEquals(1, requestCount.get(), "READ terminates the old pending generation before retry");
+        assertEquals("1", jdbc.queryForObject("select payload->>'messageCount' from pending_notification", String.class));
+        assertEquals("ACKNOWLEDGED", jdbc.queryForObject("select status from outbox_actions", String.class));
+    }
+
+    @Test void findsAnytimeAfterDeferredWorkOnlyRowsBeforeApplyingBatchLimit() throws Exception {
+        properties.setMaxBatchSize(1);
+        seed("5511000000092@s.whatsapp.net", "Equipe JC", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "work", NOW);
+        seed("5511000000093@s.whatsapp.net", "Amigo", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:01:00Z", "anytime", NOW);
+        clock.advance(Duration.ofHours(5));
+        notifications.flush(clock.instant());
+        assertNotNull(receivedBody.get(), "deferred first row must not starve eligible later row");
+        assertTrue(receivedBody.get().contains("Amigo"));
+    }
+
+    @Test void excludesExistingGroupPendingWhenGroupsDisabled() {
+        properties.setIncludeGroups(false);
+        seed("120363000000000091@g.us", "Grupo", true, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "group", NOW);
+        notifications.flush(NOW);
+        assertEquals(0, requestCount.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void disablingGroupsDuringDeliveryStopsInternalRetry() {
+        Instant triggerAt = NOW.minus(Duration.ofMinutes(5));
+        seedAt("120363000000000092@g.us", "Grupo", true, 1, NOW.minus(Duration.ofMinutes(20)),
+                triggerAt, "group", NOW);
+        qualifyGroup("120363000000000092@g.us", triggerAt);
+        requestHook.set(ignored -> { properties.setIncludeGroups(false); responseStatus.set(503); });
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    @Test void acknowledgmentDoesNotDeleteRecreatedPendingWithIdenticalWatermarks() {
+        String jid = "5511000000094@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "preview", NOW);
+        requestHook.set(ignored -> recreatePendingIdentically(jid));
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get());
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class),
+                "ACK must compare generation even when every payload watermark is identical");
+    }
+
+    @Test void durableRetryDoesNotResendPreviousArchiveGeneration() {
+        String jid = "5511000000095@s.whatsapp.net";
+        seed(jid, "Contato", false, 1, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "obsolete preview", NOW);
+        responseStatus.set(503);
+        notifications.flush(NOW);
+        assertEquals(1, requestCount.get());
+        jdbc.update("update chat_snapshot set archived=false where chat_jid=?", jid);
+        recreatePendingIdentically(jid);
+        jdbc.update("update chat_snapshot set archived=true where chat_jid=?", jid);
+        responseStatus.set(200);
+        clock.advance(Duration.ofSeconds(11));
+        makePendingOutboxDue();
+        notifications.flush(clock.instant());
+        assertEquals(1, requestCount.get(), "rearchive must not authorize the previous incarnation");
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+        notifications.flush(clock.instant());
+        assertEquals(2, requestCount.get(), "new generation remains deliverable on the next batch");
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
+    }
+
+    private void recreatePendingIdentically(String jid) {
+        var row = jdbc.queryForMap("select payload::text,due_at,updated_at,expires_at from pending_notification where chat_jid=?", jid);
+        jdbc.update("delete from pending_notification where chat_jid=?", jid);
+        jdbc.update("insert into pending_notification(chat_jid,payload,due_at,updated_at,expires_at) values (?,?::jsonb,?,?,?)",
+                jid, row.get("payload"), row.get("due_at"), row.get("updated_at"), row.get("expires_at"));
+    }
+
+    private void makePendingOutboxDue() {
+        jdbc.update("update outbox_actions set available_at=clock_timestamp()-interval '1 second' where status='PENDING'");
+    }
+
+    private NotificationService triageFilteringNotifications(boolean enabled) {
+        return new NotificationService(new NotificationQueueQueryRepository(jdbc), manager, outbox, fakeTransport(),
+                new TelegramMessageFormatter(), properties, clock, archiveModes, configuredAlerts(),
+                new dev.hugo.watcher.notification.DecisionDeliveryCoordinator(jdbc, manager), enabled);
+    }
+
+    private void seedIgnoreDecision(String chat, String messageTime, boolean optIn) {
+        seedIgnoreDecision(chat, messageTime, optIn, 1);
+    }
+
+    private void seedIgnoreDecision(String chat, String messageTime, boolean optIn, int pendingCount) {
+        Instant messageAt = fixture(messageTime);
+        seed(chat, "Cliente", false, pendingCount, messageTime, messageTime, "mensagem sintÃ©tica", NOW);
+        persistIgnoreDecision(chat, messageAt, optIn);
+    }
+
+    private void persistIgnoreDecision(String chat, Instant messageAt, boolean optIn) {
+        var id = UUID.randomUUID();
+        Instant expires = NOW.plusSeconds(86_400);
+        jdbc.update("""
+                insert into simulation_batches(batch_id,chat_jid,participant_jid,status,first_message_at,last_message_at,
+                    due_at,created_at,expires_at,metadata_expires_at)
+                values (?,?,'','COMPLETED',?,?,?,?,?,?)
+                """, id, chat, java.sql.Timestamp.from(messageAt), java.sql.Timestamp.from(messageAt),
+                java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(expires),
+                java.sql.Timestamp.from(expires));
+        jdbc.update("""
+                insert into simulation_batch_messages(batch_id,chat_jid,participant_jid,external_id,received_at,payload)
+                values (?,?,'',?,?,?::jsonb)
+                """, id, chat, "synthetic-" + id, java.sql.Timestamp.from(messageAt),
+                "{\"fromMe\":false,\"content\":{\"conversation\":\"synthetic\"}}");
+        jdbc.update("""
+                insert into simulation_decisions(batch_id,would_alert,would_reply,decision_reason,decided_at,
+                    metadata_expires_at,classification_status,triage_outcome,notification_recommended,
+                    reply_recommended,real_action_allowed,production_mode)
+                values (?,false,false,'no_notification_recommended',?,?,'CLASSIFIED','IGNORE',false,false,false,false)
+                """, id, java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(expires));
+        if (optIn) jdbc.update("insert into triage_legacy_filter_opt_ins(chat_jid,enabled,updated_at) values (?,true,?)",
+                chat, java.sql.Timestamp.from(NOW));
+    }
+
+    private void seed(String jid, String name, boolean group, int count, String first, String last, String preview, Instant now) {
+        seedAt(jid, name, group, count, fixture(first), fixture(last), preview, now);
+    }
+
+    private void seedAt(String jid, String name, boolean group, int count, Instant firstAt, Instant lastAt, String preview, Instant now) {
+        Instant updated = now.minusSeconds(3600);
+        Instant expires = updated.plusSeconds(7 * 86400L);
+        Instant previewExpires = expires;
+        jdbc.update("""
+                insert into chat_snapshot(chat_jid, archived, snapshot_at, display_name, is_group, synchronized_snapshot)
+                values (?, true, ?, ?, ?, true)
+                """, jid, java.sql.Timestamp.from(updated), name, group);
+        if (!group) {
+            String phoneJid = jid.endsWith("@s.whatsapp.net") ? jid : null;
+            String lidJid = "Ana".equals(name) ? "1001@lid" : null;
+            String username = "Ana".equals(name) ? "ana" : null;
+            jdbc.update("""
+                    insert into contact_identity(canonical_jid, phone_jid, lid_jid, username, display_name, display_name_source, updated_at)
+                    values (?, ?, ?, ?, ?, 'CONTACT_NAME', ?)
+                    """, jid, phoneJid, lidJid, username, name, java.sql.Timestamp.from(updated));
+            jdbc.update("insert into identity_aliases(alias, canonical_identity) values (?, ?)", jid, jid);
+            if (lidJid != null) jdbc.update("insert into identity_aliases(alias, canonical_identity) values (?, ?)", lidJid, jid);
+        }
+        String payload = JSON.writeValueAsString(Map.of(
+                "messageCount", count,
+                "firstMessageAt", firstAt.toString(),
+                "lastMessageAt", lastAt.toString(),
+                "preview", preview,
+                "previewExpiresAt", previewExpires.toString(),
+                "isGroup", group,
+                "notificationPolicy", name.contains("JC") ? "WORK_ONLY" : "ANYTIME"));
+        jdbc.update("""
+                insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
+                values (?, ?::jsonb, ?, ?, ?)
+                """, jid, payload, java.sql.Timestamp.from(lastAt), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
+    }
+
+    private void qualifyGroup(String jid, Instant triggerAt) {
+        jdbc.update("update pending_notification set payload=payload || jsonb_build_object(" +
+                        "'groupNotificationEligible',true,'groupNotificationEligibleAt',?) where chat_jid=?",
+                triggerAt.toString(), jid);
+    }
+
+    /** Use the previous business day at 08:00 SÃ£o Paulo: inside TTL and behind the DB clock, even after advancing 5h. */
+    private static Instant recentWorkdayStart() {
+        LocalDate day = LocalDate.now(ZoneOffset.UTC);
+        for (int daysBack = 1; daysBack <= 7; daysBack++) {
+            LocalDate candidateDay = day.minusDays(daysBack);
+            if (candidateDay.getDayOfWeek().getValue() > 5) continue;
+            return candidateDay.atTime(11, 0).toInstant(ZoneOffset.UTC);
+        }
+        throw new IllegalStateException("Unable to find a recent business-day fixture");
+    }
+
+    private static Instant fixture(String original) {
+        return NOW.plus(Duration.between(Instant.parse("2026-10-26T11:00:00Z"), Instant.parse(original)));
+    }
+
+    private static final class MutableClock extends Clock {
+        private final AtomicReference<Instant> now;
+
+        private MutableClock(Instant initial) { now = new AtomicReference<>(initial); }
+        private void advance(Duration duration) { now.updateAndGet(value -> value.plus(duration)); }
+        private void set(Instant value) { now.set(value); }
+        @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
+        @Override public Clock withZone(ZoneId zone) { return this; }
+        @Override public Instant instant() { return now.get(); }
+    }
+}
