@@ -27,7 +27,6 @@ class NotificationConcurrentFlushTest {
             return mock(TransactionStatus.class);
         });
         var outbox = mock(NotificationOutboxRepository.class);
-        when(outbox.hasActiveAction(any(), any())).thenReturn(true);
         var service = new NotificationService(mock(NotificationQueueQueryRepository.class), manager, outbox,
                 mock(TelegramTransport.class), mock(TelegramMessageFormatter.class), new WatcherProperties(),
                 Clock.systemUTC(), mock(ArchiveModeService.class), null, mock(DecisionDeliveryCoordinator.class));

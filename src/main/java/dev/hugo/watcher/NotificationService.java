@@ -393,7 +393,6 @@ public class NotificationService {
     }
 
     private void enqueueArchivedBatch(Instant now) {
-        if (outbox.hasActiveAction(ARCHIVED_MESSAGES, now)) return;
         ZoneId zone = ZoneId.of(properties.getTimezone());
         boolean inWorkWindow = inWorkWindow(now, zone);
         ArchiveMode mode = archiveModes.getMode();
@@ -415,6 +414,9 @@ public class NotificationService {
                 queries.discardPendingIfCurrent(row.chatJid(), row.generation());
                 continue;
             }
+            // Preserve serialization for a chat whose previous notification is still active,
+            // while preventing an unrelated stalled action from blocking all other chats.
+            if (outbox.hasActiveActionForChat(ARCHIVED_MESSAGES, row.chatJid(), now)) continue;
             String displayName = resolveDisplayName(row);
             if (row.group() && isBlockedGroup(displayName)) {
                 queries.discardBlockedGroup(row.chatJid());
