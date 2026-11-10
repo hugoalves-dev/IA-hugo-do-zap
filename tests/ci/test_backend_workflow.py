@@ -1,3 +1,4 @@
+/root/.bashrc: line 21: /home/linuxbrew/.linuxbrew/bin/brew: No such file or directory
 from pathlib import Path
 import base64
 import json
@@ -136,6 +137,8 @@ class BackendWorkflowContractTest(unittest.TestCase):
             "EVOLUTION_IMAGE": "evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339",
             "COMPOSE_PROFILES": "prod",
             "WATCHER_AI_ENABLED": "true",
+            "WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED": "true",
+            "WATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED": "true",
             "WATCHER_AI_GEMINIAPIKEY": "synthetic-gemini-key",
             "WATCHER_AI_GEMINIMODEL": "synthetic-gemini-model",
             "WATCHER_AI_OPENROUTERAPIKEY": "synthetic-openrouter-key",
@@ -177,6 +180,8 @@ class BackendWorkflowContractTest(unittest.TestCase):
             self.assertEqual("synthetic-rabbitmq-password", default["services"]["rabbitmq"]["environment"]["RABBITMQ_DEFAULT_PASS"])
             self.assertIn("postgres.synthetic.invalid", default["services"]["watcher"]["environment"]["SPRING_DATASOURCE_URL"])
             watcher_env = default["services"]["watcher"]["environment"]
+            self.assertEqual("false", watcher_env["WATCHER_WHATSAPP_ACTIONS_REAL_SEND_ENABLED"])
+            self.assertEqual("false", watcher_env["WATCHER_WHATSAPP_ACTIONS_EVOLUTION_ENABLED"])
             self.assertEqual("http://evolution-api:8080",
                              watcher_env["WATCHER_WHATSAPP_ACTIONS_EVOLUTION_BASE_URL"])
             self.assertEqual("15s", watcher_env["WATCHER_WHATSAPP_ACTIONS_EVOLUTION_TIMEOUT"])
