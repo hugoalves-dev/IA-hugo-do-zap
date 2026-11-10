@@ -541,6 +541,7 @@ class AdminCommandServiceTest {
         assertTrue(recent.contains("Contato indisponível"));
         assertTrue(recent.contains("27/10/2026 - 09:00:00"));
         assertTrue(recent.contains("triagem=NOTIFY_ONLY"));
+        assertTrue(recent.contains("Shadow NO_ACTION"));
         assertTrue(recent.contains("intelligent_alerts_disabled"));
         String detail = commands.execute(command("decisao", List.of(id.toString().substring(0, 8)), false)).message();
         assertTrue(detail.contains("would_reply: false"));

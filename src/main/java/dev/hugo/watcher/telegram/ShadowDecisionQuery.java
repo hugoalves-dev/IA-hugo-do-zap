@@ -22,7 +22,7 @@ public class ShadowDecisionQuery {
             throw new IllegalArgumentException("Use /ultimas [1-10].");
         int limit = args.isEmpty() ? 5 : Integer.parseInt(args.getFirst());
         List<String> rows = jdbc.query("""
-                select d.batch_id,d.decided_at,d.classification_status,d.classification_urgency,d.classification_confidence,
+                select d.batch_id,d.decided_at,d.production_mode,d.classification_status,d.classification_urgency,d.classification_confidence,
                        d.would_alert,d.would_reply,d.blocked_reason,d.decision_state,d.classification_diagnostic,
                        case when b.chat_jid like '%@g.us' then s.display_name
                             when c.display_name_source='CONTACT_NAME' then c.display_name
@@ -37,7 +37,7 @@ public class ShadowDecisionQuery {
                   left join contact_identity pc on pc.canonical_jid=b.participant_jid
                   left join chat_snapshot s on s.chat_jid=b.chat_jid and s.synchronized_snapshot=true
                   left join simulation_ai_evaluations e on e.batch_id=d.batch_id
-                 where not d.production_mode and d.metadata_expires_at>? order by d.decided_at desc,d.batch_id limit ?
+                 where d.metadata_expires_at>? order by d.decided_at desc,d.batch_id limit ?
                 """, (rs, n) -> {
             String name = rs.getString("display_name");
             String source = rs.getString("display_name_source");
@@ -59,7 +59,8 @@ public class ShadowDecisionQuery {
                     + " / " + String.format(Locale.ROOT,"%.2f",rs.getDouble("classification_confidence"))
                     + " · provedor=" + provider(rs.getString("provider"))
                     + " · pedido=" + (rs.getString("request_detected") == null ? "indisponível" : "true".equals(rs.getString("request_detected")) ? "sim" : "não")
-                    + " · Shadow " + rs.getString("decision_state") + " · alerta=" + rs.getBoolean("would_alert")
+                    + " · " + (rs.getBoolean("production_mode") ? "Produção " : "Shadow ") + rs.getString("decision_state")
+                    + " · alerta=" + rs.getBoolean("would_alert")
                     + " resposta=" + rs.getBoolean("would_reply") + " · bloqueio=" + code(rs.getString("blocked_reason"))
                     + " · prompt=v" + rs.getInt("prompt_revision") + "/" + safePromptHash(rs.getString("prompt_hash"))
                     + "\ntriagem=" + triage(rs.getString("triage_outcome"))
