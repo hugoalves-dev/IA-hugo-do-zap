@@ -3,11 +3,15 @@ package dev.hugo.watcher.notification;
 import dev.hugo.watcher.WatcherProperties;
 import dev.hugo.watcher.policy.*;
 import dev.hugo.watcher.simulation.PersonalReferenceEvidence;
+import dev.hugo.watcher.simulation.OwnerConversationActivity;
+import dev.hugo.watcher.simulation.OwnerConversationActivityRepository;
+import dev.hugo.watcher.simulation.WatcherSimulationProperties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.util.UUID;
 import dev.hugo.watcher.notification.DecisionRuntimeQueryRepository.Context;
@@ -22,18 +26,30 @@ public final class DecisionRuntimeGate {
     private final Clock clock;
     private final WatcherProperties watcher;
     private final String ownerJid;
+    private final OwnerConversationActivityRepository ownerActivity;
+    private final WatcherSimulationProperties simulationProperties;
     private dev.hugo.watcher.OperationalState operational;
     @org.springframework.beans.factory.annotation.Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
     /** Production wiring uses managed repositories, not the legacy JDBC-only facade. */
     public DecisionRuntimeGate(DecisionRuntimeQueryRepository queries, Clock clock,
                                WatcherProperties watcher, String ownerJid,
                                PersistedPolicyRepository policies, HolidayService holidays) {
+        this(queries, clock, watcher, ownerJid, policies, holidays, null, new WatcherSimulationProperties());
+    }
+
+    public DecisionRuntimeGate(DecisionRuntimeQueryRepository queries, Clock clock,
+                               WatcherProperties watcher, String ownerJid,
+                               PersistedPolicyRepository policies, HolidayService holidays,
+                               OwnerConversationActivityRepository ownerActivity,
+                               WatcherSimulationProperties simulationProperties) {
         this.queries = queries;
         this.clock = clock;
         this.watcher = watcher;
         this.ownerJid = ownerJid;
         this.policies = policies;
         this.holidays = holidays;
+        this.ownerActivity = ownerActivity;
+        this.simulationProperties = simulationProperties;
     }
 
     /** Compatibility constructor retained for existing standalone tests. */
@@ -48,6 +64,11 @@ public final class DecisionRuntimeGate {
         if(rows.isEmpty()) return false;
         var c=rows.getFirst();
         try {
+            Instant activityCheckedAt = clock.instant();
+            if (!alert && (ownerActivity == null
+                    || ownerActivity.activity(c.chat(), activityCheckedAt, java.time.Duration.ofMinutes(
+                            simulationProperties.getActiveConversationWindowMinutes())) != OwnerConversationActivity.INACTIVE))
+                return false;
             var result=JSON.readTree(c.metadata());
             if(!result.path("available").asBoolean(false)
                     || !c.status().equals(result.path("status").asString(""))

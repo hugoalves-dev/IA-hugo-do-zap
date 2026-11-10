@@ -58,6 +58,17 @@ public class NotificationQueueQueryRepository {
         jdbc.update("delete from pending_notification where chat_jid=?", chatJid);
     }
 
+    /** Existing exact per-chat GROUP_TRIGGER authorization is the explicit group override. */
+    public boolean hasExplicitGroupTrigger(String canonicalChat) {
+        if (canonicalChat == null || canonicalChat.isBlank()) return false;
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists(select 1 from chat_automation_authorizations a
+                 where a.situation='GROUP_TRIGGER'
+                   and (a.chat_jid=? or a.chat_jid in
+                       (select alias from identity_aliases where canonical_identity=?)))
+                """, Boolean.class, canonicalChat, canonicalChat));
+    }
+
     /** Only an exact, unique retained private-message decision can suppress legacy delivery. */
     public boolean hasUniqueTriageIgnore(String chatJid, Instant messageAt, Instant now) {
         if (chatJid == null || messageAt == null || now == null) return false;

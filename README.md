@@ -192,6 +192,9 @@ A tabela documenta as **68 variáveis em [.env.example](.env.example)** e mais *
 | Notificações | `WATCHER_NOTIFICATION_WINDOWS_1_END` | `17:30` | Fim da janela 2 |
 | Notificações | `WATCHER_ALLOWED_NAME_REGEX` | `(^\|[^A-Z0-9])JC([^A-Z0-9]\|$)` | Regex de reconhecimento de contatos de trabalho |
 | Notificações | `WATCHER_INCLUDE_GROUPS` | `true` | Permite grupos arquivados elegíveis |
+| Segurança de reply | `WATCHER_SIMULATION_ACTIVECONVERSATIONWINDOWMINUTES` | `60` | Bloqueia recomendação/envio automático após mensagem própria recente |
+| Segurança de reply | `WATCHER_WHATSAPP_ACTIONS_OWNER_JID` | vazio | JID canônico do dono para validar menções estruturais em grupos |
+| Relevância de grupos | `WATCHER_SIMULATION_GROUPNOTIFICATIONMAXAGEMINUTES` | `60` | Idade máxima de atividade em grupos para evitar backlog antigo |
 | Notificações | `WATCHER_NEVER_NOTIFY_GROUP_NAMES_0` | `233/234` | Nome de grupo excluído de notificações |
 | Notificações | `WATCHER_MAX_BATCH_SIZE` | `50` | Tamanho máximo do lote |
 | Notificações | `WATCHER_RETENTION_DAYS` | `7` | Retenção local de conteúdo sensível em dias |

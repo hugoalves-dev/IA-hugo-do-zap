@@ -42,10 +42,14 @@ public class SimulationService {
     private final WatcherProperties watcher;
     private final dev.hugo.watcher.ai.AiSimulationClassifier classifier;
     private final dev.hugo.watcher.notification.DecisionActionProducer producer;
+    private OwnerConversationActivityRepository ownerActivity;
     private dev.hugo.watcher.OperationalState operational;
     private dev.hugo.watcher.ai.ShadowMetrics metrics;
     @Autowired(required = false) public void configureMetrics(dev.hugo.watcher.ai.ShadowMetrics value) { this.metrics = value; }
     @Autowired public void configureOperationalState(dev.hugo.watcher.OperationalState value) { this.operational = value; }
+    @Autowired(required = false) public void configureOwnerConversationActivity(OwnerConversationActivityRepository value) {
+        this.ownerActivity = value;
+    }
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     public SimulationService(SimulationPersistenceRepository persistence, PlatformTransactionManager manager, Clock clock,
@@ -109,10 +113,20 @@ public class SimulationService {
             // Provider requests run without a database transaction or advisory lock held.
             boolean existing = persistence.decisionExists(batch.id());
             Classification classification = classifier == null || existing ? Classification.unavailable() : classifier.classify(batch);
+            OwnerConversationActivity activity = OwnerConversationActivity.UNKNOWN;
+            if (ownerActivity != null) {
+                try {
+                    activity = ownerActivity.activity(batch.chatJid(), clock.instant(),
+                            Duration.ofMinutes(properties.getActiveConversationWindowMinutes()));
+                } catch (org.springframework.dao.DataAccessException unavailable) {
+                    LOG.warn("Owner activity lookup unavailable; automatic reply recommendation will fail closed");
+                }
+            }
+            OwnerConversationActivity decisionActivity = activity;
             long persistStarted = System.nanoTime();
             try {
                 return Objects.requireNonNull(transactions.execute(
-                        status -> evaluateTransaction(batch, classification, clock.instant())));
+                        status -> evaluateTransaction(batch, classification, clock.instant(), decisionActivity)));
             } finally {
                 if (metrics != null)
                     metrics.persistenceLatency(Duration.ofNanos(System.nanoTime() - persistStarted));
@@ -122,14 +136,16 @@ public class SimulationService {
         }
     }
 
-    private SimulationDecision evaluateTransaction(Batch batch, Classification classification, Instant now) {
+    private SimulationDecision evaluateTransaction(Batch batch, Classification classification, Instant now,
+                                                   OwnerConversationActivity ownerActivity) {
         persistence.lockIdentityMerge();
         List<Batch> current = persistence.currentBatch(batch);
         if (current.isEmpty()) throw new IllegalStateException("simulation batch missing");
-        return evaluateCurrent(current.getFirst(), classification, now);
+        return evaluateCurrent(current.getFirst(), classification, now, ownerActivity);
     }
 
-    private SimulationDecision evaluateCurrent(Batch batch, Classification classification, Instant now) {
+    private SimulationDecision evaluateCurrent(Batch batch, Classification classification, Instant now,
+                                               OwnerConversationActivity ownerActivity) {
         persistence.lockDecisionKey(batch.chatJid());
         List<Scope> scope = persistence.scopes(batch.chatJid());
         if (scope.isEmpty()) throw new IllegalStateException("archive monitor settings missing");
@@ -140,7 +156,7 @@ public class SimulationService {
                 loadDecisionPolicy(batch), currentAvailability);
         Classification verified = classifier == null ? classification : classifier.revalidate(batch, classification);
         Decision decided = scopeBlocked == null
-                ? decisions.decide(batch, verified, effective, now)
+                ? decisions.decide(batch, verified, effective, now, ownerActivity)
                 : new Decision(false, false, null, "archive_scope_blocked", scopeBlocked, false, "archive_scope_blocked");
         SimulationDecision decision = new SimulationDecision(decided.wouldAlert(), decided.wouldReply(),
                 decided.templateReference(), decided.reason(), decided.blockedReason(),

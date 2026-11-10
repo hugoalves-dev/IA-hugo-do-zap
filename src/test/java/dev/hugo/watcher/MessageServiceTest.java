@@ -99,6 +99,54 @@ class MessageServiceTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from simulation_owner_context where external_id in ('owner-group-unlinked','owner-history')", Integer.class));
     }
 
+    @Test void archivedGroupPendingStoresOnlyCanonicalOwnerMentionsOrVerifiedOwnerRepliesAsTriggers() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        properties.setIncludeGroups(true);
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc, new WatcherSimulationProperties(), manager));
+        integrated.configureOwnerJid("owner@s.whatsapp.net");
+        jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?)",
+                "owner@lid", "owner@s.whatsapp.net");
+        Instant now = Instant.now().minusSeconds(2);
+        integrated.recordOutgoingReference("fixture@g.us", "verified-owner-message", now.minusSeconds(10));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(new IncomingMessage(Optional.of("group-generic"),
+                "fixture@g.us", Optional.empty(), Optional.empty(), Optional.empty(), false, "notify", false,
+                Map.of("conversation", "Can anyone help?"), now)));
+        assertEquals("false", jdbc.queryForObject(
+                "select payload->>'groupNotificationEligible' from pending_notification where chat_jid='fixture@g.us'", String.class));
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(new IncomingMessage(Optional.of("group-mention"),
+                "fixture@g.us", Optional.empty(), Optional.empty(), Optional.empty(), false, "notify", false,
+                Map.of("extendedTextMessage", Map.of("text", "fixture", "contextInfo",
+                        Map.of("mentionedJid", java.util.List.of("owner@lid")))), now.plusSeconds(1))));
+        assertEquals("true", jdbc.queryForObject(
+                "select payload->>'groupNotificationEligible' from pending_notification where chat_jid='fixture@g.us'", String.class));
+
+        integrated.recordOutgoingReference("reply@g.us", "reply-owner-message", now.minusSeconds(10));
+        assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(new IncomingMessage(Optional.of("group-verified-reply"),
+                "reply@g.us", Optional.empty(), Optional.empty(), Optional.empty(), false, "notify", false,
+                Map.of("extendedTextMessage", Map.of("text", "fixture", "contextInfo",
+                        Map.of("stanzaId", "reply-owner-message"))), now.plusSeconds(1))));
+        assertEquals("true", jdbc.queryForObject(
+                "select payload->>'groupNotificationEligible' from pending_notification where chat_jid='reply@g.us'", String.class));
+    }
+
+    @Test void unverifiedQuoteDoesNotCreateGroupNotificationTrigger() {
+        var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+        properties.setIncludeGroups(true);
+        var integrated = new MessageService(jdbc, manager, identities, properties, archiveModes,
+                new DebounceService(jdbc, new WatcherSimulationProperties(), manager));
+        integrated.configureOwnerJid("owner@s.whatsapp.net");
+
+        assertEquals(MessageService.Acceptance.ACCEPTED, integrated.accept(new IncomingMessage(Optional.of("group-unverified-quote"),
+                "fixture@g.us", Optional.empty(), Optional.empty(), Optional.empty(), false, "notify", false,
+                Map.of("extendedTextMessage", Map.of("text", "fixture", "contextInfo", Map.of("stanzaId", "not-owner"))),
+                Instant.now())));
+        assertEquals("false", jdbc.queryForObject(
+                "select payload->>'groupNotificationEligible' from pending_notification where chat_jid='fixture@g.us'", String.class));
+    }
+
     @Test void outgoingContextRespectsUnknownOrExcludedArchiveScope() {
         var manager = new DataSourceTransactionManager(jdbc.getDataSource());
         archiveModes.setMode(ArchiveMode.ARCHIVED_ONLY);

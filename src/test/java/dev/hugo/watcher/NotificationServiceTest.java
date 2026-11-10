@@ -428,7 +428,9 @@ class NotificationServiceTest {
 
     @Test void sendsAReadableTelegramSummaryAndAcknowledgesItsSnapshot() {
         seed("5511999999999@s.whatsapp.net", "Ana", false, 2, "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", "Oi, tudo bem?", NOW);
-        seed("120363000000000000@g.us", "Equipe", true, 3, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "[Image]", NOW);
+        seed("120363000000000000@g.us", "Equipe", true, 3, NOW.minus(Duration.ofMinutes(30)).toString(),
+                NOW.minus(Duration.ofMinutes(5)).toString(), "[Image]", NOW);
+        qualifyGroup("120363000000000000@g.us", NOW.minus(Duration.ofMinutes(5)));
 
         notifications.flush(NOW);
 
@@ -445,7 +447,9 @@ class NotificationServiceTest {
     @Test void groupMessageShowsGroupAndCanonicalParticipantNameSeparately() {
         String group = "120363000000000000@g.us";
         String participant = "5511999999999@s.whatsapp.net";
-        seed(group, "Equipe", true, 1, "2026-10-26T09:05:00Z", "2026-10-26T10:30:00Z", "Olá", NOW);
+        seed(group, "Equipe", true, 1, NOW.minus(Duration.ofMinutes(30)).toString(),
+                NOW.minus(Duration.ofMinutes(5)).toString(), "Olá", NOW);
+        qualifyGroup(group, NOW.minus(Duration.ofMinutes(5)));
         jdbc.update("insert into identity_aliases(alias,canonical_identity) values (?,?)", participant, participant);
         jdbc.update("insert into contact_identity(canonical_jid,display_name,display_name_source) values (?,?,'CONTACT_NAME')",
                 participant, "João <Oficina> & Café");
@@ -538,6 +542,45 @@ class NotificationServiceTest {
         assertNull(receivedBody.get());
         assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification", Integer.class));
         assertEquals(0, jdbc.queryForObject("select count(*) from outbox_actions", Integer.class));
+    }
+
+    @Test void unrelatedAndStaleGroupBacklogAreSuppressedWithoutDeletingPrivatePending() {
+        String unrelatedGroup = "120363000000000099@g.us";
+        String staleGroup = "120363000000000098@g.us";
+        String privateChat = "5511888800000@s.whatsapp.net";
+        Instant staleAt = NOW.minus(Duration.ofHours(2));
+        seed(unrelatedGroup, "Equipe", true, 1, NOW.minus(Duration.ofMinutes(10)).toString(),
+                NOW.minus(Duration.ofMinutes(1)).toString(), "generic group question", NOW);
+        seed(staleGroup, "Equipe antiga", true, 356, staleAt.toString(), staleAt.toString(), "old activity", NOW);
+        qualifyGroup(staleGroup, staleAt);
+        seed(privateChat, "Contato", false, 2, NOW.minus(Duration.ofMinutes(10)).toString(),
+                NOW.minus(Duration.ofMinutes(1)).toString(), "private pending", NOW);
+        jdbc.update("update pending_notification set due_at=? where chat_jid=?",
+                java.sql.Timestamp.from(NOW.plus(Duration.ofMinutes(5))), privateChat);
+
+        notifications.flush(NOW);
+
+        assertNull(receivedBody.get());
+        assertEquals(0, jdbc.queryForObject("select count(*) from pending_notification where chat_jid in (?,?)",
+                Integer.class, unrelatedGroup, staleGroup));
+        assertEquals(1, jdbc.queryForObject("select count(*) from pending_notification where chat_jid=?",
+                Integer.class, privateChat));
+    }
+
+    @Test void explicitPerGroupTriggerCanAuthorizeConventionalNotification() {
+        String group = "120363000000000097@g.us";
+        seed(group, "Equipe autorizada", true, 1, NOW.minus(Duration.ofMinutes(10)).toString(),
+                NOW.minus(Duration.ofMinutes(1)).toString(), "explicit group trigger", NOW);
+        jdbc.update("""
+                insert into chat_automation_authorizations(chat_jid,situation,template_id,template_version)
+                select ?, 'GROUP_TRIGGER', template_id, version from response_templates
+                 where situation='GROUP_TRIGGER' order by version desc limit 1
+                """, group);
+
+        notifications.flush(NOW);
+
+        assertNotNull(receivedBody.get());
+        assertTrue(receivedBody.get().contains("Equipe autorizada"));
     }
 
     @Test void preservesANewerMessageThatArrivesWhileTheOutboxActionIsBeingAcknowledged() {
@@ -1253,6 +1296,12 @@ class NotificationServiceTest {
                 insert into pending_notification(chat_jid, payload, due_at, updated_at, expires_at)
                 values (?, ?::jsonb, ?, ?, ?)
                 """, jid, payload, java.sql.Timestamp.from(lastAt), java.sql.Timestamp.from(updated), java.sql.Timestamp.from(expires));
+    }
+
+    private void qualifyGroup(String jid, Instant triggerAt) {
+        jdbc.update("update pending_notification set payload=payload || jsonb_build_object(" +
+                        "'groupNotificationEligible',true,'groupNotificationEligibleAt',?) where chat_jid=?",
+                triggerAt.toString(), jid);
     }
 
     /** Use the previous business day at 08:00 São Paulo: inside TTL and behind the DB clock, even after advancing 5h. */

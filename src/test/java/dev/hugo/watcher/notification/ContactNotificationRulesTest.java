@@ -88,6 +88,19 @@ class ContactNotificationRulesTest {
         assertFalse(group.priority());
     }
 
+    @Test void exactPerGroupNotificationOverrideStillAppliesItsWorkWindow() {
+        String group = "120363000000000123@g.us";
+        when(repository.forChat(group)).thenReturn(List.of(
+                new ContactNotificationRuleRepository.Rule("CONTACT", group, "WORK_ONLY", "NORMAL")));
+        when(policies.forChat(group, "WORK_ONLY")).thenReturn(workWindow());
+
+        var route = rules.route(group, "Equipe", true, false, false,
+                Instant.parse("2026-11-02T15:00:00Z"));
+
+        assertEquals("WORK_ONLY", route.profile());
+        assertFalse(route.allowed());
+    }
+
     private static EffectivePolicy workWindow() {
         return new PolicyResolver().resolve(new GlobalPolicy(Map.of(PolicyField.INCLUDE_OPTIONAL_HOLIDAYS, false)),
                 new Profile("WORK_ONLY", Map.of(PolicyField.MODE, ScheduleMode.WORK_WINDOW,

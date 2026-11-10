@@ -43,7 +43,7 @@ public final class ContactNotificationRules {
                        boolean inLegacyWindow, Instant now) {
         String fallback = legacyWorkOnly ? "WORK_ONLY" : "ANYTIME";
         Route unchanged = new Route(fallback, !legacyWorkOnly || inLegacyWindow, false);
-        if (canonicalJid == null || canonicalJid.isBlank() || group) return unchanged;
+        if (canonicalJid == null || canonicalJid.isBlank()) return unchanged;
         List<ContactNotificationRuleRepository.Rule> contacts = new ArrayList<>();
         List<ContactNotificationRuleRepository.Rule> markers = new ArrayList<>();
         Set<String> tokens = tokens(displayName);
@@ -51,7 +51,7 @@ public final class ContactNotificationRules {
             if ("CONTACT".equals(rule.selectorType())) contacts.add(rule);
             else if ("MARKER".equals(rule.selectorType()) && tokens.contains(rule.selector())) markers.add(rule);
         }
-        if (contacts.isEmpty() && markers.isEmpty()) return unchanged;
+        if (contacts.isEmpty() && markers.isEmpty() && !policies.hasExplicitChatOverride(canonicalJid)) return unchanged;
 
         String markerProfile = profile(markers, fallback);
         String selectedProfile = profile(contacts, markerProfile);

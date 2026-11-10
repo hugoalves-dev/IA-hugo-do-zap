@@ -51,6 +51,16 @@ public class MessagePersistenceRepository {
                 """, chatJid, externalId, Timestamp.from(observedAt), Timestamp.from(expiresAt));
     }
 
+    public boolean hasOwnerMessageReference(String canonicalChat, String externalId, Instant now) {
+        if (canonicalChat == null || externalId == null || externalId.isBlank() || now == null) return false;
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists(select 1 from whatsapp_owner_message_references r
+                 where r.external_id=? and r.expires_at>?
+                   and (r.chat_jid=? or r.chat_jid in
+                       (select alias from identity_aliases where canonical_identity=?)))
+                """, Boolean.class, externalId, Timestamp.from(now), canonicalChat, canonicalChat));
+    }
+
     public void deletePending(String chat) {
         jdbc.update("delete from pending_notification where chat_jid=?", chat);
     }
@@ -86,13 +96,17 @@ public class MessagePersistenceRepository {
                        payload->>'preview' as preview,
                        payload->>'previewSenderJid' as preview_sender_jid,
                        payload->>'previewExpiresAt' as preview_expires_at,
+                       coalesce((payload->>'groupNotificationEligible')::boolean,false) as group_notification_eligible,
+                       payload->>'groupNotificationEligibleAt' as group_notification_eligible_at,
                        expires_at
                   from pending_notification where chat_jid=? for update
                 """, (rs, row) -> new Pending(rs.getInt("message_count"),
                 Instant.parse(rs.getString("first_message_at")), Instant.parse(rs.getString("last_message_at")),
                 rs.getString("preview"),
                 rs.getString("preview_sender_jid"),
-                parseInstant(rs.getString("preview_expires_at"), rs.getTimestamp("expires_at").toInstant())), jid);
+                parseInstant(rs.getString("preview_expires_at"), rs.getTimestamp("expires_at").toInstant()),
+                rs.getBoolean("group_notification_eligible"),
+                parseNullableInstant(rs.getString("group_notification_eligible_at"))), jid);
         return rows.isEmpty() ? null : rows.getFirst();
     }
 
@@ -106,8 +120,15 @@ public class MessagePersistenceRepository {
         catch (RuntimeException ignored) { return fallback; }
     }
 
+    private static Instant parseNullableInstant(String value) {
+        if (value == null) return null;
+        try { return Instant.parse(value); }
+        catch (RuntimeException ignored) { return null; }
+    }
+
     public record ChatSnapshot(Boolean archived, boolean synchronizedSnapshot,
                                String displayName, boolean group, Instant lastReadAt) { }
     public record Pending(int count, Instant firstAt, Instant lastAt, String preview, String previewSenderJid,
-                          Instant previewExpiresAt) { }
+                          Instant previewExpiresAt, boolean groupNotificationEligible,
+                          Instant groupNotificationEligibleAt) { }
 }

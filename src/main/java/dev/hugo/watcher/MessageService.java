@@ -37,6 +37,7 @@ public class MessageService {
     private final DebounceService debounce;
     private final WatcherSimulationProperties simulationProperties;
     private final boolean realModeEnabled;
+    private String ownerJid = "";
 
     public MessageService(JdbcTemplate jdbc, PlatformTransactionManager manager,
                           IdentityService identities, WatcherProperties properties, ArchiveModeService archiveModes) {
@@ -76,6 +77,9 @@ public class MessageService {
         this.simulationProperties = simulationProperties;
         this.realModeEnabled = realModeEnabled;
     }
+
+    @org.springframework.beans.factory.annotation.Value("${watcher.whatsapp-actions.owner-jid:}")
+    public void configureOwnerJid(String value) { this.ownerJid = value == null ? "" : value.strip(); }
 
     public Acceptance accept(IncomingMessage message) {
         Objects.requireNonNull(message, "message");
@@ -185,6 +189,22 @@ public class MessageService {
         String preview = extractPreview(message.content());
         NotificationPolicy.Kind policy = classifyPolicy(chat.displayName());
         Pending current = persistence.readPendingForUpdate(canonicalJid);
+        Instant groupTriggerAt = null;
+        if (group) {
+            Instant maxAgeStart = now.minusSeconds(simulationProperties.getGroupNotificationMaxAgeMinutes() * 60L);
+            if (current != null && current.groupNotificationEligible()
+                    && GroupNotificationEligibility.isFresh(current.groupNotificationEligibleAt(), now,
+                    java.time.Duration.ofMinutes(simulationProperties.getGroupNotificationMaxAgeMinutes())))
+                groupTriggerAt = current.groupNotificationEligibleAt();
+            String quoted = GroupNotificationEligibility.quotedMessageId(message.content());
+            boolean ownerReply = quoted != null && persistence.hasOwnerMessageReference(canonicalJid, quoted, now);
+            boolean ownerMention = GroupNotificationEligibility.hasOwnerMention(message.content(), ownerJid,
+                    persistence::canonicalChat);
+            if (GroupNotificationEligibility.isTriggered(ownerMention, ownerReply, false)
+                    && !receivedAt.isBefore(maxAgeStart) && !receivedAt.isAfter(now)
+                    && (groupTriggerAt == null || receivedAt.isAfter(groupTriggerAt)))
+                groupTriggerAt = receivedAt;
+        }
         Instant lastAt = current == null || receivedAt.isAfter(current.lastAt()) ? receivedAt : current.lastAt();
         String lastPreview = current == null || !receivedAt.isBefore(current.lastAt()) ? preview : current.preview();
         String lastPreviewSenderJid = current == null || !receivedAt.isBefore(current.lastAt())
@@ -202,6 +222,10 @@ public class MessageService {
         if (lastPreviewSenderJid != null) payload.put("previewSenderJid", lastPreviewSenderJid);
         payload.put("previewExpiresAt", previewExpiresAt.toString());
         payload.put("isGroup", chat.group());
+        if (group) {
+            payload.put("groupNotificationEligible", groupTriggerAt != null);
+            if (groupTriggerAt != null) payload.put("groupNotificationEligibleAt", groupTriggerAt.toString());
+        }
         payload.put("notificationPolicy", policy.name());
         persistence.upsertPending(canonicalJid, toJson(payload), lastAt, now, expiresAt);
         return Acceptance.ACCEPTED;
