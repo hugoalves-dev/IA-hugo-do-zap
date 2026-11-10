@@ -1,4 +1,3 @@
-/root/.bashrc: line 21: /home/linuxbrew/.linuxbrew/bin/brew: No such file or directory
 from pathlib import Path
 import base64
 import json
