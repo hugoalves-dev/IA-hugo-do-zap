@@ -26,7 +26,7 @@ class DecisionRuntimeGateActivityTest {
     @Test void ownerBecomingActiveAfterDecisionBlocksReplyAtDispatchGate() {
         UUID decisionId = UUID.randomUUID();
         var queries = mock(DecisionRuntimeQueryRepository.class);
-        when(queries.contextForDecision(decisionId, NOW)).thenReturn(List.of(
+        when(queries.contextForDecision(decisionId, NOW, true)).thenReturn(List.of(
                 new DecisionRuntimeQueryRepository.Context("canonical@s.whatsapp.net", "{}", "NORMAL",
                         "CLASSIFIED", 0.8, null, "Contact")));
         var activity = mock(OwnerConversationActivityRepository.class);
@@ -47,7 +47,7 @@ class DecisionRuntimeGateActivityTest {
     @Test void unavailableOwnerActivityFailsClosedAtDispatchGate() {
         UUID decisionId = UUID.randomUUID();
         var queries = mock(DecisionRuntimeQueryRepository.class);
-        when(queries.contextForDecision(decisionId, NOW)).thenReturn(List.of(
+        when(queries.contextForDecision(decisionId, NOW, true)).thenReturn(List.of(
                 new DecisionRuntimeQueryRepository.Context("canonical@s.whatsapp.net", "{}", "NORMAL",
                         "CLASSIFIED", 0.8, null, "Contact")));
         var activity = mock(OwnerConversationActivityRepository.class);

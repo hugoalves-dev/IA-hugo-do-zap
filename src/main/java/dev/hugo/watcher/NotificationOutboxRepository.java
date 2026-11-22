@@ -380,13 +380,14 @@ public class NotificationOutboxRepository {
             if (stored.startsWith("intelligent_alert\nintelligent_alert:")) {
                 UUID decisionId = UUID.fromString(stored.substring("intelligent_alert\nintelligent_alert:".length()));
                 deliveries.finish(decisionId,"TELEGRAM",UUID.fromString(action.leaseToken()),"CONFIRMED",now);
+                // Alert interval only: a Telegram alert never starts the WhatsApp reply cooldown (#66).
                 jdbc.update("""
-                        insert into decision_cooldowns(chat_jid,participant_jid,last_real_action_at,last_real_decision_id)
+                        insert into decision_cooldowns(chat_jid,participant_jid,last_alert_at,last_alert_decision_id)
                         select chat_jid,'',?,batch_id from simulation_batches where batch_id=?
                         on conflict(chat_jid,participant_jid) do update
-                        set last_real_action_at=excluded.last_real_action_at,last_real_decision_id=excluded.last_real_decision_id
-                        where decision_cooldowns.last_real_action_at is null
-                           or decision_cooldowns.last_real_action_at<=excluded.last_real_action_at
+                        set last_alert_at=excluded.last_alert_at,last_alert_decision_id=excluded.last_alert_decision_id
+                        where decision_cooldowns.last_alert_at is null
+                           or decision_cooldowns.last_alert_at<=excluded.last_alert_at
                         """, Timestamp.from(now),decisionId);
             }
             if ("archived_messages".equals(action.actionType())) clearIfUnchanged(action.pendingSnapshot());
@@ -410,12 +411,16 @@ public class NotificationOutboxRepository {
     }
 
     public boolean defer(OutboxAction action, Instant now, Instant availableAt) {
+        return defer(action, now, availableAt, "WorkWindowDeferred");
+    }
+
+    public boolean defer(OutboxAction action, Instant now, Instant availableAt, String reason) {
         return Boolean.TRUE.equals(transactions.execute(status -> {
             int updated = jdbc.update("""
                     update outbox_actions set status='PENDING',available_at=?,lease_token=null,lease_expires_at=null,
-                        last_error='WorkWindowDeferred',updated_at=?
+                        last_error=?,updated_at=?
                     where id=? and status='PROCESSING' and lease_token=?::uuid
-                    """, Timestamp.from(availableAt), Timestamp.from(now), action.id(), action.leaseToken());
+                    """, Timestamp.from(availableAt), sanitizeError(reason), Timestamp.from(now), action.id(), action.leaseToken());
             if (updated != 1) return false;
             promptGenerationResults.sync(action.actionKey());
             return true;

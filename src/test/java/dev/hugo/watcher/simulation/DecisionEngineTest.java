@@ -140,16 +140,45 @@ class DecisionEngineTest {
         assertEquals("kill_switch_enabled", decision.realBlockedReason());
     }
 
-    @Test void realCooldownDoesNotBlockSimulationCooldown() {
+    @Test void realCooldownBlocksReplyButKeepsOwnerAlertEligible() {
         var settings = new DecisionPolicy(true, true, true, false,
                 Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
                 new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
                 Duration.ofMinutes(5), Duration.ofMinutes(60), null, NOW.minusSeconds(60));
         Decision decision = decide(batch(false), Classification.contactRequest(),
                 new EffectivePolicy(Map.of(), null, settings), NOW);
+        assertTrue(decision.wouldAlert());
+        assertFalse(decision.wouldReply(), "a decision made during the reply cooldown must never carry a reply");
+        assertNull(decision.templateReference());
+        assertEquals("authorized_alert", decision.reason());
+        assertTrue(decision.realActionAllowed());
+        assertNull(decision.realBlockedReason());
+        assertTrue(decision.triageBlockers().contains("real_cooldown"));
+    }
+
+    @Test void realCooldownStillBlocksReplyOnlyDecisionAndDoesNotBlockSimulation() {
+        var settings = new DecisionPolicy(true, false, true, false,
+                Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
+                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
+                Duration.ofMinutes(5), Duration.ofMinutes(60), null, NOW.minusSeconds(60));
+        Decision decision = decide(batch(false), Classification.contactRequest(),
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+        assertFalse(decision.wouldAlert());
         assertTrue(decision.wouldReply());
         assertFalse(decision.realActionAllowed());
         assertEquals("real_cooldown", decision.realBlockedReason());
+    }
+
+    @Test void expiredRealCooldownRestoresReply() {
+        var settings = new DecisionPolicy(true, true, true, false,
+                Set.of(Situation.CONTACT_REQUEST), Map.of(Situation.CONTACT_REQUEST,
+                new ResponseTemplate("contact_request_v1", 1, Situation.CONTACT_REQUEST, "Resposta automática: Retorno autorizado.", true)),
+                Duration.ofMinutes(5), Duration.ofMinutes(60), null, NOW.minus(Duration.ofMinutes(61)));
+        Decision decision = decide(batch(false), Classification.contactRequest(),
+                new EffectivePolicy(Map.of(), null, settings), NOW);
+        assertTrue(decision.wouldAlert());
+        assertTrue(decision.wouldReply());
+        assertTrue(decision.realActionAllowed());
     }
 
     @Test void simulationCooldownBlocksAlertsAndRepliesTogether() {

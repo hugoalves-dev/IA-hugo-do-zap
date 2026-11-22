@@ -132,8 +132,18 @@ public final class DecisionEngine {
             realAllowed = false;
             realBlocked = "authorization_required";
         } else if (cooldownActive(settings.lastRealActionAt(), settings.realCooldown(), now)) {
-            realAllowed = false;
-            realBlocked = "real_cooldown";
+            // The reply cooldown blocks only the automatic WhatsApp reply; the owner's alert stays eligible.
+            // Dropping the reply here keeps it blocked even if dispatch happens after the cooldown expires.
+            if (alert && reply) {
+                reply = false;
+                selected = null;
+                reason = "authorized_alert";
+                blockers.add("real_cooldown");
+            }
+            if (!alert) {
+                realAllowed = false;
+                realBlocked = "real_cooldown";
+            }
         }
         if (!realAllowed && realBlocked == null)
             realBlocked = blockers.isEmpty() ? "action_not_eligible" : blockers.getFirst();

@@ -46,14 +46,15 @@ public class IdentityMergeRepository {
                     """, canonical, alias);
             jdbc.update("delete from chat_automation_authorizations where chat_jid=?", alias);
             jdbc.update("""
-                    insert into decision_cooldowns(chat_jid,participant_jid,last_simulation_action_at,last_real_action_at)
+                    insert into decision_cooldowns(chat_jid,participant_jid,last_simulation_action_at,last_real_action_at,last_alert_at)
                     select case when chat_jid=? then ? else chat_jid end,
                            case when participant_jid=? then ? else participant_jid end,
-                           last_simulation_action_at,last_real_action_at
+                           last_simulation_action_at,last_real_action_at,last_alert_at
                       from decision_cooldowns where chat_jid=? or participant_jid=?
                     on conflict(chat_jid,participant_jid) do update set
                         last_simulation_action_at=greatest(decision_cooldowns.last_simulation_action_at,excluded.last_simulation_action_at),
-                        last_real_action_at=greatest(decision_cooldowns.last_real_action_at,excluded.last_real_action_at)
+                        last_real_action_at=greatest(decision_cooldowns.last_real_action_at,excluded.last_real_action_at),
+                        last_alert_at=greatest(decision_cooldowns.last_alert_at,excluded.last_alert_at)
                     """, alias, canonical, alias, canonical, alias, alias);
             jdbc.update("delete from decision_cooldowns where chat_jid=? or participant_jid=?", alias, alias);
             // Keep both batches for audit. Close OPEN heads before rekeying to avoid unique-head conflicts.

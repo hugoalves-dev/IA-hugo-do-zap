@@ -198,6 +198,16 @@ public class NotificationService {
                 java.util.UUID decisionId = java.util.UUID.fromString(action.actionKey().substring("intelligent_alert:".length()));
                 java.util.UUID token = java.util.UUID.fromString(action.leaseToken());
                 if (!deliveries.begin(decisionId, "TELEGRAM", token, clock.instant())) {
+                    Instant intervalEnds = deliveries.alertIntervalEndsAt(decisionId, clock.instant());
+                    if (intervalEnds != null && intervalEnds.isAfter(clock.instant())) {
+                        outbox.defer(action, clock.instant(), intervalEnds, "AlertIntervalDeferred");
+                        if (outbox.rabbitDispatchEnabled()) {
+                            long delayMillis = Math.max(1_000, java.time.Duration.between(clock.instant(), intervalEnds).toMillis());
+                            throw new NotificationDeferredException(delayMillis,
+                                    NotificationDeferredException.Reason.SCHEDULED, intervalEnds);
+                        }
+                        return false;
+                    }
                     outbox.retry(action, clock.instant(), "ConversationDispatchUnresolved");
                     throwRetryIfQueued(action, false, null);
                     return false;

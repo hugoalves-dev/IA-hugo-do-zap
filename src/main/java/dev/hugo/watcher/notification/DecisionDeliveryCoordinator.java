@@ -28,6 +28,11 @@ public final class DecisionDeliveryCoordinator {
                 status -> admission.begin(decisionId, channel, token, now)));
     }
 
+    /** Explains a refused Telegram admission: an alert interval is a deferral, never a suppression. */
+    public Instant alertIntervalEndsAt(UUID decisionId, Instant now) {
+        return admission.alertIntervalEndsAt(decisionId, now);
+    }
+
     /** Joins an existing ACK transaction. Only its matching dispatched token can settle once. */
     public void finish(UUID decisionId, String channel, UUID token, String outcome, Instant now) {
         transactions.executeWithoutResult(
