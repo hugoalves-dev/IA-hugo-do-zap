@@ -61,7 +61,7 @@ public final class DecisionRuntimeGate {
     public boolean allows(UUID id, boolean alert) {
         if (operational == null || !operational.classification() || (alert ? !operational.alerts() : !operational.replies())) return false;
         var now=clock.instant();
-        var rows=queries.contextForDecision(id,now);
+        var rows=queries.contextForDecision(id,now,!alert);
         if(rows.isEmpty()) return false;
         var c=rows.getFirst();
         try {

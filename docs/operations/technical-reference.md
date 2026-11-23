@@ -161,6 +161,17 @@ Para ativar, ajuste explicitamente os três flags para `true`, informe URL HTTPS
 
 Uma resposta HTTP 2xx da Evolution significa apenas que a API aceitou a requisição. Sem recibo autenticado de entrega, o resultado permanece `UNKNOWN`, não há reenvio automático, e o estado não deve ser tratado como confirmação de entrega.
 
+### Cooldown de resposta × intervalo de alerta (#66)
+
+São dois limites independentes, por conversa, em `decision_cooldowns`:
+
+- **Cooldown de resposta automática** (`last_real_action_at`, `automation_settings.real_cooldown_seconds`, padrão 3600 s): iniciado **somente** por envio WhatsApp confirmado. Bloqueia novas respostas automáticas de outras decisões na decisão (`would_reply=false`, motivo `real_cooldown`), no gate de runtime e na admissão do despacho. A ação irmã da mesma decisão continua elegível.
+- **Intervalo mínimo de alerta** (`last_alert_at`, `automation_settings.alert_min_interval_seconds`, padrão 300 s): iniciado por alerta inteligente confirmado no Telegram. Alerta de outra decisão dentro do intervalo é **adiado** até o fim do intervalo (`last_error='AlertIntervalDeferred'`; com RabbitMQ, deferimento `SCHEDULED`, sem consumir tentativas), nunca descartado. Um alerta Telegram não inicia o cooldown de resposta.
+
+O cooldown de resposta não bloqueia, sozinho, o alerta ao proprietário de uma nova decisão elegível; todos os demais gates (consentimento, escopo/arquivamento, prova de referência, disponibilidade, kill switch, TTL, lease) continuam valendo. A reivindicação de conversa (`decision_delivery_claims`) passou a ser por canal: um envio `DISPATCHED`/`UNKNOWN` de WhatsApp não silencia alertas, e um alerta ambíguo continua bloqueando outros alertas da conversa.
+
+**Transição:** valores de `last_real_action_at` gravados antes da V66 podem ter origem em alerta Telegram; eles continuam bloqueando respostas automáticas até expirarem naturalmente (fail-closed). Tentativas Telegram não resolvidas registradas sob a chave compartilhada antiga continuam bloqueando novos alertas.
+
 ## Provedores de IA e limites operacionais
 
 As credenciais ficam no `.env` privado da VPS ou na cópia `.env.local`; nunca as grave no repositório, em tickets ou em mensagens. Crie uma chave Gemini no [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key) ou uma chave OpenRouter em [Settings → Keys](https://openrouter.ai/settings/keys). O Compose passa as propriedades existentes de `watcher.ai` ao Spring. Os nomes `WATCHER_AI_GEMINIAPIKEY` e `WATCHER_AI_OPENROUTERAPIKEY` parecem concatenados porque seguem a regra de binding de variáveis de ambiente do [Spring Boot](https://docs.spring.io/spring-boot/reference/features/external-config.html#features.external-config.typesafe-configuration-properties.relaxed-binding).

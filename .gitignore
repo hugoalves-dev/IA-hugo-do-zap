@@ -6,3 +6,4 @@ data/
 backups/
 .worktrees/
 .superpowers/
+target/

@@ -18,7 +18,8 @@ public class DecisionRuntimeQueryRepository {
         this.jdbc = jdbc;
     }
 
-    public List<Context> contextForDecision(UUID id, Instant now) {
+    /** The reply cooldown applies only to automatic WhatsApp replies; Telegram alerts have their own interval. */
+    public List<Context> contextForDecision(UUID id, Instant now, boolean replyChannel) {
         return jdbc.query("""
                 select b.chat_jid,e.result::text,d.classification_urgency,d.classification_status,
                        d.classification_confidence,d.intelligent_alert_reference_hash,c.display_name
@@ -32,11 +33,11 @@ public class DecisionRuntimeQueryRepository {
                   and d.real_action_allowed
                   and d.production_mode and d.decision_state='WOULD_ACT' and d.classification_status='CLASSIFIED'
                   and d.classification_confidence>=0.65 and e.result is not null
-                  and (cooldown.last_real_action_at is null or cooldown.last_real_decision_id=d.batch_id
+                  and (not ? or cooldown.last_real_action_at is null or cooldown.last_real_decision_id=d.batch_id
                       or cooldown.last_real_action_at + a.real_cooldown_seconds * interval '1 second' <= ?)
                   and (s.mode='ALL' or (c.synchronized_snapshot and c.archived is not null and
                       ((s.mode='ARCHIVED_ONLY' and c.archived) or (s.mode='UNARCHIVED_ONLY' and not c.archived))))
-                """,(rs,row)->new Context(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getDouble(5),rs.getString(6),rs.getString(7)),id,Timestamp.from(now),Timestamp.from(now),Timestamp.from(now));
+                """,(rs,row)->new Context(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getDouble(5),rs.getString(6),rs.getString(7)),id,Timestamp.from(now),Timestamp.from(now),replyChannel,Timestamp.from(now));
     }
 
     public boolean hasConsent(String chat, String provider, String situation, Instant now) {
